@@ -66,6 +66,12 @@ Future<void> showUnavailableEntrySheet(
 ) async {
   final knowsSource = hasUsableSourceUrl(entry);
   final removed = entry.offlineRemovedAt != null;
+  // Only app-made metadata may be forgotten, and the predicate that decides
+  // that is the database's — the same one automatic reconciliation uses. This
+  // asks it rather than restating it as `saveStatus == …`; whether a save is
+  // waiting is the queue's half of the answer and is asked on the tap.
+  final isDiscovery = isDiscoveredOnlyEntry(entry);
+  final lastAttemptFailed = isDiscovery && entry.saveError != null;
   final label = entry.sourceMarker?.trim().isNotEmpty == true
       ? entry.sourceMarker!.trim()
       : entry.title;
@@ -102,6 +108,10 @@ Future<void> showUnavailableEntrySheet(
                     removed
                         ? 'Not available offline — you removed its files. '
                               'Your reading history is still here.'
+                        : lastAttemptFailed
+                        ? 'The last attempt to save this did not finish, so it '
+                              'is left out of “Save new”. Try it on its own, '
+                              'or forget it.'
                         : 'Not available offline yet.',
                     style: TextStyle(
                       fontSize: 12.5,
@@ -134,13 +144,29 @@ Future<void> showUnavailableEntrySheet(
             ),
             ListTile(
               leading: const Icon(Icons.download),
-              title: const Text('Add to save queue'),
+              title: Text(
+                lastAttemptFailed ? 'Try saving again' : 'Add to save queue',
+              ),
               subtitle: const Text('Waits until you start the queue'),
               onTap: () {
                 Navigator.of(sheetContext).pop();
                 _saveAgain(context, ref, entry);
               },
             ),
+            if (isDiscovery)
+              ListTile(
+                key: const ValueKey('forgetEntry'),
+                leading: const Icon(Icons.visibility_off_outlined),
+                title: const Text('Forget this entry'),
+                subtitle: const Text(
+                  'Removes it from the list of what the source has. Nothing '
+                  'was downloaded, so nothing is deleted from this device.',
+                ),
+                onTap: () {
+                  Navigator.of(sheetContext).pop();
+                  _forget(context, ref, entry);
+                },
+              ),
             ListTile(
               leading: const Icon(Icons.close),
               title: const Text('Cancel'),
@@ -158,6 +184,33 @@ Future<void> showUnavailableEntrySheet(
 /// its `onTap` would hold a dead context.
 void unawaitedOpen(BuildContext context, WidgetRef ref, Entry entry) {
   openEntryOnWebsite(context, ref, entry);
+}
+
+/// Forget one entry this app only ever *found*.
+///
+/// The manual counterpart to what a reliable check does on its own, for the
+/// entries a check cannot speak for: one below the stretch of the source it
+/// could read, one with no number to place, one in a collection with no entry
+/// list to read at all.
+///
+/// The decision is not made here. `forgetDiscoveredEntry` re-reads the row and
+/// the queue inside the transaction that deletes it, so an entry that has been
+/// saved in the meantime, or that a save is now waiting on, is refused — and
+/// the refusal is said, because an action that quietly did nothing would just
+/// be tapped again.
+Future<void> _forget(BuildContext context, WidgetRef ref, Entry entry) async {
+  final result = await ref
+      .read(databaseProvider)
+      .forgetDiscoveredEntry(entry.id);
+  if (!context.mounted) return;
+  final refusal = result.refusal;
+  ScaffoldMessenger.of(context).showSnackBar(
+    SnackBar(
+      content: Text(
+        refusal ?? 'Forgotten. It will come back if the source lists it again.',
+      ),
+    ),
+  );
 }
 
 Future<void> _saveAgain(
@@ -185,6 +238,13 @@ Future<void> _saveAgain(
         policy: DuplicatePolicy.replaceAll,
         range: SaveScope.currentPageOnly,
       );
+  // Asking for this one again *is* the retry, so the note that kept it out of
+  // "save the new entries" goes. A failure this app could not classify should
+  // not exile an entry from the batch forever, and the person who just tapped
+  // it knows more about whether it was worth another try than any rule here.
+  if (isDiscoveredOnlyEntry(entry) && entry.saveError != null) {
+    await ref.read(databaseProvider).clearDiscoveryCaptureFailure(entry.id);
+  }
   if (!context.mounted) return;
   // Queued, not started: the user stays exactly where they are (D46).
   showQueuedConfirmation(context, result);

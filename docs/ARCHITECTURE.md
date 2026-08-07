@@ -251,16 +251,26 @@ page is paid, licensed, protected or public, and does not try. Conservative
 overblocking is the deliberate trade: a marketing page, a store listing or a
 support article on one of these hosts is refused along with everything else.
 
-**Enforcement is below the UI, at every boundary independently:**
+**Enforcement is below the UI, at every boundary independently.** These are the
+files that *ask* the policy — each imports `capture_policy.dart` and decides for
+itself:
 
 | Boundary | Where |
 |---|---|
 | The Browser's save control (absent, not disabled) | `features/browser_save_state.dart`, `features/browser_screen.dart` |
-| The page-actions sheet's Save block | `features/browser_page_actions.dart` |
 | Direct start · resume · retry · enqueue · the pump · update-check scheduling | `queue/task_queue.dart` |
 | Run start, per-entry continuation, and the landed URL after a redirect | `save/save_run.dart` |
 | Before the page is probed, and again before anything is committed | `save/save_engine.dart` |
 | Update checking, every navigation it would make, and every discovered row | `library/update_checker.dart` |
+| Whether a collection may be checked at all (`collectionSourceIsRestricted` → `collectionCheckBlock`) | `library/library_check.dart` |
+
+Everything else that mentions the policy only *reports* it, and is not a
+boundary: `features/browser_page_actions.dart` receives the already-decided
+`canSave` flag and omits its Save block, and
+`features/collection_detail_screen.dart`, `features/library_screen.dart` and
+`features/save_queue_ui.dart` import nothing from it but
+`kCaptureRestrictedMessage`, the one sentence (§6.5.1 of STORE_PACKAGE.md).
+A screen that displays a refusal is not the thing that made it.
 
 **And what it deliberately does not cover.** The policy asks "may this app
 capture this *page*". An asset is part of a page that has already been judged,
@@ -662,6 +672,90 @@ fails the build if that changes.
   Collection Detail card names its own scope ("Check this collection") and
   points at the Library for the many-collection version — one vocabulary, two
   granularities, and neither of them a refresh or a device sync.
+- **A number a discovery cannot stand behind stops it.** The number an entry is
+  discovered with is durable: it sets reading order and becomes the checkpoint
+  the next check measures novelty against, so a wrong one does not merely
+  display wrong — everything genuinely newer afterwards compares as older, and
+  discovery for that collection quietly ends. `lib/library/entry_identity.dart`
+  is the narrow guard against that. It asks one question and no other: **do the
+  two independent readings of this entry — its label and its address —
+  contradict each other, in a way the rest of the list says they should not?**
+  It is deliberately *not* a plausibility check. Collections number in twos,
+  restart at a season boundary, skip and use decimals, and none of that is this
+  file's business.
+
+  Nothing here repairs anything. There is no "drop the last digit", no "assume
+  the next number", no "prefer the URL" — guessing which reading was right
+  trades one class of wrong data for a quieter one. A contradiction the evidence
+  cannot resolve **stops the operation and keeps the contradiction**, carrying
+  `kEntryIdentityUnreliableMessage`: *"Could not reliably identify one or more
+  entries."* Reasons are a named enum (`EntryIdentityDoubt`) rather than free
+  text, so a new one cannot be added by writing a new sentence. Tested in
+  `test/entry_identity_test.dart`.
+- **A discovery can be withdrawn; nothing else can.** Discovery is not a
+  growing union of everything ever seen: a `knownRemote` row is a claim about
+  somebody else's site, and a later reading of that site can show the claim is
+  no longer true. Left forever, those rows are offered as fetchable, point at
+  addresses that are gone, and — because the checkpoint is the highest number
+  held — one wrong high number silently ends discovery for the collection.
+
+  *Absence has to be proved, and only a window of it can be.* A check reads one
+  page, and a page is a window: paginated, latest-N, or built as the user
+  scrolls. So `discoverFromEntryList` returns an `ObservedEntryWindow` — the
+  complete set of entry addresses the page showed and the numeric interval it
+  covered — and returns **none at all** unless the reading was recognisable,
+  unambiguously ordered, free of identity concerns, not truncated by the
+  `maxNew` bound, and able to place every entry it saw on the number line. The
+  interval's floor is hard; its ceiling opens only for a list the page itself
+  ran newest-first, and `reconcileDiscoveredEntries` closes it again the moment
+  an entry whose bytes are on this device sits above it. The chain walk never
+  produces a window — two hops ahead of the newest entry held says nothing
+  about a collection's membership.
+
+  *The rule lives at the database.* `AppDatabase.reconcileDiscoveredEntries`
+  takes the observation and never a list of rows, so no caller can name an
+  entry into deletion: each row must satisfy `_isDiscoveredOnly` on its own —
+  every column that could carry bytes, a reading position or a user correction,
+  not just `save_status` — carry a number that falls inside the window, be
+  absent from the observed set, and be claimed by no queued or running save.
+  A pending multi-entry save for the collection stops the whole operation,
+  because where such a run will reach is not knowable from its row. It is one
+  transaction, so a collection is never half reconciled. A failed, cancelled,
+  doubted, unordered or truncated check reconciles nothing at all.
+
+  *And the checkpoint is rebuilt, not adjusted.* Reconciliation runs before the
+  new rows are written; when it removed anything, the checker re-derives
+  `latestKnownNumber` from the database and re-reads the page already in hand —
+  pure, no second request — so the check that drops a stale high number is the
+  same check that finds what that number had been hiding.
+
+  *Seen again is not found.* An entry the page still lists is not a discovery
+  and is never counted as one, but it is the source's current words about a row
+  written from an older reading. `refreshDiscoveredEntry` takes them, through
+  the same identity gate the new rows pass: the label is replaced, a **missing**
+  number or next address is filled in, and weak provenance is upgraded. A
+  stored number is never overwritten — it orders the collection and is the next
+  check's checkpoint, so a second reading that disagrees is logged and the
+  stored value kept. `discovered_at` is deliberately untouched: it is what a
+  run's report counts, and moving it would make everything the source still
+  lists read as newly found.
+
+  *And the user can retract one by hand.* Some stale rows are unreachable by
+  any check — below the window it could read, unnumbered, or in a collection
+  with no entry list at all — so *Forget this entry* offers the same operation
+  manually. Same rule, same place: `forgetDiscoveredEntry` re-reads the row and
+  the queue inside the transaction that deletes it, refuses anything that is no
+  longer only a discovery, and refuses rather than cancels when a save is
+  waiting on it. The screens ask `isDiscoveredOnlyEntry` before offering it, so
+  no surface restates the rule as `save_status == …`.
+
+  *A failed save is an attempt, not a verdict.* This app cannot tell a page the
+  source withdrew from one that timed out — `classifyPageError` maps 4xx and
+  5xx alike to `unavailable` — so nothing is ever deleted on a failure. What is
+  recorded is that the attempt happened (`save_error` on a row that is still a
+  bare discovery), which takes the entry out of *Save new* while leaving it
+  listed, individually retryable, and exactly as removable as it was. Asking
+  for that one entry again clears the note.
 - **Checking is independent of navigation; the Library's *entry point* is
   not.** The checker needs a rendered WebView, so a run started from the
   Library card moves the user into the Browser to watch it. That move has a
@@ -735,6 +829,31 @@ fails the build if that changes.
   the boolean off, every one of those reverts and the behaviour is exactly what
   it was: leaving the Browser holds the run. See
   docs/FOREGROUND_MULTITASKING.md.
+- **What an operation does is never gated; only where the user has to be while
+  it happens.** This is the whole monetization boundary, and it is one sentence
+  on purpose. **Update checking is Free** — a single Collection check, the
+  Library-wide check that repeats it, the Entries either discovers, and the
+  report either produces. **Saving is Free**, single and bounded multi-entry, in
+  every capture mode. The library, the offline reader, reading progress,
+  archive, cleanup, deletion, retry and recovery are Free. The **only** thing
+  the Pro capability buys is the *execution experience*: a Browser-dependent
+  phase continuing while the user reads another Entry or uses the Library,
+  instead of holding until they come back.
+
+  Two consequences, both load-bearing. **The Free flow may never be degraded to
+  create Pro value** — a Free operation is not cancelled, truncated, slowed, or
+  limited in what it may discover, and walking away from the Browser pauses and
+  resumes exactly as it did before the capability existed. And **this is
+  foreground multitasking, not background execution**: nothing continues once
+  the app is not in front, which is unchanged.
+
+  Enforced, not merely asserted: `test/library_check_test.dart` fails the build
+  if gating, counter or purchase vocabulary appears anywhere in `lib/` outside
+  the capability seam and three files that only name it, and
+  `entitlement_test.dart` fails the build if a reading or cleanup surface so
+  much as imports `lib/capability/`. Boundary and rationale:
+  docs/FOREGROUND_MULTITASKING.md §10.0. An older proposal to sell update
+  checking is recorded, and marked superseded, in MONETIZATION_STRATEGY.md §8.3.
 - **The app ships no page hints.** `user_page_hints` is empty on a clean install
   and nothing seeds it.
 - **The restricted-site policy lives in one file and is asked at every
@@ -776,6 +895,7 @@ yet reachable from a screen.
 | Audio/video never fetched | **Built** (image-only MIME allow-list) |
 | Video-dominant pages classified and refused | **Built**, tested; **no video capture or playback exists** |
 | Restricted-site capture policy (§7.1) | **Built**, tested (`capture_policy_test.dart`, `capture_restriction_test.dart`, `asset_host_policy_test.dart`); the list is static and manually maintained, and applies to pages only |
+| Audio/video **bytes** refused by the fetcher | **Built**, tested — `asset_host_policy_test.dart` feeds real MP4, MP3 and WAV byte streams to `AssetFetcher` and asserts each comes back `AssetStatus.failed` (*not a recognised image format*): from an ordinary host, from a restricted host, and under a lying `.png` / `.jpg` extension. It also asserts `detectImageMime` answers null for all three. This closes the gap STORE_POLICY_MAP.md §1 previously recorded as untested |
 | Offline reader, reading position, queue, cleanup, archive, storage | **Built**, tested |
 | Permanent collection deletion (§8.2) | **Built**, tested (`collection_delete_test.dart`) |
 | Repository-cleanliness guard | **Built**, tested |
@@ -784,8 +904,9 @@ yet reachable from a screen.
 | Video capture or playback | **Not built, and out of scope** — see §11 |
 | Privacy / Terms / Content-rights settings pages | **Deferred** |
 | Hosted demo site, store assets | **Deferred**, external |
-| Foreground multitasking — one operation continuing while the user reads | **Built**, off by default; unit, widget and fixture-integration tested on the iOS Simulator. See docs/FOREGROUND_MULTITASKING.md and its plan for the device tests still outstanding |
-| Device runtime verification | **Not run** — simulator and emulator only. The architecture gate (`integration_test/occlusion_gate_test.dart`) has passed on the iOS Simulator and the Android emulator; physical-hardware runs, VoiceOver and TalkBack are recorded as outstanding in the foreground-multitasking plan |
+| Foreground multitasking — one operation continuing while the user reads | **Built**, off by default; unit, widget and fixture-integration tested, and the architecture gate has passed on physical iOS hardware. It stays off because accessibility verification (VoiceOver, TalkBack) has not been done and Android hardware has not been run — see docs/FOREGROUND_MULTITASKING.md §14 and the plan's §5 |
+| Free/Pro capability boundary — entitlement, capability, preference | **Built**, tested (`entitlement_test.dart`, `foreground_gate_test.dart`, `foreground_gate_ui_test.dart`). It gates exactly one behaviour: whether a Browser-dependent phase may continue while another screen is in front. **Update checking, saving and every library and reading function are Free**; only that execution mode is Pro — see the invariant in §9 and docs/FOREGROUND_MULTITASKING.md §10.0. **There is no billing** — `productionEntitlement()` returns `free`, and the Pro path is reachable only through the internal-build override |
+| Device runtime verification | **Partially run.** The architecture gate (`integration_test/occlusion_gate_test.dart`) has passed on the iOS Simulator, the Android emulator **and a cabled iPhone 17 (iOS 26.5.2)**; idle/cleanup, real-source save and bounded multi-entry scenarios were recorded on that iPhone. Still outstanding: any physical **Android** device, VoiceOver and TalkBack, and the profile-build performance, memory, thermal and renderer-termination phases. The full record — including which measurements were taken on hardware and which were not — is docs/FOREGROUND_MULTITASKING_PLAN.md §6 |
 
 ## 11. The video boundary
 
@@ -830,6 +951,28 @@ saving as supported.
 - **A document is built in full rather than lazily**, so every block offset is
   exact and restore is precise. Extraction caps the block count; a pathological
   page is bounded rather than unbounded.
+
+  **This has a measured memory cost, and it is the open one.** Because every
+  block is built, every inline image in a document is decoded and resident at
+  once. On a physical iPhone in a debug build, one real entry of 81 blocks with
+  76 inline images took the app from ≈482 MB to ≈1465 MB while its Reader was
+  open, returning to ≈634 MB once closed — roughly 13 MB per image, which is an
+  ordinary panel decoded at display width. **The cost is the count, not the
+  size**, so it scales with how many pictures a document has and not with how
+  large any one of them is. Numbers and method: FOREGROUND_MULTITASKING_PLAN.md
+  §6.1c. Debug-build figures are not release figures, but the shape of the
+  result is not a build-mode artefact.
+
+  `lib/reading/decode_budget.dart` bounds each decode — it stops both readers
+  *upscaling* a stored image narrower than the screen, which cost
+  `(display/natural)²` for no added detail, and caps a single pathological
+  panel. It bounds only on dimensions read back from the stored bytes, never on
+  `EntryAsset.width` when `dimensionsVerified` is false, because that field is
+  the page's unverified claim and trusting it could ask for fewer pixels than
+  the file holds. It is correct and tested, and it **does not** address the
+  count. Making image blocks lazy while keeping text offsets exact is the real
+  fix and has not been attempted; it is a Reader change needing its own device
+  validation for restore drift, flashing and repeated decoding.
 - **The database has no migration system.** A developer with a library created
   before these columns existed must reset it; the packages on disk are
   unaffected and `storage/recovery.dart` rebuilds the rows from them.

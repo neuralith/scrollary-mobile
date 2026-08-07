@@ -100,6 +100,7 @@ LibraryCheckReport watchLibraryCheckReport(
         if (group.collection != null) group.collection!,
     ],
     entries: [for (final group in shelf) ...group.entries],
+    staleRemoved: ref.read(updateCheckerProvider).staleRemovedByCollection,
     browserBusyElsewhere: browserBusyElsewhere,
   );
 }
@@ -490,6 +491,7 @@ class _LibraryCheckCompletionWatcherState
         if (group.collection != null) group.collection!,
     ],
     entries: [for (final group in _shelf) ...group.entries],
+    staleRemoved: ref.read(updateCheckerProvider).staleRemovedByCollection,
   );
 
   @override
@@ -702,6 +704,9 @@ class LibraryUpdatesCard extends ConsumerWidget {
                   if (group.collection != null) group.collection!,
               ],
               entries: [for (final group in shelf) ...group.entries],
+              staleRemoved: ref
+                  .read(updateCheckerProvider)
+                  .staleRemovedByCollection,
               browserBusyElsewhere: queue.browserOwner != null,
             );
             return _frame(context, switch (report.phase) {
@@ -994,6 +999,16 @@ List<String> libraryCheckResultLines(LibraryCheckReport report) {
           '${withNew == 1 ? 'collection' : 'collections'} — not downloaded'
     else if (report.upToDateCount > 0)
       'Everything is up to date',
+    // Its own line, and never added to the count above: an entry that appeared
+    // and an entry that went away are opposite results, and only one of them
+    // is something to go and save. Nothing here was ever downloaded, so the
+    // sentence says so rather than reading as a deletion.
+    if (report.staleRemovedCount > 0)
+      '${report.staleRemovedCount} '
+          '${report.staleRemovedCount == 1 ? 'entry is' : 'entries are'} no '
+          'longer at the source and '
+          '${report.staleRemovedCount == 1 ? 'was' : 'were'} taken off the '
+          'list — none had been downloaded',
     if (report.needsAttentionCount > 0)
       '${report.needsAttentionCount} '
           '${report.needsAttentionCount == 1 ? 'collection needs' : 'collections need'} '
@@ -1095,9 +1110,13 @@ class _ResultRow extends StatelessWidget {
   Widget build(BuildContext context) {
     final palette = AppPalette.of(context);
     final isNew = line.outcome == CollectionCheckOutcome.newEntries;
+    final retracted = line.staleRemoved > 0
+        ? ' · ${line.staleRemoved} no longer at the source'
+        : '';
     final detail = isNew
         ? '${line.newEntries} new '
               '${line.newEntries == 1 ? 'entry' : 'entries'} · not downloaded'
+              '$retracted'
         : (line.detail ?? 'Could not be checked');
 
     return Material(

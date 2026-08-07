@@ -163,6 +163,7 @@ class CollectionCheckLine {
     required this.title,
     required this.outcome,
     this.newEntries = 0,
+    this.staleRemoved = 0,
     this.detail,
   });
 
@@ -172,6 +173,14 @@ class CollectionCheckLine {
 
   /// Entries this run discovered for this collection. Discovered, not saved.
   final int newEntries;
+
+  /// Entries this run took *off* the list, because the source no longer
+  /// carries them and none had ever been downloaded.
+  ///
+  /// A separate number from [newEntries] and never added to it. They are
+  /// opposite facts about the same source, and a collection can perfectly well
+  /// report both — one entry published, one withdrawn, in the same check.
+  final int staleRemoved;
 
   /// Why it needs attention, when it does.
   final String? detail;
@@ -240,6 +249,10 @@ class LibraryCheckReport {
   /// downloaded, and none of them will be without an explicit save.
   int get newEntryCount => lines.fold(0, (sum, l) => sum + l.newEntries);
 
+  /// Entries taken off the lists across the whole run, because their sources
+  /// no longer carry them. Kept apart from [newEntryCount] everywhere.
+  int get staleRemovedCount => lines.fold(0, (sum, l) => sum + l.staleRemoved);
+
   /// The collection being checked right now, when one is.
   String? get currentTitle => lines
       .where((l) => l.outcome == CollectionCheckOutcome.checking)
@@ -288,11 +301,17 @@ CollectionCheckOutcome _outcomeFromStoredResult(String? stored, int found) =>
 /// the queue row says where the collection is, the collection's own
 /// `last_check_result` says how its check ended, and `discovered_at` says what
 /// this run found.
+/// [staleRemoved] is the one number that cannot be derived: the rows it counts
+/// were deleted, so nothing is left to read it off. It is passed in from the
+/// checker's own session record — see `UpdateChecker.staleRemovedFor` — and an
+/// absent collection simply reports zero, which is what "nothing can still say"
+/// should look like.
 LibraryCheckReport computeLibraryCheckReport({
   required LibraryCheckPlan? plan,
   required List<QueueTask> tasks,
   required List<Collection> collections,
   required List<Entry> entries,
+  Map<String, int> staleRemoved = const {},
   bool browserBusyElsewhere = false,
 }) {
   if (plan == null) return LibraryCheckReport.idle;
@@ -372,6 +391,10 @@ LibraryCheckReport computeLibraryCheckReport({
             : displayNameFor(collection),
         outcome: outcome,
         newEntries: outcome == CollectionCheckOutcome.newEntries ? found : 0,
+        // Reported for any collection this run actually asked, including one
+        // that ended `upToDate`: withdrawing an entry is a real result even
+        // when nothing was published.
+        staleRemoved: checkedThisRun ? (staleRemoved[collectionId] ?? 0) : 0,
         detail: outcome == CollectionCheckOutcome.needsAttention
             ? (collection?.lastCheckError ?? task?.lastError)
             : null,

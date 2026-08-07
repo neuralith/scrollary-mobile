@@ -102,6 +102,26 @@ Three arms, one native view, re-composited without being rebuilt:
 | covered | 2162 | 5921 | 0 → 900 | 65 | `visible` | complete | 6/6 |
 | unpainted | 2162 | 5921 | 0 → 900 | **13** | `visible` | complete | 6/6 |
 
+**Physical iPhone 17 (`iPhone18,3`), iOS 26.5.2, cabled, debug build.** Run
+later than the two above, after the **D1** guard existed — which is why its
+`unpainted` arm behaves differently from the simulator's, and the difference is
+the point rather than an inconsistency.
+
+| Arm | viewport | document | scroll | rAF/s | `visibilityState` | save | images |
+|---|---|---|---|---|---|---|---|
+| painted | 874 | 6957 | 0 → 900 | 62 | `visible` | complete | 6/6 |
+| covered | 874 | 6957 | 0 → 900 | 66 | `visible` | **complete** | **6/6** |
+| unpainted | 874 | 6957 | 0 → 900 | **0** | `hidden` | **held at `waitingForBrowser`** | **0** |
+
+Hardware said two things neither the simulator nor the emulator did. **Covered
+is indistinguishable from visible on a real device** — identical viewport and
+document height, scroll advancing, rAF at the display rate, and a
+byte-identical save. And **the unpainted control held and stored nothing**,
+where the simulator had run it to completion: the new page-visibility half of
+**D1** caught it, on the one platform where that signal discriminates. The old
+viewport-only check would have missed it there exactly as it did on the
+simulator.
+
 Conclusions that follow from the numbers rather than from expectation:
 
 1. **Covering is not hiding, on both platforms.** A painted-but-fully-covered
@@ -413,6 +433,11 @@ Separated on purpose. "Confirmed" means measured by
 means reasoned from plugin or framework source and not yet measured; "device
 only" means it cannot be answered anywhere but on hardware.
 
+The iOS column's simulator figures have since been **reproduced on a cabled
+iPhone 17** (§3.1). The Android column is still emulator-only: no physical
+Android device has been available, and every Android row below should be read
+with that caveat.
+
 | Behaviour | iOS | Android |
 |---|---|---|
 | Viewport while covered | **Confirmed** unchanged (874, simulator) | **Confirmed** unchanged (2162, emulator) |
@@ -426,9 +451,9 @@ only" means it cannot be answered anywhere but on hardware.
 | `document.visibilityState` while unpainted | **Confirmed** `hidden` | **Confirmed** `visible` — no discrimination |
 | `IntersectionObserver` + lazy loading while covered | **Confirmed** — 6/6 lazy panels stored | **Confirmed** — 6/6 |
 | Navigation while covered | **Confirmed** — a full run's next-Entry hop completed | **Confirmed** |
-| Platform-view composition under an opaque Flutter layer | **Confirmed** on the simulator; **device only** on hardware | **Confirmed** on the emulator; **device only** on hardware |
-| Route-barrier semantics blocking of a covered platform view | **Assumed** from `ModalBarrier`'s `BlockSemantics`; **device only** with VoiceOver | **Assumed**; **device only** with TalkBack |
-| Memory pressure and renderer termination during a long covered save | **Device only** | **Device only** |
+| Platform-view composition under an opaque Flutter layer | **Confirmed on hardware** — iPhone 17, iOS 26.5.2 (§3.1) | **Confirmed** on the emulator; **device only** on hardware |
+| Route-barrier semantics blocking of a covered platform view | **Assumed** from `ModalBarrier`'s `BlockSemantics`; **device only** with VoiceOver — still unrun, and the reason the capability ships off | **Assumed**; **device only** with TalkBack — still unrun |
+| Memory pressure and renderer termination during a long covered save | **Device only** — a soak scenario exists in `device_matrix_test.dart`; no renderer termination has been induced or observed | **Device only** |
 | Orientation change while covered | **Device only** — the WebView is laid out by the Browser tab, so its rect follows the window either way | **Device only** |
 | Cookies and storage | Shared process-wide; one controller owns them (**W4**) | Shared process-wide; `CookieManager` is global |
 | Plugin specifics | `flutter_inappwebview` is pinned at `6.2.0-beta.3` deliberately. `useShouldOverrideUrlLoading: true` with **no** `shouldOverrideUrlLoading` callback silently prevents every `loadUrl` on iOS — found while building the gate harness, and the reason the harness mirrors the production callback set | Cleartext to the loopback fixture is blocked from API 28; a **debug-source-set** network security config re-permits it for `127.0.0.1` only |
@@ -464,6 +489,43 @@ indicator; it never yanks the user out of what they are doing.
 
 ## 10. Product boundary
 
+### 10.0 The decision, in one line
+
+> **Update checking is Free. Foreground multitasking — letting a supported
+> operation keep working while the user goes somewhere else in the app — is
+> Pro.**
+
+This is the current product decision and it supersedes the earlier proposal in
+MONETIZATION_STRATEGY.md §8.3, which named update checking as the headline Pro
+feature. That proposal is **no longer an active requirement** and must not be
+read as one.
+
+**Separate the operation from the way it executes.** Everything below turns on
+that split, and collapsing it is how a convenience becomes a hostage:
+
+| | Free | Pro |
+|---|---|---|
+| **The operation itself** — start a Collection check, start a Library-wide check, discover new Entries and see them, save or capture an Entry, read offline, organise the library | ✅ **all of it**, on the ordinary supported flows | ✅ identical |
+| **The way it executes** — the operation continuing through its Browser-dependent phases while the user reads another Entry or uses the Library | **holds** while the user is elsewhere, and resumes when they return | **continues** |
+
+So a Free user can check a Collection, check the whole Library where that is
+offered, see every newly discovered Entry, and save it. Nothing about *what* the
+app will do for them is smaller. What Pro buys is **not having to watch it**.
+
+**The Free path is not made worse to create Pro value.** A Free operation is not
+cancelled, not truncated, not slowed, not limited in how many Entries it may
+discover, and not denied any result. Leaving the Browser mid-phase offers
+*Pause and leave*, which holds at the next safe point, keeps everything saved so
+far and resumes on return (§10.6) — that is the behaviour that shipped before
+this capability existed, and it stays. Any future rule that degrades the Free
+flow in order to make Pro look better is a violation of this section, not an
+implementation of it.
+
+**This is foreground multitasking, not background execution.** Nothing continues
+once Scrollary is not in front. §1.1 is unchanged: no OS background mode, no
+scheduler, no persisted authorisation to resume later. Pro moves work from
+"needs this screen" to "needs this app", and no further.
+
 ### 10.1 Always free, and never behind a payment
 
 Safety and legibility are not features to sell:
@@ -477,6 +539,11 @@ Safety and legibility are not features to sell:
 - Protection of reading progress and downloaded data.
 - The whole visible-Browser path for saving and checking — which stays the
   correct path, not a degraded one.
+- **Update checking itself**, at both granularities: a single Collection check
+  and the Library-wide check that repeats it. Starting one, its discovery, its
+  results and its report are core library function, not a power tool (§10.0).
+- **Saving and capture** on the ordinary supported flows, single and bounded
+  multi-entry, in every capture mode.
 
 The behaviour that already ships — direct downloads and the commit continuing
 while the user is elsewhere — stays free. It exists today; putting a price on it
@@ -488,9 +555,15 @@ The capability changes **one** thing: whether a Browser-dependent phase may
 continue while another screen is in front. Everything else is identical, and
 everything in the "both" column is unconditional.
 
+Read this table as the detail of §10.0: every row about *what the app does* is
+the same in both columns, and the single row that differs is about *where the
+user has to be while it does it*.
+
 | Behaviour | Free | With the capability |
 |---|---|---|
 | Start a check or a save | ✅ same | ✅ same |
+| Check one Collection · check the whole Library · see discovered Entries | ✅ same | ✅ same |
+| Which Entries a check may discover, and how many | ✅ same | ✅ same |
 | Browser-dependent phases with the Browser on screen | ✅ | ✅ |
 | Browser-dependent phases with the Reader/Library on screen | **holds** at `waitingForBrowser` | **continues** |
 | Leaving the Browser mid-phase | confirmation first, then a hold | no confirmation — nothing is at risk |
@@ -647,12 +720,31 @@ position is touched.
 screen, engine or capability check changes — that is the entire reason the seam
 is a function rather than a boolean somewhere convenient.
 
-**One standing guard was narrowed, deliberately.** `library_check_test.dart`
-forbids entitlement and purchase vocabulary anywhere in `lib/`. Its own failure
-message states the subject: *checking is unrestricted*. That is still true —
-Library checks, saves, recovery, retry and every byte already on disk are
-ungated. The exemption is by path with a recorded reason for each, and covers
-the seam plus the three files that merely name it.
+**One standing guard was narrowed, deliberately — and it is now the executable
+form of §10.0.** `test/library_check_test.dart` scans every `.dart` file under
+`lib/` for gating vocabulary — `is_pro`, `pro_required`, `trial_expired`,
+`purchase_required`, `entitlement`, `upgrade_to_pro`, `in_app_purchase`,
+`storekit`, `billingclient`, and two usage-counter names
+(`library_check_runs_used`, `complimentary_checks_remaining`) — and fails the
+build on a hit. Its failure message states the subject:
+
+> *checking is unrestricted; no gating, counter or purchase state may sit
+> dormant in the app waiting to be switched on*
+
+`paywall` is deliberately **absent** from that list: in this app it names a
+*site's* paywall, a stopping condition, which is the opposite of a paywall the
+app puts in front of its own features.
+
+The exemption is by path with a recorded reason for each — `lib/capability/`
+itself, plus `settings_screen.dart`, `main.dart` and `developer_screen.dart`,
+which only name the seam without deciding anything. Everywhere else the ban
+holds, so a counter, a purchase record or a second gate cannot appear in a
+screen, an engine or a repository.
+
+**That guard is what makes "update checking is Free" enforceable rather than a
+promise.** Gating checking would mean editing it on purpose, which is the point:
+the decision in §10.0 is not something a later change can drift past quietly.
+Do not weaken or exempt around it without recording why here first.
 
 ### 10.2 The capability seam
 
@@ -660,8 +752,12 @@ Foreground multitasking is expressed as one capability object,
 `lib/capability/foreground_multitasking.dart`, with a single boolean and one
 place that decides it. Nothing else in the app asks *why* it is on.
 
-- Today it is an explicit, user-visible setting, defaulting to the value the
-  device gate justifies (§4.3).
+- Today it is an explicit, user-visible setting.
+  `ForegroundMultitasking.defaultEnabled` is **`false`**, and stays false until
+  the enablement criteria in the plan's §4a are met on a platform's own
+  hardware — the compositing gate alone is not enough, and passing it on iOS
+  (§3.1) did not change the default. Whether it should ever default on is a
+  product decision, not a consequence of the gate.
 - If it is ever sold, an entitlement supplies that boolean and nothing else
   moves. That is the whole seam.
 - **The capability may only ever remove a convenience.** With it off, every
@@ -747,13 +843,18 @@ Treated as release blockers.
 
 | # | Question | State | Resolved by |
 |---|---|---|---|
-| U1 | Covered rendering on physical iOS hardware | **Open.** The wireless iPhone did not connect during the session | The gate, on a physical iPhone (plan D-1) |
-| U2 | Covered rendering on Android | **Closed** on the emulator, ×3, identical to the painted arm | Done; a physical Android device would still be worth one run (D-2) |
+| U1 | Covered rendering on physical iOS hardware | **Closed.** Passed on a cabled iPhone 17, iOS 26.5.2 — covered identical to painted, and the unpainted control correctly held and stored nothing | §3.1; plan D-1, §6.1 |
+| U2 | Covered rendering on Android | **Closed on the emulator**, ×3, identical to the painted arm. **Open on hardware:** no physical Android device has been available | A physical Android device (D-2) |
 | U3 | Whether semantics exclusion suppresses a platform view's native accessibility elements on iOS | **Open** | VoiceOver, on hardware (D-3) |
-| U4 | Renderer-termination rate under a long covered image save | **Open** | A soak run on hardware (D-5) |
-| U5 | Thermal and battery cost of a full bounded covered run with the screen on | **Open** | A bounded device run (D-5) |
-| U6 | Whether the Collection-check case is genuinely process-isolation-sensitive or hiding a fault | **Open.** It passes alone and failed once when run third in the same test process | Re-running the integration file; if it recurs, instrument `surfaceIsPainted` across the whole run |
+| U4 | Renderer-termination rate under a long covered image save | **Open.** A soak scenario exists in `device_matrix_test.dart`; no termination has been induced or observed, so the rate is unmeasured rather than known to be zero | A soak and an induced kill on hardware (D-5) |
+| U5 | Thermal and battery cost of a full bounded covered run with the screen on | **Open.** Needs a profile build; only debug runs have been done | A bounded device run (D-5) |
+| U6 | Whether the Collection-check case is genuinely process-isolation-sensitive or hiding a fault | **Open.** It passes alone and failed once when run third in the same test process; not reproduced since | Re-running the integration file; if it recurs, instrument `surfaceIsPainted` across the whole run |
+| U7 | Whether the Reader's eager document build makes a covered save unsafe on a memory-constrained device | **Open.** A real 76-image document entry held ≈1.4 GB with its Reader open (plan §6.1c). Not a fault of this feature, but concurrent Reader and WebContent execution is exactly what makes it matter | A lazy-image document reader, then a device re-measure |
 
-The capability ships **off** because U1 and U3 are open. That is the protection:
-with it off the app behaves exactly as it did before this work, and no
-unverified compositing assumption is on the path any save takes.
+The capability ships **off**, and the reasons have narrowed rather than gone
+away. U1 is closed, so the compositing premise is no longer the blocker. What
+remains: **U3** — accessibility is a release blocker by §13 and has not been
+tested on any device; **U2 on hardware** — no physical Android device has run
+any of this; and **U7**, which is a Reader problem this feature does not own but
+would be the first to expose. With the capability off the app behaves exactly as
+it did before this work, so none of those is on the path any save takes today.

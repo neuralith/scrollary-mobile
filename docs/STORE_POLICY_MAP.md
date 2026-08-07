@@ -172,9 +172,18 @@ real `<video>` element in a live WebView, including that the page's sidebar
 thumbnails are not swept up instead. The image-only MIME allow-list stays
 verified by `mime_extension_test.dart`.
 
-**Remaining gap:** there is still no test that asserts a media *byte stream*
-offered to `AssetFetcher` is rejected — the allow-list makes it unreachable by
-construction, but that is an argument rather than an assertion.
+**That gap is now closed.** It previously read: *"there is still no test that
+asserts a media byte stream offered to `AssetFetcher` is rejected — the
+allow-list makes it unreachable by construction, but that is an argument rather
+than an assertion."*
+
+`test/asset_host_policy_test.dart` now feeds real MP4, MP3 and WAV byte streams
+to the fetcher and asserts each returns `AssetStatus.failed` with *not a
+recognised image format* — from an ordinary host, from a restricted host, and
+served under a lying `.png` / `.jpg` extension, which is the case
+`Content-Type` and filename checks both miss. It also asserts the sniffer
+itself answers null for all three while still recognising PNG. The argument is
+now an assertion, and it covers audio as well as video.
 
 ---
 
@@ -256,9 +265,16 @@ policy declarations and in the App Review notes, because a reviewer scanning for
   not a splash or a login — Apple 2.3.3.
 - Reviewer notes describe the save flow, the bounds, the stopping conditions and
   where every control lives — Apple 2.3.1(a). See `docs/STORE_PACKAGE.md`.
-- No hidden features: there is no debug backdoor in a release build. The
-  destructive developer reset is `kDebugMode`-gated at the settings entry, the
-  route registration and the screen itself.
+- No hidden features in a **submitted** build, and the mechanism is a
+  compile-time constant rather than a runtime check. The destructive developer
+  reset and the internal entitlement override are gated by `kInternalBuild` —
+  `kDebugMode || bool.fromEnvironment('SCROLLARY_INTERNAL_BUILD')` — at the
+  settings entry, the route registration and the screen itself. A build that
+  passes no define folds that to `false`, and the tree-shaker removes the
+  screen, the route and the override, so a Store build contains no reset and no
+  way to reach one. **This holds only if the Store build passes no define**; it
+  is a build-configuration obligation, not something the code can enforce on its
+  own, and it belongs on the release checklist (§8.6).
 - App name ≤ 30 characters — Apple 2.3.7.
 
 ---

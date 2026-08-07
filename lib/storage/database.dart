@@ -24,6 +24,8 @@ library;
 import 'package:drift/drift.dart';
 import 'package:drift_flutter/drift_flutter.dart';
 
+import '../core/url_utils.dart' show normalizeUrl;
+
 part 'database.g.dart';
 
 /// A related group of entries.
@@ -214,7 +216,12 @@ class Entries extends Table {
   TextColumn get captureMode => text().nullable()();
 
   // --- save state -----------------------------------------------------------
-  // notSaved | known | queued | saving | saved | partial | failed
+  // knownRemote | saving | complete | partial | failed
+  //
+  // Queueing is deliberately absent: a queued save is a row in [QueueTasks],
+  // not a state of the entry, and nothing here changes until the engine
+  // commits. Anything asking "is this entry spoken for?" must ask the queue —
+  // see [AppDatabase.reconcileDiscoveredEntries], which does.
 
   TextColumn get saveStatus => text()();
 
@@ -264,10 +271,16 @@ class Entries extends Table {
   DateTimeColumn get progressUpdatedAt => dateTime().nullable()();
 
   // --- discovery ------------------------------------------------------------
-  // An entry found by an update check is a real row with `saveStatus = 'known'`
-  // and no `contentPath` — known to exist at the source, holding nothing
-  // locally. Discovered, saved and read are three independent facts about one
-  // entry.
+  // An entry found by an update check is a real row with
+  // `saveStatus = 'knownRemote'` and no `contentPath` — known to exist at the
+  // source, holding nothing locally. Discovered, saved and read are three
+  // independent facts about one entry.
+  //
+  // This is the one state the app may retract on its own: a row that is still
+  // *only* a discovery describes the source, so a later reliable reading of
+  // the source can show it is no longer true. The moment anything of the
+  // user's is attached to it — bytes, a queued save, a reading position — it
+  // stops being retractable. `reconcileDiscoveredEntries` is that rule.
 
   DateTimeColumn get discoveredAt => dateTime().nullable()();
 
@@ -955,6 +968,253 @@ class AppDatabase extends _$AppDatabase {
   Future<void> deleteEntry(String id) =>
       (delete(entries)..where((t) => t.id.equals(id))).go();
 
+  /// Drop the discovered-only entries of one collection that the source's own
+  /// entry list no longer carries.
+  ///
+  /// **The eligibility rule lives here, and only here.** The caller passes what
+  /// it *observed* — the complete set of entry addresses one page showed and
+  /// the numeric interval that page can vouch for — and never a list of rows to
+  /// delete. It is therefore not possible for a caller, present or future, to
+  /// name an entry into deletion: every row this touches has to satisfy the
+  /// predicate below on its own, read inside the transaction that removes it.
+  ///
+  /// A row goes only when all of this holds:
+  ///
+  /// 1. It is a discovery and nothing more — [isDiscoveredOnlyEntry], which
+  ///    reads every column that could carry something of the user's, not just
+  ///    `save_status`.
+  /// 2. It carries a number, so it can be placed against the observed
+  ///    interval. An unnumbered discovery is never reconciled: there is no
+  ///    position from which to say the page should have shown it.
+  /// 3. That number falls inside the interval the page covered.
+  /// 4. Its address was absent from the page's *complete* link set.
+  /// 5. No queued or running save names it, and none is loose in this
+  ///    collection.
+  ///
+  /// Returns the rows removed, for the log. Empty is the ordinary answer.
+  Future<List<Entry>> reconcileDiscoveredEntries({
+    required String collectionId,
+    required Set<String> observedUrlKeys,
+    required double windowFrom,
+    required double windowTo,
+    required bool windowOpenAbove,
+  }) => transaction(() async {
+    final rows = await entriesForCollection(collectionId);
+    if (rows.isEmpty) return const <Entry>[];
+
+    final claims = await _pendingSaveClaims();
+    // A multi-entry save walks forward from its start address, so which entries
+    // it will reach is not knowable from the row. While one is outstanding for
+    // this collection, nothing here is reconciled at all.
+    if (claims.collectionIds.contains(collectionId)) return const <Entry>[];
+
+    // --- the ceiling ---------------------------------------------------------
+    // An open ceiling says "the source has nothing newer than the top of this
+    // list". The library can contradict that directly: an entry whose bytes are
+    // on this device came from a page of this collection that sits above the
+    // list we just read, which means the list was not the front of it. Fall
+    // back to the closed interval rather than trusting the reading.
+    var openAbove = windowOpenAbove;
+    if (openAbove) {
+      for (final row in rows) {
+        final number = row.entryNumber;
+        if (row.contentPath != null && number != null && number > windowTo) {
+          openAbove = false;
+          break;
+        }
+      }
+    }
+
+    final removed = <Entry>[];
+    for (final row in rows) {
+      if (!isDiscoveredOnlyEntry(row)) continue;
+      final number = row.entryNumber;
+      if (number == null) continue;
+      if (number < windowFrom) continue;
+      if (!openAbove && number > windowTo) continue;
+      if (observedUrlKeys.contains(row.urlKey)) continue;
+      if (claims.urlKeys.contains(row.urlKey)) continue;
+      removed.add(row);
+    }
+    if (removed.isEmpty) return const <Entry>[];
+
+    await (delete(
+      entries,
+    )..where((t) => t.id.isIn([for (final row in removed) row.id]))).go();
+    return removed;
+  });
+
+  /// Forget one discovered entry, because the user asked.
+  ///
+  /// The manual half of [reconcileDiscoveredEntries] and the same rule: the
+  /// only difference is where the evidence comes from. A check proves the
+  /// source no longer lists the entry; here the person looking at it says so.
+  /// Neither can reach a row that is anything more than a discovery, and
+  /// neither cancels work — an entry a save is waiting on is refused, in
+  /// words, rather than quietly taken out from under it.
+  ///
+  /// Deletes app-made metadata only: no file is touched, because a row this
+  /// accepts has none.
+  Future<ForgetDiscoveryResult> forgetDiscoveredEntry(String id) =>
+      transaction(() async {
+        final row = await entryById(id);
+        if (row == null) return ForgetDiscoveryResult.missing;
+        if (!isDiscoveredOnlyEntry(row)) {
+          return ForgetDiscoveryResult.notADiscovery;
+        }
+        final claims = await _pendingSaveClaims();
+        final collectionId = row.collectionId;
+        if (claims.urlKeys.contains(row.urlKey) ||
+            (collectionId != null &&
+                claims.collectionIds.contains(collectionId))) {
+          return ForgetDiscoveryResult.claimedByQueue;
+        }
+        await (delete(entries)..where((t) => t.id.equals(id))).go();
+        return ForgetDiscoveryResult.forgotten;
+      });
+
+  /// Refresh the source-side metadata of a row that is **still only a
+  /// discovery**, when a later check sees the same entry again.
+  ///
+  /// Field rules live here rather than at the caller, so a second caller
+  /// cannot arrive with a looser idea of what "refresh" means. Each is a
+  /// strict improvement or nothing:
+  ///
+  /// * **title** — replaced when the source now prints a different non-empty
+  ///   one. A discovered row's title is the source's own label and nothing
+  ///   else; there is no user-set entry title in this schema to protect.
+  /// * **number** — only ever *filled in*. A stored number orders the
+  ///   collection and is the checkpoint later checks measure against, so
+  ///   overwriting one on the strength of a second reading trades a known
+  ///   value for a guess. A disagreement is reported and kept, not resolved.
+  /// * **marker** — recomputed by the caller, applied only when the title or
+  ///   number it was derived from actually changed.
+  /// * **basis / confidence** — only upgraded, never downgraded: an entry
+  ///   first seen two hops down a chain and later found on the collection's
+  ///   own list is better attested than it was.
+  /// * **next address** — only filled in, so a chain that is already known is
+  ///   never replaced by a second opinion.
+  ///
+  /// `discovered_at` is deliberately **not** touched. It is what a run's report
+  /// counts to answer "what did this check find", and refreshing it on a
+  /// re-sighting would make every entry the source still lists look newly
+  /// discovered. Recording a separate last-seen time would need a column this
+  /// schema does not have.
+  ///
+  /// Returns the names of the fields actually written — empty when nothing
+  /// changed, and empty when the row is no longer a bare discovery.
+  Future<Set<String>> refreshDiscoveredEntry({
+    required String id,
+    required String title,
+    required double? number,
+    required String? sourceMarker,
+    required String basis,
+    required String confidence,
+    String? nextSourceUrl,
+  }) => transaction(() async {
+    final row = await entryById(id);
+    if (row == null || !isDiscoveredOnlyEntry(row)) return const <String>{};
+
+    final written = <String>{};
+    final trimmedTitle = title.trim();
+    final titleChanged = trimmedTitle.isNotEmpty && trimmedTitle != row.title;
+    final numberFilled = row.entryNumber == null && number != null;
+    final upgradeProvenance =
+        confidence == 'high' && row.discoveryConfidence != 'high';
+    final fillNext =
+        row.nextSourceUrl == null &&
+        nextSourceUrl != null &&
+        nextSourceUrl.trim().isNotEmpty;
+
+    if (titleChanged) written.add('title');
+    if (numberFilled) written.add('number');
+    if (upgradeProvenance) written.add('provenance');
+    if (fillNext) written.add('nextAddress');
+    if (written.isEmpty) return const <String>{};
+
+    await (update(entries)..where((t) => t.id.equals(id))).write(
+      EntriesCompanion(
+        title: titleChanged ? Value(trimmedTitle) : const Value.absent(),
+        entryNumber: numberFilled ? Value(number) : const Value.absent(),
+        sourceMarker: (titleChanged || numberFilled) && sourceMarker != null
+            ? Value(sourceMarker)
+            : const Value.absent(),
+        discoveryBasis: upgradeProvenance ? Value(basis) : const Value.absent(),
+        discoveryConfidence: upgradeProvenance
+            ? Value(confidence)
+            : const Value.absent(),
+        nextSourceUrl: fillNext ? Value(nextSourceUrl) : const Value.absent(),
+      ),
+    );
+    return written;
+  });
+
+  /// Note that a capture of a discovered entry was attempted and failed.
+  ///
+  /// **Not a conclusion about the source.** A save fails for a dead address, a
+  /// dropped connection, a sign-in wall and a bug in this app alike, and this
+  /// column does not claim to tell them apart — it records that the attempt
+  /// happened, which is what stops "save the new entries" queueing the same
+  /// failing address every time the button is pressed. The entry stays
+  /// discovered, stays listed, stays individually retryable and stays subject
+  /// to the ordinary reconciliation rule.
+  ///
+  /// Writes one column, and only onto a row that is still a bare discovery: a
+  /// save that got far enough to commit has already written the row properly,
+  /// and must not have a failure note pasted over it.
+  Future<bool> recordDiscoveryCaptureFailure({
+    required String urlKey,
+    required String error,
+    String? collectionId,
+  }) => transaction(() async {
+    final row = collectionId == null
+        ? await findEntryByUrlKeyAnywhere(urlKey)
+        : await findEntryByUrlKey(collectionId, urlKey);
+    if (row == null || !isDiscoveredOnlyEntry(row)) return false;
+    await (update(entries)..where((t) => t.id.equals(row.id))).write(
+      EntriesCompanion(saveError: Value(error.trim().isEmpty ? null : error)),
+    );
+    return true;
+  });
+
+  /// Clear the failure note, so the entry rejoins "save the new entries".
+  ///
+  /// The user asking for this one entry again *is* the retry: a failure that
+  /// was a dropped connection should not exile an entry from the batch
+  /// forever, and the person who taps it is better placed to know that than
+  /// any rule this app could write.
+  Future<void> clearDiscoveryCaptureFailure(String id) =>
+      (update(entries)..where((t) => t.id.equals(id))).write(
+        const EntriesCompanion(saveError: Value(null)),
+      );
+
+  /// Addresses and collections a **waiting or running save** is aimed at.
+  ///
+  /// The one place "the user has already asked for this" is answered, so
+  /// reconciliation and manual forgetting cannot drift apart. Queue state is
+  /// not entry state — nothing on the entry row says a save is coming — so it
+  /// has to be read from the queue, and it is read inside the same transaction
+  /// as the deletion it guards.
+  Future<({Set<String> urlKeys, Set<String> collectionIds})>
+  _pendingSaveClaims() async {
+    final urlKeys = <String>{};
+    final collectionIds = <String>{};
+    for (final task in await pendingQueueTasks()) {
+      if (task.taskType != 'entrySave' && task.taskType != 'sequenceSave') {
+        continue;
+      }
+      // A multi-entry save's reach is not knowable from its row: it walks
+      // forward from its start address for as far as it was allowed.
+      final collectionId = task.collectionId;
+      if (task.taskType == 'sequenceSave' && collectionId != null) {
+        collectionIds.add(collectionId);
+      }
+      final url = task.startUrl;
+      if (url != null && url.trim().isNotEmpty) urlKeys.add(normalizeUrl(url));
+    }
+    return (urlKeys: urlKeys, collectionIds: collectionIds);
+  }
+
   /// Startup recovery: an entry left mid-flight is reset, never promoted.
   Future<int> resetInFlightEntries() =>
       (update(entries)..where((t) => t.saveStatus.equals('saving'))).write(
@@ -1312,3 +1572,81 @@ class AppDatabase extends _$AppDatabase {
 
   Future<int> clearFavicons() => delete(faviconCache).go();
 }
+
+/// How [AppDatabase.forgetDiscoveredEntry] ended.
+///
+/// Named outcomes rather than a bool, because two of the three refusals have
+/// to be said out loud: "this is no longer only a discovery" and "a save you
+/// asked for is waiting on it" are different facts, and an action that just
+/// did nothing would leave the user tapping it again.
+enum ForgetDiscoveryResult {
+  forgotten,
+
+  /// The row carries content, reading state or a correction of the user's. Not
+  /// app-made metadata any more, so not this action's business.
+  notADiscovery,
+
+  /// A queued or running save names it. Refused rather than cancelling work
+  /// nobody asked to cancel.
+  claimedByQueue,
+
+  /// Already gone.
+  missing;
+
+  /// One sentence for the user, or null when there is nothing to say.
+  String? get refusal => switch (this) {
+    ForgetDiscoveryResult.forgotten || ForgetDiscoveryResult.missing => null,
+    ForgetDiscoveryResult.notADiscovery =>
+      'This entry has been saved, so it is kept. Remove its offline files '
+          'instead if you need the space.',
+    ForgetDiscoveryResult.claimedByQueue =>
+      'This entry is waiting to be saved. Remove it from Activity first.',
+  };
+}
+
+/// Is this row **only** a record of what an update check saw at the source?
+///
+/// The question the app's automatic and manual removals of discovered entries
+/// both rest on, so it is asked of every column that could hold something the
+/// user would lose, rather than of `save_status` alone. A status can be written
+/// by one code path while a second one has already attached bytes or a reading
+/// position to the same row, and this predicate is what makes that ordering
+/// irrelevant.
+///
+/// Public so the screens that *offer* those removals ask this rather than
+/// re-deriving it from `save_status`. It answers only the row half of the
+/// question — whether a save is waiting on the entry is the queue's to answer,
+/// and [AppDatabase.forgetDiscoveredEntry] asks both.
+///
+/// Deliberately conservative in both directions: a row that fails any clause
+/// is kept, including one whose columns disagree with each other. Repairing a
+/// contradictory row is not this function's business, and treating an
+/// unexpected combination as "safe to delete" is exactly the mistake worth
+/// designing against.
+bool isDiscoveredOnlyEntry(Entry entry) =>
+    entry.saveStatus == 'knownRemote' &&
+    entry.discoveredAt != null &&
+    // Nothing stored, and nothing that says something ever was.
+    entry.contentPath == null &&
+    entry.savedAt == null &&
+    entry.byteSize == 0 &&
+    entry.storedAssetCount == 0 &&
+    entry.captureMode == null &&
+    // Not files the user removed on purpose — that row is a save they still
+    // own the history of.
+    entry.offlineRemovedAt == null &&
+    // No reading state. A discovery cannot be opened, so any of this means the
+    // row is not what it claims to be.
+    entry.readStatus == 'unread' &&
+    entry.progressFraction == 0 &&
+    entry.progressPageIndex == 0 &&
+    entry.progressOffsetInPage == 0 &&
+    entry.firstOpenedAt == null &&
+    entry.lastReadAt == null &&
+    entry.completedAt == null &&
+    entry.progressUpdatedAt == null &&
+    // Not a correction the user made to what this is.
+    !entry.contentKindIsUserSet;
+// `save_error` is deliberately absent. A failed capture attempt is a note
+// about one attempt, not something the user owns and not evidence about the
+// source — a row carrying one is still exactly as removable as it was.

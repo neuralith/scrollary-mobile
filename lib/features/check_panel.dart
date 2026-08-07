@@ -61,6 +61,9 @@ class UpdateCheckPanel extends StatelessWidget {
               child: Text(
                 '${checker.pagesInspected} page(s) read'
                 ' · ${checker.newEntries} new'
+                // Counted apart from "new", always: found and gone are
+                // opposite facts, and one number for both says neither.
+                '${checker.staleRemoved > 0 ? ' · ${checker.staleRemoved} gone' : ''}'
                 ' · depth ${checker.forwardDepth}'
                 '/${checker.config.maxForwardDepth}',
                 maxLines: 1,

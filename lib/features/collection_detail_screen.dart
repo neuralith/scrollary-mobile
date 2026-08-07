@@ -699,6 +699,12 @@ class _CollectionDetailState extends ConsumerState<_CollectionDetail> {
   /// `skipComplete`, not `ask`: the user just said "save the new ones", so an
   /// entry that is already held is skipped quietly — that is the request, not
   /// a surprise.
+  ///
+  /// One that has already been tried and failed is left out, and the section
+  /// says how many and why. This app cannot tell a page the source withdrew
+  /// from one that timed out, so it does not guess — but re-queueing the same
+  /// failing address on every press is a loop with no way out of it, and the
+  /// entry is still there to retry on its own.
   Future<void> _saveNewEntries(
     BuildContext context,
     WidgetRef ref,
@@ -706,7 +712,7 @@ class _CollectionDetailState extends ConsumerState<_CollectionDetail> {
   ) async {
     final queue = ref.read(taskQueueProvider);
     final result = await queue.enqueueEntries(
-      knownRemote,
+      knownRemote.where((e) => e.saveError == null).toList(),
       policy: DuplicatePolicy.skipComplete,
     );
     if (!context.mounted) return;
@@ -1067,6 +1073,11 @@ class _UpdateCheckCard extends ConsumerWidget {
         // rather than showing a check that can never find anything.
         if (collection == null) return const SizedBox.shrink();
 
+        // What the check the user just watched retracted. Session state on the
+        // checker, and zero once the app restarts — by then the rows are gone
+        // and there is no longer a check they were watching.
+        final retracted = checker.staleRemovedFor(collection.id);
+
         final (icon, iconColor, title, body) = switch (null) {
           _ when checking => (
             Icons.manage_search,
@@ -1148,6 +1159,27 @@ class _UpdateCheckCard extends ConsumerWidget {
                             color: palette.inkMuted,
                           ),
                         ),
+                        // Stated as its own line, never folded into the count
+                        // above it: what the source has gained and what it has
+                        // dropped are two different answers, and only one of
+                        // them is something to go and save.
+                        if (retracted > 0) ...[
+                          const SizedBox(height: 4),
+                          Text(
+                            key: const ValueKey('staleRemovedLine'),
+                            '${group.labels.count(retracted)} '
+                            '${retracted == 1 ? 'is' : 'are'} no longer at the '
+                            'source, so ${retracted == 1 ? 'it has' : 'they have'} '
+                            'been taken off this list. '
+                            '${retracted == 1 ? 'It was' : 'They were'} never '
+                            'downloaded — nothing was deleted from this device.',
+                            style: TextStyle(
+                              fontSize: 12,
+                              height: 1.45,
+                              color: palette.inkMuted,
+                            ),
+                          ),
+                        ],
                       ],
                     ),
                   ),
@@ -1227,9 +1259,20 @@ class _RemoteEntries extends ConsumerWidget {
   final List<Entry> entries;
   final VoidCallback onSave;
 
+  /// Entries a save has already been tried on and failed. Still listed, still
+  /// individually retryable — but left out of the batch below, because a
+  /// button that re-queues the same failing address every time it is pressed
+  /// is not a way forward.
+  static bool _lastAttemptFailed(Entry entry) => entry.saveError != null;
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final palette = AppPalette.of(context);
+    final untried = entries.where((e) => !_lastAttemptFailed(e)).toList();
+    final labels = labelsFromNames(
+      contentKind: entries.first.contentKind,
+      confidence: entries.first.contentKindConfidence,
+    );
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -1260,7 +1303,15 @@ class _RemoteEntries extends ConsumerWidget {
                     ),
                     child: Row(
                       children: [
-                        Icon(Icons.cloud, size: 20, color: palette.inkFaint),
+                        Icon(
+                          _lastAttemptFailed(entry)
+                              ? Icons.cloud_off
+                              : Icons.cloud,
+                          size: 20,
+                          color: _lastAttemptFailed(entry)
+                              ? palette.warn
+                              : palette.inkFaint,
+                        ),
                         const SizedBox(width: 11),
                         Expanded(
                           child: Text(
@@ -1279,48 +1330,80 @@ class _RemoteEntries extends ConsumerWidget {
                           ),
                         ),
                         Text(
-                          'found ${formatRelative(entry.discoveredAt)}',
+                          _lastAttemptFailed(entry)
+                              ? 'last try failed'
+                              : 'found ${formatRelative(entry.discoveredAt)}',
                           style: TextStyle(
                             fontSize: 11,
-                            color: palette.inkFaint,
+                            color: _lastAttemptFailed(entry)
+                                ? palette.warn
+                                : palette.inkFaint,
                           ),
                         ),
                       ],
                     ),
                   ),
                 ),
-              Material(
-                color: palette.primaryContainer,
-                child: InkWell(
-                  onTap: onSave,
-                  child: Padding(
-                    padding: const EdgeInsets.all(13),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(
-                          Icons.download,
-                          size: 19,
-                          color: palette.onPrimaryContainer,
-                        ),
-                        const SizedBox(width: 8),
-                        Text(
-                          'Save ${labelsFromNames(contentKind: entries.first.contentKind, confidence: entries.first.contentKindConfidence).count(entries.length)}',
-                          style: TextStyle(
-                            fontSize: 14,
-                            fontVariations: wght(600),
-                            fontWeight: FontWeight.w600,
+              if (untried.isEmpty)
+                Padding(
+                  padding: const EdgeInsets.all(13),
+                  child: Text(
+                    'Every one of these has been tried and did not finish. '
+                    'Open one to try it again on its own, or to forget it.',
+                    style: TextStyle(
+                      fontSize: 12,
+                      height: 1.35,
+                      color: palette.inkMuted,
+                    ),
+                  ),
+                )
+              else
+                Material(
+                  color: palette.primaryContainer,
+                  child: InkWell(
+                    key: const ValueKey('saveNewEntries'),
+                    onTap: onSave,
+                    child: Padding(
+                      padding: const EdgeInsets.all(13),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(
+                            Icons.download,
+                            size: 19,
                             color: palette.onPrimaryContainer,
                           ),
-                        ),
-                      ],
+                          const SizedBox(width: 8),
+                          Text(
+                            'Save ${labels.count(untried.length)}',
+                            style: TextStyle(
+                              fontSize: 14,
+                              fontVariations: wght(600),
+                              fontWeight: FontWeight.w600,
+                              color: palette.onPrimaryContainer,
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
                   ),
                 ),
-              ),
             ],
           ),
         ),
+        if (untried.length < entries.length && untried.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 8, 20, 0),
+            child: Text(
+              '${entries.length - untried.length} left out — the last attempt '
+              'did not finish. Open one to try it again on its own.',
+              style: TextStyle(
+                fontSize: 11.5,
+                height: 1.35,
+                color: palette.inkMuted,
+              ),
+            ),
+          ),
       ],
     );
   }

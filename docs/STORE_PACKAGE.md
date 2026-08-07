@@ -89,10 +89,9 @@ BUILT FOR READING, NOT FOR HOARDING
 
 The ordinary action saves the page in front of you. Nothing else. When a page
 turns out to be part of something longer — a multi-page document, a dated series
-of posts, a set of related pages — Scrollary tells you what it found and asks
-before saving more. You see the source, how many items were detected, whether the
-sequence has a known end, which direction it runs, and where it will stop. You
-can review the list and pick items individually.
+of posts, a set of related pages — Scrollary tells you what it found and saves
+more only if you ask. Saving more means typing how many, so a run always stops
+where you said it would. There is no "save everything" button.
 
 YOUR LIBRARY
 
@@ -183,9 +182,9 @@ OKUMAK İÇİN TASARLANDI
 Olağan işlem, önünüzdeki sayfayı kaydeder. Başka bir şey yapmaz. Bir sayfanın
 daha uzun bir bütünün parçası olduğu anlaşıldığında — çok sayfalı bir belge,
 tarihli bir gönderi dizisi, birbiriyle ilişkili sayfalar — Scrollary ne bulduğunu
-söyler ve devam etmeden önce sorar. Kaynağı, kaç öğe bulunduğunu, dizinin bilinen
-bir sonu olup olmadığını, hangi yönde ilerlediğini ve nerede duracağını görürsünüz.
-Listeyi inceleyip öğeleri tek tek seçebilirsiniz.
+söyler ve yalnızca siz isterseniz devam eder. Devam etmek, kaç öğe kaydedileceğini
+yazmanız demektir; böylece işlem her zaman sizin belirlediğiniz yerde durur.
+"Hepsini kaydet" diye bir düğme yoktur.
 
 KİTAPLIĞINIZ
 
@@ -248,12 +247,19 @@ appears in any of them — every screenshot uses the demo content in
 |---|---|---|---|
 | 1 | Library | Your reading library, on your device | Okuma kitaplığınız, cihazınızda |
 | 2 | Save scope sheet | The default saves one page. More is your choice. | Varsayılan tek sayfa kaydeder. Fazlası sizin kararınız. |
-| 3 | Review related items | See what was found before anything is saved | Hiçbir şey kaydedilmeden önce ne bulunduğunu görün |
-| 4 | Reader | Read offline, exactly where you left off | Çevrimdışı okuyun, tam bıraktığınız yerden |
-| 5 | Collection detail | Related pages, in order, with progress | İlişkili sayfalar, sırayla, ilerlemeyle |
-| 6 | Queue / Activity | Every save is visible and cancellable | Her kayıt görünür ve iptal edilebilir |
-| 7 | Storage | Know what is using space. Reclaim it in a tap. | Neyin yer kapladığını bilin. Tek dokunuşla geri kazanın. |
-| 8 | Content rights | Save only what you are allowed to keep | Yalnızca saklamanıza izin verilenleri kaydedin |
+| 3 | Reader | Read offline, exactly where you left off | Çevrimdışı okuyun, tam bıraktığınız yerden |
+| 4 | Collection detail | Related pages, in order, with progress | İlişkili sayfalar, sırayla, ilerlemeyle |
+| 5 | Queue / Activity | Every save is visible and cancellable | Her kayıt görünür ve iptal edilebilir |
+| 6 | Storage | Know what is using space. Reclaim it in a tap. | Neyin yer kapladığını bilin. Tek dokunuşla geri kazanın. |
+
+**Two captions were removed rather than kept, because their screens do not
+exist.** A screenshot set is a claim about the app, and one that shows a screen
+a reviewer cannot reach is worse than one screenshot fewer:
+
+| Removed | Screen | Why |
+|---|---|---|
+| *See what was found before anything is saved* | Review related items | The save-scope review step is **deferred** — ARCHITECTURE.md §5, §10. Restore this caption when §6.4 is built |
+| *Save only what you are allowed to keep* | Content rights | The content-rights disclosure is **deferred** — STORE_POLICY_MAP.md §8. Restore this caption when §6.1 is built |
 
 **Feature graphic copy (Play, 1024×500):** `Save web pages. Read offline.` over
 the app mark on the palette's quiet surface. No screenshots-in-graphic, no
@@ -265,9 +271,27 @@ third-party logos, no device frames implying an endorsement.
 
 The single source for these strings. The app must not paraphrase them.
 
+**Not every section here is on screen yet.** Each one below says which it is.
+A section marked *specified, not built* is wording held for a surface that does
+not exist; it is not a description of the app, and nothing in the listing, the
+reviewer notes or a screenshot may rely on it. The built/deferred split is
+ARCHITECTURE.md §10.
+
+| § | Surface | State |
+|---|---|---|
+| 6.1 | First-use content-rights disclosure | **Specified, not built** |
+| 6.2 | Contextual multi-entry notice | **Specified, not built** |
+| 6.3 | What to save (capture modes) | **Built** — verbatim, except where noted |
+| 6.4 | Save-scope review | **Specified, not built** |
+| 6.5 | Restricted-access stopping | **Built** — verbatim |
+| 6.5.1 | Sites Scrollary does not save from | **Built** — verbatim |
+| 6.6 | Video pages | **Built** — verbatim |
+| 6.7 | Empty and error states | **Partly built** — see the note there |
+
 ### 6.1 First-use content-rights disclosure
 
-Shown once, immediately before the first save of an external page.
+**Specified, not built.** Shown once, immediately before the first save of an
+external page.
 
 > **Before you save**
 >
@@ -288,29 +312,43 @@ Dismissing without acknowledging cancels the save. Re-readable at
 
 ### 6.2 Contextual multi-entry notice
 
-Shown once per domain, before the first save of more than one page from it.
+**Specified, not built.** Intended to be shown once per domain, before the first
+save of more than one page from it.
 
 > **Saving several pages from example.com**
 >
 > Only save content you have permission to keep. This site's terms may limit
 > automated requests or offline copies.
 >
-> This will save up to **12 items**, following next-page links, and will stop
-> when there is no next page.
+> This will save up to **12 items**, and will stop there.
 
-Actions: **Review items** · **Cancel** · **Save**
+Actions: **Cancel** · **Save**
+
+Two things in the original draft were removed rather than carried forward,
+because they described a product that no longer exists: *"following next-page
+links, and will stop when there is no next page"* (there is no open-ended
+scope — a run stops at the number the user typed, ARCHITECTURE.md §5) and a
+**Review items** action (§6.4 is not built). If this notice is ever built, its
+stop sentence must state the user's own number.
 
 ### 6.3 What to save
 
-Shown at the top of the save sheet, above the range options. The heading is
-**What to save**, with one line of what was detected beneath it:
+**Built.** Shown at the top of the save sheet, above the range options. The
+heading is **What to save**, with one line of what was detected beneath it.
+Verbatim from `_CaptureSection._summary` in
+`lib/features/save_scope_sheet.dart`:
 
 | Detection | Line |
 |---|---|
-| Confident | `This looks like an article.` |
-| Low confidence | `This is probably not something we could classify, but the page did not say clearly.` |
+| Confident | `This looks like an article.` — the noun varies: *a page of full-size images · an article · a dated post · part of a longer text · a long document · one page of a document · a video page* |
+| Low confidence | `This might be an article — the page did not say clearly.` |
+| Analysed, but the kind is unclear | `This page did not say clearly what it is. Pick what fits.` |
 | Not analysed | `This page could not be analysed, so every option is offered. Pick what fits.` |
 | Nothing possible | `Nothing on this page can be saved offline.` |
+
+The low-confidence and unclear cases are deliberately two lines rather than one:
+forcing "not something we could classify" through the *"this looks like…"*
+template produced a sentence that read as a guess about a guess.
 
 Modes, all three always visible; unavailable ones are disabled with the reason
 in place of the description:
@@ -325,6 +363,27 @@ Optional, when the page belongs to a collection:
 **Use "<mode>" for this collection from now on**
 
 ### 6.4 Save-scope review
+
+**Specified, not built.** This is the deferred review step (ARCHITECTURE.md §5,
+§10). The domain layer already computes everything it needs — `detectSequence`
+returns the kind, direction, known total and confidence, and `SaveLimits` the
+ceiling — but there is no screen. **Nothing may cite this section as current
+behaviour**, and the reviewer notes in §7 deliberately do not.
+
+**What the save sheet shows today instead**, under the heading *How many
+entries*, and this is what a screenshot or a reviewer note may describe:
+
+| Line | Wording |
+|---|---|
+| Scope, preselected | **Current entry** — `Only the entry open in the browser` |
+| Scope | **Number of entries** — `Type how many to save from here — up to 500` |
+| After a number is typed | `New saves only — already saved entries that get skipped do not use up this number. The save stops here, or sooner if the collection ends.` and `Save 3 entries starting from "…".` |
+| Estimated size | `Estimated size: <size> — <qualifier>.`, or `kSizeUnknownMessage` when nothing can be estimated |
+| Free space | `Available: <n> GB. Space is re-checked before every entry.`, or `Free space could not be checked — it will be checked again before each entry.` |
+| Where it goes | `Start Save opens and uses the current Browser now.` / `Add to Queue saves it for later.` |
+
+It does **not** state a shape, a direction, a stop condition or a known total,
+and it has no per-item list. Those are the four things §6.4 would add.
 
 Header: **Review what will be saved**
 
@@ -349,7 +408,12 @@ Scope options, in this order, with the first preselected:
 
 ### 6.5 Restricted-access stopping
 
-Verbatim from `StopReason.message`:
+**Built.** Verbatim from `StopReason.message` in `lib/save/stop_conditions.dart`,
+and re-checked against it. That enum carries more reasons than this table lists
+— `noNextPage`, `selectionComplete`, `unsupportedContent`, `insufficientStorage`,
+`storageLimitReached`, `repeatedUrl`, `cancelledByUser`, `interrupted` — which
+are ordinary outcomes rather than access restrictions, and are out of this
+section's scope rather than missing from it:
 
 | Condition | Message |
 |---|---|
@@ -371,7 +435,8 @@ at.
 
 ### 6.5.1 Sites Scrollary does not save from
 
-Verbatim, and the only sentence used anywhere for this:
+**Built.** Verbatim (`kCaptureRestrictedMessage`), and the only sentence used
+anywhere for this:
 
 > Saving isn't available on this site.
 
@@ -388,7 +453,7 @@ attempting anything.
 
 ### 6.6 Video pages
 
-Shown in the save sheet when the page is primarily a video.
+**Built.** Shown in the save sheet when the page is primarily a video.
 
 When the page also carries readable content:
 
@@ -414,17 +479,28 @@ or, when the file is gone rather than never fetched:
 
 ### 6.7 Empty and error states
 
-| State | Wording |
-|---|---|
-| Empty library | **Nothing saved yet.** Open the Browser, find something worth keeping, and tap Save. |
-| Empty collection | Nothing in this collection is available offline yet. |
-| No saved sites | Sites you save appear here. Nothing is added for you. |
-| No history | Pages you visit appear here. Saving a page does not. |
-| Entry not offline | Not available offline — save again. |
-| Offline, save attempted | You are offline. Saving needs a connection; everything already saved is still readable. |
-| Save failed | Could not save this page. Nothing already saved was affected. |
-| Out of space | Not enough space. Free some up on Settings → Storage, then try again. |
-| Partial save | Saved, but some images are missing. You can try again for the missing ones. |
+**Partly built, and this table is the *intended* wording rather than a
+transcript.** It was written before these screens were, and most of them ended
+up saying something else. That is not automatically a defect — a screen may
+have found a better sentence — but the difference has to be visible here, or
+this section quietly becomes a false claim about the app. The third column is
+what the app says today; where it differs, one of the two needs to change and
+neither has been chosen yet.
+
+| State | Wording specified here | In the app today |
+|---|---|---|
+| Empty library | **Nothing saved yet.** Open the Browser, find something worth keeping, and tap Save. | `Nothing saved yet` — matches (`library_screen.dart`) |
+| Empty collection | Nothing in this collection is available offline yet. | **Different.** The collection screen's resume control reads `Nothing to read yet`; there is no separate empty-collection sentence |
+| No saved sites | Sites you save appear here. Nothing is added for you. | **Different.** `No saved sites yet` / `Save the sites you read on so they're one tap away.` (`browser_home.dart`) |
+| No history | Pages you visit appear here. Saving a page does not. | **Different.** `No history yet` / `Pages you open in the Browser show up here. Nothing is sent anywhere.` (`browser_history_screen.dart`) |
+| Entry not offline | Not available offline — save again. | **Close, not verbatim.** `Not available offline yet.` and `Not available offline — you removed its files. …` (`entry_actions.dart`), `Not available offline` (`reader_screen.dart`) |
+| Offline, save attempted | You are offline. Saving needs a connection; everything already saved is still readable. | **Not present.** The nearest is the Browser's own offline page state: `The device has no connection, so this page can't load. Entries …` |
+| Save failed | Could not save this page. Nothing already saved was affected. | **Different.** The save panel shows the label `Save failed`; the sentence is not used |
+| Out of space | Not enough space. Free some up on Settings → Storage, then try again. | **Different.** Title `Not enough space`, body `<n> GB available — saving needs at least 500 MB free. Existing downloads are …` (`save_scope_sheet.dart`) |
+| Partial save | Saved, but some images are missing. You can try again for the missing ones. | **Different.** `This entry is saved, but incomplete — some images are missing.` (`save_preflight.dart`) |
+
+None of these rows is quoted in the listing copy (§2–§4) or the reviewer notes
+(§7), so nothing outward-facing depends on the mismatch.
 
 ---
 
@@ -481,12 +557,16 @@ Nothing already downloaded is ever removed by it.
 HOW SAVING WORKS
 
 1. The user browses to a page themselves, in the app's browser.
-2. They tap Save. The DEFAULT and preselected action is "Save current page only".
-3. If the app detects that the page continues (rel=next, numbered pagination, a
-   dated list), it shows a review step first: what was detected, the source
-   domain, how many items, whether the end is known, which direction, where it
-   stops, and an estimated size. The user can review and pick items individually.
-4. Open-ended sequences REQUIRE an explicit maximum. There is no "unlimited".
+2. They tap Save. The save sheet says what the page was detected to be and
+   offers three capture modes (images only, text only, text and images), with
+   any mode the page cannot support shown disabled and the reason beside it.
+3. Below that, "How many entries". The DEFAULT and preselected option is
+   "Current entry" — one page. The only other option is "Number of entries",
+   where the user types a number, up to a per-run ceiling of 500.
+4. THERE IS NO UNLIMITED OR OPEN-ENDED SAVE. The app has no "keep going until
+   the site runs out" option; a multi-page run stops at the number the person
+   typed, or sooner if the sequence ends. The sheet also shows an estimated
+   size and the device's free space before anything starts.
 5. Multi-page saves appear in Activity with live progress and can be cancelled at
    any point; cancellation takes effect at the next safe point and the wording
    says so.
@@ -515,7 +595,7 @@ executed from any source.
 
 WHERE THINGS ARE
 
-- Save scope and the review step: Browser → Save
+- Capture mode and how many entries to save: Browser → Save
 - Queue, progress, cancel, retry: Library → Activity (top of the Library screen)
 - Delete saved files, keeping the library entry: Collection detail → select →
   Remove offline files; or Settings → Storage
@@ -523,7 +603,7 @@ WHERE THINGS ARE
   Collection detail → ⋯ → Delete permanently
 - Clear browsing history: Browser → Home → Full history → Clear
 - Clear website data (cookies, cache): Settings → Browser data
-- Privacy, Terms, Content rights: Settings → About
+- Saved rules (page elements the user taught), Activity history: Settings
 - Source attribution and "Open original page": Reader → ⋯, and Entry details
 
 HOW TO TEST EACH CONTENT SHAPE
@@ -538,10 +618,11 @@ Use the demo site at <DEMO_BASE_URL> (original content, developer-owned):
   /chain/1            an open-ended next-link chain with no declared end
   /gated              a page behind a demo sign-in form — shows the app STOPPING
 
-Suggested pass: save /article (single page) → save /doc/page-1 and choose
-"Save a number of items: 3" → open /chain/1 and choose "Continue until no next
-page" to see the required maximum → open /gated and start a save to see the
-sign-in stop condition → read offline in Airplane Mode → check Activity, then
+Suggested pass: save /article, leaving the preselected "Current entry" alone →
+save /doc/page-1, choose "Number of entries" and type 3 → open /chain/1 and see
+that even an endless next-link chain still requires a typed number, because
+there is no open-ended option → open /gated and start a save to see the sign-in
+stop condition → read offline in Airplane Mode → check Activity, then
 Settings → Storage.
 
 AGE RATING
@@ -580,7 +661,7 @@ developer.
 | Web browsing history | Stored on device only; not collected (Play: local-only processing need not be disclosed) |
 | Files and docs | Stored on device only; not collected |
 | Is data encrypted in transit? | N/A — no data is sent to the developer |
-| Can users request deletion? | **Yes**, in-app and without an account: per-collection *Delete permanently*, Settings → Storage, Browser data, and the debug-only full reset |
+| Can users request deletion? | **Yes**, in-app and without an account: per-collection *Delete permanently*, Settings → Storage, Browser → Full history → Clear, and Settings → Browser data. The full local reset is **not** part of this answer — it is gated by `kInternalBuild` and is absent from a Store build (PRIVACY.md §1) |
 | Committed to Play Families policy | **No** |
 | Independent security review | No |
 
@@ -605,7 +686,12 @@ developer.
 - [ ] Support URL with a working contact address
 - [ ] Marketing URL (optional)
 
-### 8.6 Manual console tasks that cannot be done from this repository
+### 8.6 Manual console and build tasks that cannot be done from this repository
+
+- [ ] **Build the submission binary with no `--dart-define=SCROLLARY_INTERNAL_BUILD`.**
+      Passing it compiles in the destructive local-reset screen and the
+      entitlement override (STORE_POLICY_MAP.md §4). This is the one release
+      obligation the code cannot enforce for itself.
 
 - [ ] Answer the App Privacy questionnaire (§8.1)
 - [ ] Answer the Data safety form (§8.2)

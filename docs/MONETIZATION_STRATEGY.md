@@ -1,13 +1,46 @@
 # Monetization strategy
 
-> A decision document, not an implementation plan and not a commitment. It
-> records what the product is today, what the two stores currently require, what
-> comparable apps actually charge, and which model fits **this** app — one
-> local-first reader, one developer, no server.
+> **Historical, dated 2026-08-03. Partly superseded. Not a specification.**
 >
-> Nothing in this document has been implemented. No purchase, entitlement,
-> account, analytics or backend code exists in the repository, and none was added
-> to write this.
+> This is research and a recommendation, written before any capability boundary
+> existed. Two things have since changed underneath it, and both are flagged
+> where they occur:
+>
+> 1. **§2.2 is no longer true.** It states that nothing in the codebase knows
+>    what a "Pro" user is. A capability seam now exists — `lib/capability/`,
+>    with entitlement, an internal override, a capability and a user preference.
+>    There is still **no billing**: `productionEntitlement()` returns `free`,
+>    and nothing charges anybody.
+> 2. **§8.3's proposed boundary has been superseded by an explicit product
+>    decision.** This document recommended selling *update checking* as the
+>    headline Pro feature. **That is no longer the plan, and must not be
+>    implemented.** The decision now is:
+>
+>    > **Update checking is Free. Foreground multitasking — letting a supported
+>    > operation keep working while the user goes somewhere else in the app — is
+>    > Pro.**
+>
+>    Free covers the operation itself: a Collection check, the Library-wide
+>    check, the Entries either discovers, saving and capture on the ordinary
+>    flows, and the whole library and offline reader. Pro covers only the
+>    *execution experience* — the operation continuing while the user reads or
+>    browses elsewhere in the app instead of holding until they return.
+>    Specified in FOREGROUND_MULTITASKING.md §10.0, carried as an invariant in
+>    ARCHITECTURE.md §9, and stated as a standing rule in CLAUDE.md.
+>
+> **Read every "Pro" claim below against that decision.** Where this document
+> proposes gating an operation, it is describing an option that was considered
+> and rejected, not a requirement. §17's remaining decisions (price, model,
+> sequencing) are still open; the *boundary* is not.
+>
+> Read this for the store-policy findings, the competitor pricing and the
+> arithmetic — which are unaffected — and read ARCHITECTURE.md §10 for what the
+> app actually is.
+>
+> A decision document, not an implementation plan and not a commitment. It
+> records what the product was on the date above, what the two stores then
+> required, what comparable apps charge, and which model fits **this** app — one
+> local-first reader, one developer, no server.
 >
 > **Terminology.** The product is **Scrollary** (STORE_PACKAGE.md §1); "Web
 > Reader" is the retired working name and appears only in the pubspec package
@@ -50,8 +83,8 @@ Secondary conclusions:
 | Does it need Apple or Google login? | **No.** Apple 5.1.1(v) actively *forbids* requiring a login in an app without significant account-based features. |
 | Does it need a Scrollary account? | **No**, and not until cloud sync exists — which is Stage 4 at the earliest. |
 | Does it need a backend? | **No.** StoreKit 2 and Play Billing both answer the entitlement question on-device. |
-| What is free forever? | Browsing, saving (single and bounded multi-entry), every capture mode, unlimited Collections and Entries, offline reading, reading position, archive, storage management, deletion, undo, retry — the whole reader. |
-| What is Pro? | Library **power tools**: update checking, saved rules (taught page hints), per-collection capture preferences, queue depth, reader customisation, diagnostics. |
+| What is free forever? | Browsing, saving (single and bounded multi-entry), every capture mode, unlimited Collections and Entries, offline reading, reading position, archive, storage management, deletion, undo, retry — the whole reader. **Since superseded, and now larger:** update checking, at both granularities, is Free too. |
+| What is Pro? | ~~Library **power tools**: update checking, saved rules (taught page hints), per-collection capture preferences, queue depth, reader customisation, diagnostics.~~ **Superseded.** The decision is **foreground multitasking** — a supported operation continuing while the user is elsewhere in the app. Update checking is **Free**. See the header and §8.3 |
 | What happens to saved content if entitlement is ever lost? | **Nothing.** Not a byte, not a row, not a reading position. Pro gates *new* operations only. |
 | What is out of scope initially? | Accounts, cloud sync, cloud backup, analytics, ads, external payment flows, desktop companions, usage-based pricing, and any "supported-site preset" (forbidden outright — see §8.1). |
 
@@ -85,7 +118,19 @@ inspection, not inference.
 | Restricted-site capture policy | `lib/save/capture_policy.dart`, the only file in `lib/` permitted to name a host; enforced at every boundary independently | ARCHITECTURE.md §7.1 |
 | Store positioning | Age rating **18+**, "Ads: None", listing name `Scrollary: Offline Web Reader`, bundle `com.mcagricaliskan.scrollary` | STORE_PACKAGE.md §1, §8.4 |
 
+**Two rows have drifted since this inspection.** The Settings screen has gained
+a *Keep working while I read* row, which is the Pro-gated control; and the
+Developer entry is gated by `kInternalBuild`, not `kDebugMode` alone, so it is
+present in a profile or release build compiled with
+`--dart-define=SCROLLARY_INTERNAL_BUILD=true`. Neither changes any argument
+below. Current state: ARCHITECTURE.md §10.
+
 ### 2.2 What does **not** exist
+
+> **⚠ Superseded in part.** As written on 2026-08-03 this section was accurate.
+> The second bullet is now **false** and is kept only so the change is visible:
+> a capability seam shipped afterwards. Everything else in the list still holds
+> — in particular there is still no billing, no account and no backend.
 
 Verified by grep across `lib/`, `test/`, `android/app`, `ios/Runner`, `pubspec.yaml`
 and `docs/`:
@@ -93,11 +138,17 @@ and `docs/`:
 - **No purchase or billing code.** No `in_app_purchase`, no StoreKit, no Play
   Billing, no RevenueCat or equivalent. The only matches for "subscription" in
   `lib/` are Dart `StreamSubscription`s and paywall *detection* strings in
-  `bridge_script.dart` / `stop_conditions.dart`.
-- **No entitlement, tier, feature-flag or remote-config concept.** Nothing in the
-  codebase knows what a "Pro" user is.
+  `bridge_script.dart` / `stop_conditions.dart`. — *Still true.*
+- ~~**No entitlement, tier, feature-flag or remote-config concept.** Nothing in the
+  codebase knows what a "Pro" user is.~~ — **No longer true.** `lib/capability/`
+  now separates entitlement (`productionEntitlement()`, which returns `free`),
+  an internal-build override (`EntitlementOverride`), the capability that
+  follows from it (`proCapabilityAvailable()`) and the user's own preference.
+  It gates one behaviour — foreground multitasking — and nothing else. There is
+  still no remote config and no tier beyond that. See
+  FOREGROUND_MULTITASKING.md §10.4.
 - **No authentication.** No login screen, no OAuth, no token storage, no keychain
-  use for credentials.
+  use for credentials. — *Still true.*
 - **No backend of any kind.** `dio` fetches page assets from the sites the user
   visits; there is no developer-owned endpoint anywhere.
 - **No analytics, crash reporting or advertising SDK.** This is a standing rule,
@@ -115,7 +166,10 @@ From ARCHITECTURE.md §10, verbatim status:
 | First-use and contextual **content-rights disclosures (UI)** | Must precede any paid release; a paywall in front of an app that has not yet made its content-rights position visible is the wrong order. |
 | **Privacy / Terms / Content-rights settings pages** | Store submission blockers regardless of monetization (STORE_PACKAGE.md §8.5). |
 | Hosted demo site, store assets | External, deferred. |
-| **Device runtime verification** — "Not run — simulator launch only" | The app has never been verified on physical hardware. |
+| ~~**Device runtime verification** — "Not run — simulator launch only"~~ | ~~The app has never been verified on physical hardware.~~ **No longer true.** The app has since run on a cabled iPhone 17, including a real-site save and a soak; Android hardware and the accessibility passes are still outstanding. Current status: ARCHITECTURE.md §10 |
+
+The first four rows still hold. Nothing in this document's arithmetic depends on
+the fifth.
 
 ### 2.4 What would require new infrastructure, and what can stay local
 
@@ -691,11 +745,45 @@ it. That risk is concrete: Apple 2.3 (accurate metadata) and 5.2.2, Play's
 Deceptive Behavior and IP policies, and the residual-risk register in
 STORE_POLICY_MAP.md §10 all point at the same surface.
 
-**Therefore: multi-entry saving stays free and bounded exactly as it is today, and
-Pro sells *library management* instead.** This costs some conversion. It protects
-the thing that is harder to get back.
+**Therefore: multi-entry saving stays free and bounded exactly as it is today**,
+and Pro sells something other than volume of capture. This costs some
+conversion. It protects the thing that is harder to get back.
+
+*This section's reasoning survives the supersession and is the reason the final
+boundary is what it is.* Where it concluded "Pro sells ~~*library management*~~",
+the decision landed one step further out: **Pro sells neither capture volume nor
+library capability — it sells not having to watch.** The same argument applies
+with more force to checking than to saving. *"Pro: find out whether your
+collection updated"* prices the library's own knowledge of itself, which is
+closer to the volume framing this section rejects, not further from it.
 
 ### 8.3 The matrix
+
+> **⚠ This matrix is a 2026-08-03 proposal, and it is not what shipped.** Read
+> it as one option that was considered, not as a plan of record and not as a
+> description of the app.
+>
+> **What shipped instead** gates exactly one behaviour: whether a
+> Browser-dependent phase may continue while another screen is in front
+> (FOREGROUND_MULTITASKING.md §10.3). Everything else in that specification's
+> matrix is unconditional, including the operation indicator, cancellation,
+> failure states, retry, recovery and every access to already-downloaded
+> content. Foreground multitasking does not appear anywhere in the table below,
+> because it did not exist when this was written.
+>
+> **One row below has been decided against, not merely left unbuilt.**
+> *Automatic update checking → Pro* is **superseded**. The product decision is
+> that **update checking is Free** — a single Collection check, the Library-wide
+> check, and every Entry either discovers — and that the Pro capability is
+> **foreground multitasking** instead. Do not implement the row below, and do
+> not treat it as a pending requirement.
+>
+> It is also blocked in code: `test/library_check_test.dart` fails the build if
+> entitlement, tier, counter or purchase vocabulary appears anywhere in `lib/`
+> outside a short exemption list — the capability seam plus the three files that
+> merely name it — and its failure message states the reason: *checking is
+> unrestricted*. That guard is now the executable form of the decision, not an
+> accident to be worked around.
 
 Legend: **Free** = permanent, unlimited, no paywall · **Pro** = one-time unlock ·
 **Cloud** = only meaningful with a service that does not exist · **Never** = ruled
@@ -709,7 +797,8 @@ out by §8.1.
 | **Automatic multi-Entry saving** | **Free, bounded as today** | See §8.2. Bounded by a number the user typed, clamped to `maxEntriesPerRun`. **Open decision D-3 (§17):** whether free runs get a lower visible cap. |
 | **Queue size** | **Free: 1 pending task · Pro: full depth + reordering** | A defensible convenience boundary that does not touch how much can be saved in total — a free user can queue one, run it, queue the next. |
 | **Background / unattended processing** | **Never** | §8.1 |
-| **Automatic update checking** | **Pro** | The headline Pro feature. "Did a new Entry appear?" is the recurring-value question for the image-sequence use case, and its detection logic carries the most ongoing maintenance cost of anything in the app. The free path remains complete: open the source in the Browser and save the next Entry. |
+| **Automatic update checking** | ~~**Pro**~~ → **FREE. Superseded by product decision.** | The 2026-08-03 reasoning, kept for the record: "Did a new Entry appear?" is the recurring-value question for the image-sequence use case, and its detection logic carries the most ongoing maintenance cost of anything in the app. **Rejected.** Checking is core library function — a library that cannot tell you it has grown is a worse library, not a cheaper one — and the cost argument justifies charging for maintenance, not for withholding the answer. What is sold instead is **not having to watch the check run**: foreground multitasking (§10.0 of FOREGROUND_MULTITASKING.md). Both granularities are Free: one Collection, and the Library-wide check that repeats it |
+| **Foreground multitasking** — an operation continuing while the user reads or browses elsewhere **in the app** | **Pro** — and the only Pro row that reflects a decision | Did not exist when this matrix was written. It sells convenience rather than capability: the Free user runs the same check and the same save, gets the same results, and waits with the Browser on screen. Never described as background execution; nothing runs once the app is not in front |
 | **Update-check frequency** | **Never (does not exist)** | §8.1 |
 | **Retry and recovery tools** | **Free** | Data protection. Retrying a failed save, resuming an interrupted run, and `storage/recovery.dart` rebuilding rows from packages are how a user does not lose work. Never paywalled. |
 | **Advanced capture controls** (per-collection `preferred_capture_mode`, duplicate policy) | **Pro** | Genuinely advanced, genuinely optional; the defaults are correct without them. |
@@ -735,13 +824,25 @@ out by §8.1.
 
 ### 8.4 The one-sentence version
 
-> **Free: browse, save, keep, read, organise — the whole reader, with no limits on
+**Proposed on 2026-08-03, and superseded:**
+
+> ~~**Free: browse, save, keep, read, organise — the whole reader, with no limits on
 > what you keep.
 > Pro: the tools that watch your library for you — update checks, saved rules,
-> capture preferences, queue depth and diagnostics.**
+> capture preferences, queue depth and diagnostics.**~~
+
+**The current decision**, and the sentence that matches what shipped — one
+behaviour, with the free path the correct path rather than a degraded one:
+
+> **Free: all of it — including checking for new Entries — with Scrollary on
+> screen while the check or save works.
+> Pro: keep reading while it works.**
 
 If the boundary cannot be stated in one sentence a user believes, it is the wrong
-boundary.
+boundary. That test is what retired the five-item version: *"we watch your
+library for you"* sells a capability the free app already has, so the user is
+paying to stop being told to stand still — which is only honest if the standing
+still is the only thing removed.
 
 ---
 
@@ -943,7 +1044,7 @@ no login · no backend.**
 | Monthly/annual price positioning? | **None.** No recurring price exists in v1. |
 | Should a trial exist? | **No.** The free tier is the trial, permanently, with no countdown and no expiry email. Apple's Tier-0 "XX-day Trial" mechanism is available but adds receipt/DeviceCheck work for a worse experience. |
 | What is in the permanent free tier? | The entire reader: browsing, saving (single **and** bounded multi-entry), all three capture modes, unlimited Collections and Entries, offline reading, reading position and resume, archive/restore, sorting, storage management and cleanup with undo, permanent deletion, retry and recovery, activity history, user-assisted capture for the run in front of you, appearance settings, browsing history, saved sites, clear website data, local reset, **and Restore Purchases**. |
-| What is in Pro? | Update checking · saved rules (persisted page hints) · per-collection capture preference and duplicate policy · queue depth and reordering · advanced diagnostics · tags/pins/advanced sorting and reader customisation **when they exist**. |
+| What is in Pro? | ~~Update checking · saved rules (persisted page hints) · per-collection capture preference and duplicate policy · queue depth and reordering · advanced diagnostics · tags/pins/advanced sorting and reader customisation **when they exist**.~~ **Superseded.** Pro is **foreground multitasking** — a supported operation continuing while the user reads or browses elsewhere in the app. **Update checking moved to Free** (§8.3, and FOREGROUND_MULTITASKING.md §10.0). The remaining items on the old list were never decided and are not requirements |
 | Is login needed? | **No** — and requiring one would risk 5.1.1(v). |
 | Is a backend needed? | **No.** |
 | How do entitlements behave offline? | Read from the store's on-device cache, mirrored into the existing `settings` table, and **fail open**: an unknown answer grants Pro (§11.5). |
@@ -1085,7 +1186,8 @@ state is writable only from `lib/reading/`, and permanent deletion exists only i
 | Archive / restore | Unchanged, free. |
 | Storage, cleanup, undo, permanent deletion | Unchanged, free. |
 | Saving a page | Unchanged, free, single and bounded multi-entry. |
-| **Update checking** | Stops offering to start. Any queued check becomes a terminal row with a named reason. |
+| **Update checking** | ~~Stops offering to start. Any queued check becomes a terminal row with a named reason.~~ **Superseded — checking is Free, so entitlement loss does not touch it.** A check still starts, still runs and still reports. What changes is only that it holds when the user leaves the Browser instead of continuing, which is the behaviour that shipped before the capability existed |
+| **Foreground multitasking** | The *next* operation needs the Browser on screen; the one already running keeps the surface it started with and is never interrupted mid-page (`TaskCapabilitySnapshot`, FOREGROUND_MULTITASKING.md §10.5). The stored preference is kept, so restoring Pro restores the behaviour |
 | **Saved rules** | Existing rules are **kept, not deleted**, and keep working for the run in front of the user; creating and managing them returns to Pro. **D-4 (§17)** — the alternative (rules stop applying) is defensible but punishes the user for work they did. |
 | **Queue** | Existing rows are preserved. New enqueues beyond the free depth are refused with a reason. |
 | Pro toggles already set (e.g. `preferred_capture_mode`) | **Left in place, honoured on the pages they apply to.** Silently reverting a stored preference is a change the user did not make. |
@@ -1119,12 +1221,26 @@ infrastructure for a stage that has not been justified.**
 
 ### Stage 0 — Ship free. No purchase code. *(Recommended before any monetization)*
 
+> **Status note, added after the fact.** The app is still at Stage 0 by the only
+> test that matters commercially — **nothing can be bought, and no purchase code
+> exists**. But a Pro *boundary* now ships: one behaviour is gated, a locked row
+> carries a `PRO` badge, and a Pro information sheet explains it with no Buy
+> button behind it (FOREGROUND_MULTITASKING.md §10.6). That is more than this
+> stage envisaged and less than Stage 1.
+>
+> Stage 0's exit criteria below are **not** met: the content-rights disclosures
+> and the Privacy/Terms pages are still deferred, and the legal URLs do not
+> exist. Whether a PRO-badged control should be visible in a build that has not
+> yet shown its content-rights position is a live question, and it is **not
+> resolved here** — see §17 D-5.
+
 **Do this first.** ARCHITECTURE.md §10 lists the save-scope review step, the
 first-use content-rights disclosures, and the Privacy/Terms/Content-rights pages
-as **deferred**, and device runtime verification as **not run**. Every one of those
-is a release blocker independent of money. Adding a paywall on top of an app that
-has not yet shown its content-rights position, and has never run on physical
-hardware, is the wrong order of work.
+as **deferred**. Every one of those is a release blocker independent of money.
+Adding a paywall on top of an app that has not yet shown its content-rights
+position is the wrong order of work. (The third original reason — that the app
+had never run on physical hardware — no longer applies: it has, see
+ARCHITECTURE.md §10 and FOREGROUND_MULTITASKING_PLAN.md §6.)
 
 Shipping free first also: produces the install base that every scenario in §10 is
 linear in; gives a first submission with no IAP metadata to get wrong; and yields
@@ -1217,11 +1333,16 @@ change the project is explicitly not set up to make. A settings key needs none.
 
 ### 15.3 Placement
 
-An entitlement module must live in its own directory (e.g. `lib/entitlement/`)
-and **must not be reachable from `lib/reading/`, `lib/storage/cleanup.dart`, or
-`CollectionDeletionService`**. That separation is what makes §13.1 structurally
-true rather than merely intended — the same technique the codebase already uses
-for reading state and for the capture policy.
+**Already done, under a different name.** This section proposed
+`lib/entitlement/`; what exists is **`lib/capability/`** — do not create a second
+seam beside it. The rule it states is the one in force and is enforced by
+`test/entitlement_test.dart`:
+
+An entitlement module must live in its own directory and **must not be reachable
+from `lib/reading/`, `lib/storage/cleanup.dart`, or `CollectionDeletionService`**.
+That separation is what makes §13.1 structurally true rather than merely intended
+— the same technique the codebase already uses for reading state and for the
+capture policy.
 
 ### 15.4 Enforcement pattern
 
@@ -1270,7 +1391,7 @@ decides), so it is testable without a store connection.
 | R5 | **Türkiye price drift** via auto-generated pricing | Medium | Manual TR management, reviewed twice a year. §9.4 |
 | R6 | **Paywall positioning could undermine STORE_POLICY_MAP.md** if Pro is framed as "save more" | **High** | Boundary chosen specifically to avoid it; the store copy must be reviewed against §8.2 before submission |
 | R7 | **Local entitlement is bypassable** | Accepted | Stated, not defended against. §11.5 |
-| R8 | **App has never run on physical hardware** (ARCHITECTURE.md §10) | **High, and prior to everything here** | Stage 0 exit criterion |
+| R8 | ~~**App has never run on physical hardware**~~ — **resolved for iOS.** It has since run on a cabled iPhone 17, including a real-site save and a soak. **Still open for Android**, where no physical device has been available, and for the accessibility passes | Medium, down from High | ARCHITECTURE.md §10; FOREGROUND_MULTITASKING_PLAN.md §6 |
 | R9 | **Support/legal/privacy URLs do not exist** (STORE_PACKAGE.md §8.5) | High | Blocks submission regardless of monetization |
 | R10 | Play's treatment of **developer tips** | Open | **[Unverified]** — verify before Stage 2 on Android |
 | R11 | Exact **TRY price points** on both stores | Open | **[Unverified]** — read from the live consoles |
@@ -1288,11 +1409,11 @@ decides), so it is testable without a store connection.
 | **D-2** | **Price:** USD 9.99 base | **Approve USD 9.99**; approve manual Türkiye pricing at roughly the local equivalent of USD 2–4 (§9.4) |
 | **D-3** | **Should free multi-entry runs carry a lower visible cap** (e.g. 3 per run) than Pro? | **No cap** — keep multi-entry free and bounded as today (§8.2). A cap is defensible but moves the paywall onto the surface §8.2 argues to keep clear |
 | **D-4** | **On entitlement loss, do existing saved rules keep applying?** | **Yes, keep them applying**; only creation/management returns to Pro (§13.2) |
-| **D-5** | **Sequencing:** monetize at first release, or ship free first and monetize in the following release? | **Ship free first** (§14 Stage 0). This is a real scope decision, not a technicality |
+| **D-5** | **Sequencing:** monetize at first release, or ship free first and monetize in the following release? **Now also:** should a PRO-badged locked control be visible at all before billing exists and before the content-rights work is done? | **Ship free first** (§14 Stage 0). This is a real scope decision, not a technicality. **Still open, and now partly overtaken** — a Pro boundary ships today with no purchase behind it |
 | **D-6** | **Backup/export** — CLAUDE.md forbids export to Photos/Gallery/Downloads/shared storage. Amend? | **Defer to Stage 3.** Needs a rule change and a design, not a pricing decision (§8.3, §14) |
 | **D-7** | **New dependency** (`in_app_purchase`) | Required for D-1 unless D-1 chooses the paid-app alternative. Approval needed per CLAUDE.md (§15.1) |
 | **D-8** | **Family Sharing** on the non-consumable | **Enable** (§11.6) |
-| **D-9** | **Update checking as the headline Pro feature** — is that the right thing to charge for, given it is also the most maintenance-heavy? | **Yes** — it is where the recurring cost is, which is what makes it fair to charge for (§8.3) |
+| **D-9** | ~~**Update checking as the headline Pro feature**~~ | ~~Recommended **yes** on 2026-08-03.~~ **DECIDED — no. Closed.** Update checking is **Free** at both granularities; the Pro capability is **foreground multitasking**. The 2026-08-03 recommendation is superseded and is not to be revived as written. Recorded in FOREGROUND_MULTITASKING.md §10.0, ARCHITECTURE.md §9 and CLAUDE.md |
 | **D-10** | **Store copy changes** to STORE_PACKAGE.md §2/§3/§4/§6 for IAP disclosure | Required before submission (§15.6) |
 
 ---

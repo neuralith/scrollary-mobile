@@ -7,14 +7,31 @@
 
 | Data | Where | Deleted by |
 |---|---|---|
-| Collections, entries, reading position, read state | `entries` / `collections` in the app-private SQLite database | Collection detail → ⋯ → *Delete permanently*, per collection; the debug-only full reset, for everything |
+| Collections, entries, reading position, read state | `entries` / `collections` in the app-private SQLite database | Collection detail → ⋯ → *Delete permanently*, per collection; the internal-build full reset, for everything |
 | Saved page bytes (text + images) | `webread/library/…` in app-private storage, excluded from device backup | Remove offline files (per entry, per collection, all finished), which keeps the rows; *Delete permanently*, which removes the collection's files and its rows together |
 | Browsing history (manual navigation only) | `browsing_history`, retained 90 days or 5,000 rows | Browser → Full history → Clear |
 | Saved sites | `saved_sites` — empty until the user adds one | per-row removal |
 | Favicons | `favicon_cache`, ≤ 24 KB each, purely derived | Settings → Browser data |
 | Cookies and site storage | the WebView's own store | Settings → Browser data → Clear website data |
 | User page hints | `user_page_hints` — empty until the user teaches one | per-row removal |
-| Preferences and disclosure acknowledgements | `settings` | the debug-only full reset |
+| Preferences | `settings` — including the "Keep working while I read" preference | the internal-build full reset |
+
+The storage folder is still named `webread`, from the app's working name. It is
+an app-private path and renaming it would strand every library already on a
+device, so it stays.
+
+**"The internal-build full reset"** is the destructive developer screen, gated
+by `kInternalBuild` (`kDebugMode || bool.fromEnvironment('SCROLLARY_INTERNAL_BUILD')`).
+A Store build passes no define, so the constant folds to `false` and the screen,
+its route and its entry point are tree-shaken out: **a user's build has no full
+reset.** Per-collection deletion, offline-file removal, history clearing and
+website-data clearing are the deletion routes that ship, and none of them needs
+an account. This is why the Play answer in STORE_PACKAGE.md §8.2 rests on those
+and not on the reset.
+
+When the content-rights disclosure is built (STORE_PACKAGE.md §6.1), its
+acknowledgement — a local, versioned flag — will live in `settings` too. It does
+not exist yet, and this table will gain a row when it does.
 
 ## 2. What leaves the device
 

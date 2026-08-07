@@ -10,21 +10,34 @@ Status vocabulary: `todo` · `doing` · `done` · `blocked` · `dropped`.
 
 ## 0. Working strategy
 
+**Historical — this records how the work was carried out, not the current state
+of the repository.** The branch has since been merged to `master` and the work
+is committed; the row below saying otherwise was true while the branch was live
+and is kept so the constraints the work ran under stay legible.
+
 | | |
 |---|---|
-| Branch | `feature/foreground-multitasking`, cut from `master` at `dcb90cb` |
+| Branch | `feature/foreground-multitasking`, cut from `master` at `dcb90cb`. **Since merged** (`f62f08e`) |
 | Working tree at start | Clean. `git status --porcelain` empty; nothing unrelated to preserve |
 | Worktree | Not used. A dedicated branch on a clean tree is sufficient, and a worktree would have split the iOS/Android build caches the device gate needs |
-| Commits | **None.** Nothing is committed, pushed, tagged or published by this work |
+| Commits | **None while the work was in progress** — nothing was committed, pushed, tagged or published by the work itself. The branch was committed and merged afterwards, by hand |
 | Destructive git | None. No reset, rebase, stash, checkout of other branches, or history rewriting |
-| Rollback | `ForegroundMultitasking.enabled == false` restores today's behaviour at runtime; discarding the branch restores it in source |
+| Rollback | `ForegroundMultitasking.enabled == false` restores the previous behaviour at runtime. Source-level rollback is no longer "discard the branch" — it is a revert |
 
 ---
 
 ## Product boundary — built
 
-The Free/Pro boundary is implemented and covered by deterministic tests. What
-landed, and where it is specified:
+> **The boundary: update checking is Free; foreground multitasking is Pro.**
+> A Free user starts the same Collection check, the same Library-wide check and
+> the same save, discovers the same Entries and gets the same report — with the
+> Browser on screen while it works. Pro buys only the ability to go and read
+> something else while it does. Specified in FOREGROUND_MULTITASKING.md §10.0.
+> Nothing about the operation is gated, and the Free flow is not degraded to
+> create Pro value.
+
+The boundary is implemented and covered by deterministic tests. What landed, and
+where it is specified:
 
 - `lib/capability/foreground_gate.dart` — `resolveStartGate`,
   `resolveLeaveGate`, `TaskCapabilitySnapshot`. Pure; no widget, route or
@@ -42,9 +55,12 @@ landed, and where it is specified:
   override), `foreground_gate_ui_test.dart` (both sheets, the locked-row
   semantics, the Settings row under Force Free and Force Pro).
 
-**Still open, and unchanged by this work:** the physical-hardware gate (D-1,
-D-2). `ForegroundMultitasking.defaultEnabled` is still `false`, so the Pro path
-is reachable today only through the internal Force Pro override.
+**Still open:** the **Android** hardware gate (D-2) and both accessibility
+passes (D-3, D-4). The iOS hardware gate (D-1) has since **passed** — §6.1.
+`ForegroundMultitasking.defaultEnabled` is nonetheless still `false`, so the Pro
+path is reachable today only through the internal Force Pro override; see §4a
+for the criteria that would justify changing that default, none of which is met
+on any platform yet.
 
 **Not built:** billing. `_upgradeSeat` is the seam; nothing fakes a purchase.
 
@@ -80,8 +96,9 @@ depends on it.
 | G1 | Build `integration_test/occlusion_gate_test.dart`: three arms (painted · covered · unpainted) over one real WebView, one real `BrowserController` and the production save run against the fixture Entry | — | low | `done` | File exists; `dart analyze` clean |
 | G2 | Run the gate on the iOS Simulator | G1 | low | `done` | §3.1 of the specification |
 | G3 | Run the gate on Android | G1 | low | `done` | §3.1 |
-| G4 | Run the gate on a physical iPhone | G1 | med | `blocked` | Attempted three times. The only physical device available is paired wirelessly, and `flutter test` refuses integration tests on one. Needs a cable — §4, D-1 |
-| G5 | VoiceOver / TalkBack check on a covered WebView | Phase 4 | high | `blocked` | Hardware only — D-3, D-4. **The reason the capability defaults off** |
+| G4 | Run the gate on a physical iPhone | G1 | med | `done` | **PASSED** on a cabled iPhone 17, iOS 26.5.2 — §6.1. It was `blocked` for three attempts first: the only device available was paired wirelessly, and `flutter test` refuses integration tests on one. A cable resolved it, and nothing else about the run changed |
+| G4b | Run the gate on a physical Android device | G1 | med | `blocked` | No physical Android device has been available. Emulator only — §4, D-2 |
+| G5 | VoiceOver / TalkBack check on a covered WebView | Phase 4 | high | `blocked` | Hardware only — D-3, D-4. **The reason the capability defaults off**, now that G4 has passed |
 
 **Blocking:** G2 and G3 block everything from Phase 3 on. G1–G3 do not block
 Phase 1, which is correct independently.
@@ -172,21 +189,26 @@ Phase 1, which is correct independently.
 |---|---|---|
 | iOS Simulator, iPhone 17, iOS 26.5 | yes | G2, unit/widget/integration |
 | Android emulator, Pixel 9 Pro, API 36 | yes | G3, integration |
-| Physical iPhone, iOS 26.5.2 | **connected, but unusable for this** | — |
-| Physical Android device | no | — |
+| Physical iPhone 17, iOS 26.5.2, **cabled** | yes | G4 · D-1 · the §6.1a–§6.1c hardware records |
+| Physical Android device | **no** | — · blocks D-2, D-4 |
 
-The iPhone is paired **wirelessly**. `flutter test` refuses to start an
-integration test on a wirelessly tethered iOS device:
+**The wireless-pairing obstacle, and how it was cleared.** For three attempts the
+only physical iPhone available was paired **wirelessly**, and `flutter test`
+refuses to start an integration test on a wirelessly tethered iOS device:
 
 ```
 Cannot start app on wirelessly tethered iOS device.
 Try running again with the --publish-port flag
 ```
 
-and `flutter test` has no `--publish-port` option — that flag belongs to
-`flutter run`. So the device tests below need the phone attached with a **cable**;
-nothing else about them changes. This is why D-1 is `blocked` rather than
-`failed`, and why the capability ships off.
+`flutter test` has no `--publish-port` option — that flag belongs to
+`flutter run`. Attaching the phone with a **cable** resolved it and nothing else
+about the runs changed. Kept because the error names a flag that does not exist
+on the command it is printed by, which costs an afternoon to discover twice.
+
+**No physical Android device has been available at any point.** Everything in
+the Android column is emulator-only, which is why D-2 and D-4 are still open and
+why no Android enablement claim can be made.
 
 ---
 
@@ -224,10 +246,19 @@ standing rule is that nothing site-specific ships, and
 alone. They are supplied at run time:
 
 ```
-flutter test integration_test/live_site_test.dart -d <udid> \
+BUILD_ID=$(git rev-parse --short HEAD) \
+flutter test integration_test/device_matrix_test.dart -d <udid> \
+  --dart-define=BUILD_ID=$BUILD_ID \
   --dart-define=LIVE_ENTRY_A=<entry url on source A> \
-  --dart-define=LIVE_ENTRY_B=<entry url on source B>
+  --dart-define=LIVE_ENTRY_B=<entry url on source B> \
+  --dart-define=SOAK_ROUNDS=6
 ```
+
+With no `LIVE_ENTRY_*` the live scenarios skip themselves and say so, so the
+matrix is still runnable without choosing a source. `SOAK_ROUNDS` defaults to 4.
+
+*This command originally named a `live_site_test.dart`, which no longer exists;
+the live scenarios are cases inside the device matrix now. See §6.1a.*
 
 No hostname-specific production logic is added, nothing is bypassed, and
 requests stay paced by the engine's existing cooldowns. These are integration
@@ -269,11 +300,22 @@ Anything short of that leaves it behind the existing setting.
 
 ---
 
-## 5. Remaining device tests
+## 5. Device tests — done and remaining
 
 Recorded here in full so they can be run without this document's author.
 
-### D-1 · Covered rendering on a physical iPhone
+| | Test | State |
+|---|---|---|
+| D-1 | Covered rendering on a physical iPhone | **Done — PASSED**, §6.1 |
+| D-2 | Covered rendering on a physical Android device | **Open** — no device |
+| D-3 | VoiceOver over a covered WebView | **Open** — release blocker |
+| D-4 | TalkBack over a covered WebView | **Open** — release blocker, no device |
+| D-5 | Thermal and battery over a bounded covered run | **Open** — needs a profile build |
+
+### D-1 · Covered rendering on a physical iPhone — **done, passed**
+
+Result and numbers: §6.1. The procedure is kept because D-2 is the same one, and
+because a re-run is what a plugin or OS upgrade would call for.
 
 1. Attach the iPhone **with a cable** — wireless pairing is refused for
    integration tests (§4). Unlock it and keep it awake.
@@ -288,9 +330,11 @@ advance, `requestAnimationFrame` rate within 10%, `visibility=visible`,
 **Fail:** any divergence. A fail forces the §4.3 fallback, and the capability
 must default off on iOS until it passes.
 
-### D-2 · Covered rendering on a physical Android device
+### D-2 · Covered rendering on a physical Android device — **open**
 
-As D-1, with `-d <serial>`.
+As D-1, with `-d <serial>`. Not run: no physical Android device has been
+available (§4). Until it is, no claim about Android hardware may be made from
+the emulator results, which is where **U2** in the specification stands.
 
 ### D-3 · VoiceOver over a covered WebView (release blocker)
 
@@ -349,11 +393,20 @@ Numbers: specification §3.1.
 
 ### 6.1a Idle and cleanup, on hardware
 
-Measured by `integration_test/device_validation_test.dart` against a **real**
-reading page, iPhone 17, debug build. `raf/s` is `requestAnimationFrame` ticks
-in a one-second window — the signal that says whether the page is still doing
-work. Memory is the app's own `phys_footprint`; the web renderer is a separate
-process and is measured by Instruments separately.
+Measured against a **real** reading page, iPhone 17, debug build. `raf/s` is
+`requestAnimationFrame` ticks in a one-second window — the signal that says
+whether the page is still doing work. Memory is the app's own `phys_footprint`;
+the web renderer is a separate process and is measured by Instruments
+separately.
+
+*The harness these were taken with was `device_validation_test.dart`, which no
+longer exists. It measured the right things and waited for them wrongly: three
+device runs were lost to it sitting inside a generous timeout after a scenario
+had already failed. `integration_test/device_matrix_test.dart` replaced it —
+every wait bounded and announced, every scenario capped, and a harness stall
+reported as a harness verdict rather than as evidence about the product
+(`integration_test/support/device_harness.dart`). The numbers below stand; a
+re-run uses the matrix.*
 
 | # | State | raf/s | timer/s | `visibilityState` | painted | owner | app MB |
 |---|---|---|---|---|---|---|---|
@@ -461,6 +514,8 @@ bytes.
 
 ### 6.2 Test runs
 
+**During the feature work:**
+
 | Command | Result |
 |---|---|
 | `flutter analyze` | **PASSED** — no issues |
@@ -470,6 +525,15 @@ bytes.
 | `flutter test integration_test/occlusion_gate_test.dart -d <iOS Simulator>` | **PASSED** |
 | `flutter test integration_test/occlusion_gate_test.dart -d <Android emulator>` | **PASSED** (×3) |
 | `flutter test integration_test/foreground_multitasking_test.dart -d <iOS Simulator>` | **PASSED** — 4 cases |
+
+**Later, at `10134dd`, during a documentation audit** — not a re-validation of
+the feature, and no integration suite was run:
+
+| Command | Result |
+|---|---|
+| `flutter test` (deterministic suite) | **PASSED — 1586 cases, no failures.** The time-of-day case above passed, but the run was outside the 00:00–03:00 window that triggers it, so this neither reproduces nor clears it |
+| `flutter analyze` | **PASSED** — no issues |
+| `dart format --output=none --set-exit-if-changed lib test integration_test tool` | **PASSED** — 223 files, 0 changed |
 
 Integration-case notes:
 

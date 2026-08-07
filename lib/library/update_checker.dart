@@ -97,6 +97,7 @@ class UpdateCheckOutcome {
     required this.state,
     this.newEntries = 0,
     this.pagesInspected = 0,
+    this.staleRemoved = 0,
     this.error,
     this.detail = '',
     this.concerns = const [],
@@ -105,6 +106,13 @@ class UpdateCheckOutcome {
   final UpdateCheckState state;
   final int newEntries;
   final int pagesInspected;
+
+  /// Discovered-only rows this check removed because the source's own entry
+  /// list no longer carries them, inside a window it could vouch for. Never
+  /// anything the user holds: see
+  /// [AppDatabase.reconcileDiscoveredEntries], which owns the rule.
+  final int staleRemoved;
+
   final String? error;
   final String detail;
 
@@ -126,6 +134,15 @@ class UpdateCheckOutcome {
 /// Discovers entry *metadata* only: a discovered entry becomes a
 /// `knownRemote` row with no local content, never a fake offline entry.
 /// Downloading stays a separate, explicit act.
+///
+/// Discovery is **not** a growing union of everything ever seen. A discovered
+/// row is a claim about the source, so a later reading of the source can
+/// withdraw it: when one entry-list read can vouch for a window of the
+/// collection — see [ObservedEntryWindow] — the discovered-only rows inside
+/// that window which the page did not show are removed. The chain walk never
+/// does this, and nothing the user holds is reachable by it; the rule itself
+/// lives in [AppDatabase.reconcileDiscoveredEntries] rather than here, so it
+/// cannot be worked around from this side.
 ///
 /// Reuses the same machinery saves trust: safe-URL validation, the
 /// saved-rule → generic next-detection chain, and the user-assisted fallback
@@ -164,6 +181,26 @@ class UpdateChecker extends ChangeNotifier implements SelectionHost {
 
   int _newEntries = 0;
   int get newEntries => _newEntries;
+
+  /// Discovered-only rows this check retracted because the source's list no
+  /// longer carries them.
+  int _staleRemoved = 0;
+  int get staleRemoved => _staleRemoved;
+
+  /// The same number, per collection, for the checks made **this session**.
+  ///
+  /// Session state on purpose. The rows it describes are gone, so there is
+  /// nothing left to derive it from — but it is also not a fact worth a schema
+  /// column: it answers "what did the check you just watched do", and after a
+  /// restart there is no check the user just watched. A collection absent from
+  /// here has had nothing removed as far as anything can still say.
+  final Map<String, int> _staleRemovedByCollection = {};
+  int staleRemovedFor(String collectionId) =>
+      _staleRemovedByCollection[collectionId] ?? 0;
+
+  /// The same record, for a report that reads several collections at once.
+  Map<String, int> get staleRemovedByCollection =>
+      Map.unmodifiable(_staleRemovedByCollection);
 
   /// How many forward entry transitions have been made, out of
   /// [UpdateCheckConfig.maxForwardDepth]. The starting page is depth 0.
@@ -408,6 +445,9 @@ class UpdateChecker extends ChangeNotifier implements SelectionHost {
     _identityEvidence.clear();
     _pagesInspected = 0;
     _newEntries = 0;
+    _staleRemoved = 0;
+    // A new check for this collection replaces what the last one reported.
+    _staleRemovedByCollection.remove(collectionId);
     _forwardDepth = 0;
     _state = UpdateCheckState.checking;
     _addLog('checking "${item.title}" for new entries');
@@ -474,11 +514,15 @@ class UpdateChecker extends ChangeNotifier implements SelectionHost {
     _state = outcome.state;
     _activeItemId = null;
     _activeTitle = '';
+    final retracted = outcome.staleRemoved > 0
+        ? ' · ${outcome.staleRemoved} no longer listed'
+        : '';
     _addLog(switch (outcome.state) {
-      UpdateCheckState.upToDate => 'up to date — nothing new on the source',
+      UpdateCheckState.upToDate =>
+        'up to date — nothing new on the source$retracted',
       UpdateCheckState.updatesAvailable =>
         '${outcome.newEntries} new entry(s) found '
-            '(not downloaded — save is a separate step)',
+            '(not downloaded — save is a separate step)$retracted',
       UpdateCheckState.cancelled => 'check cancelled',
       _ => 'check failed: ${outcome.error}',
     });
@@ -571,7 +615,58 @@ class UpdateChecker extends ChangeNotifier implements SelectionHost {
         // walk gets its turn.
         if (discovery.listRecognised &&
             (discovery.newEntries.isNotEmpty || discovery.orderingConfident)) {
-          for (final found_ in discovery.newEntries) {
+          // Reconcile before writing. What the page held has already been read
+          // in full at this point, so the removal rests on a complete
+          // observation — and doing it first is what lets the checkpoint below
+          // be rebuilt from rows that are all still true.
+          var reading = discovery;
+          final removed = await _reconcile(item, discovery);
+          if (removed > 0) {
+            // The checkpoint this check started from counted rows that have
+            // just gone. Rebuild it from the database rather than adjusting the
+            // numbers in place: a stale high number is exactly what stops a
+            // collection ever discovering anything again, and a second copy of
+            // it kept in a local would be the same bug with a shorter life.
+            final remaining = await db.entriesForCollection(item.id);
+            double? rebuilt;
+            for (final c in remaining) {
+              final n = c.entryNumber;
+              if (n != null && (rebuilt == null || n > rebuilt)) rebuilt = n;
+            }
+            latestNumber = rebuilt;
+            _identityEvidence
+              ..clear()
+              ..addAll([
+                for (final c in remaining)
+                  EntryIdentityReading.read(url: c.sourceUrl, label: c.title),
+              ]);
+            // Re-read the page already in hand against the corrected
+            // checkpoint. Pure, and no request: the same probe, judged by what
+            // the library now actually holds.
+            reading = discoverFromEntryList(
+              probe,
+              collectionKey: collectionKey,
+              latestKnownNumber: latestNumber,
+              knownUrlKeys: _visited,
+              maxNew: config.maxNewEntries,
+            );
+            if (reading.concerns.isNotEmpty) {
+              _concerns.addAll(reading.concerns);
+              for (final concern in reading.concerns) {
+                _addLog(concern.summary);
+              }
+              _addLog(kEntryIdentityUnreliableMessage);
+              return _identityRefusal();
+            }
+            _addLog(
+              'entry list, re-read: ${reading.newEntries.length} new above '
+              'the corrected checkpoint',
+            );
+          }
+          // Written this pass, so the re-sighting loop below can tell what it
+          // has already dealt with from what the source is repeating.
+          final written = <String>{};
+          for (final found_ in reading.newEntries) {
             // Asked per row, not once before the loop: a cancel that lands
             // while these are being written stops the discovery here. What was
             // already recorded stays — it is true, and rolling it back would
@@ -582,6 +677,7 @@ class UpdateChecker extends ChangeNotifier implements SelectionHost {
                 state: UpdateCheckState.cancelled,
                 newEntries: _newEntries,
                 pagesInspected: _pagesInspected,
+                staleRemoved: _staleRemoved,
               );
             }
             maxEntryOrder++;
@@ -599,6 +695,28 @@ class UpdateChecker extends ChangeNotifier implements SelectionHost {
             if (recorded != _DiscoveryWrite.written) continue;
             _newEntries++;
             _addLog('found: ${found_.title}');
+            written.add(normalizeUrl(found_.url));
+          }
+
+          // Everything else the page listed is an entry already held. Not a
+          // finding and never counted as one — but it is the source's current
+          // words about entries this app recorded from an older reading of the
+          // same list, and the rows that are still only discoveries take them.
+          // Through the same gate the new ones went through, so a page being
+          // read wrongly cannot rewrite what is stored either.
+          for (final seen in reading.observedEntries) {
+            if (_cancelRequested) break;
+            if (written.contains(normalizeUrl(seen.url))) continue;
+            final recorded = await _recordDiscovered(
+              item: item,
+              url: seen.url,
+              title: seen.title,
+              number: seen.number,
+              basis: 'entryList',
+              confidence: 'high',
+              inView: _identityEvidence,
+            );
+            if (recorded == _DiscoveryWrite.refused) return _identityRefusal();
           }
           return UpdateCheckOutcome(
             state: _newEntries > 0
@@ -606,6 +724,7 @@ class UpdateChecker extends ChangeNotifier implements SelectionHost {
                 : UpdateCheckState.upToDate,
             newEntries: _newEntries,
             pagesInspected: _pagesInspected,
+            staleRemoved: _staleRemoved,
             detail: 'entry list on the collection page',
           );
         }
@@ -811,6 +930,50 @@ class UpdateChecker extends ChangeNotifier implements SelectionHost {
     );
   }
 
+  /// Retract the discovered-only entries the source's list no longer carries.
+  ///
+  /// Reachable from **entry-list discovery only**. The chain walk sees two
+  /// entries ahead of the newest one held; nothing about a collection's
+  /// membership can be concluded from that, so it never arrives here.
+  ///
+  /// Returns how many rows went. The decision of *which* is not made here —
+  /// this passes on what was observed and `reconcileDiscoveredEntries` decides,
+  /// in one transaction, against the rows as they are at that moment.
+  Future<int> _reconcile(Collection item, EntryListDiscovery discovery) async {
+    final window = discovery.observedWindow;
+    // Nothing the page said can be used to prove an absence. The common case,
+    // and the one that leaves every discovered row exactly where it is.
+    if (window == null) return 0;
+    // A check being stopped means its reading is no longer being acted on.
+    // Asked immediately before the write: everything after this point is one
+    // transaction, so there is no half-reconciled collection to come back to.
+    if (_cancelRequested) return 0;
+
+    final removed = await db.reconcileDiscoveredEntries(
+      collectionId: item.id,
+      observedUrlKeys: window.urlKeys,
+      windowFrom: window.from,
+      windowTo: window.to,
+      windowOpenAbove: window.openAbove,
+    );
+    if (removed.isEmpty) return 0;
+
+    for (final entry in removed) {
+      _visited.remove(entry.urlKey);
+      _addLog(
+        'no longer listed at the source: ${entry.sourceMarker ?? entry.title}',
+      );
+    }
+    _staleRemoved += removed.length;
+    _staleRemovedByCollection[item.id] = _staleRemoved;
+    _addLog(
+      '${removed.length} entry(s) the source no longer lists were removed '
+      '(never downloaded — nothing saved was touched)',
+    );
+    notifyListeners();
+    return removed.length;
+  }
+
   /// Saved rule first, then the generic chain; ask the user only when
   /// detection is not confident, exactly like a save would.
   Future<({String? url, String? confidence, bool cancelled})> _resolveNext(
@@ -949,10 +1112,10 @@ class UpdateChecker extends ChangeNotifier implements SelectionHost {
     required String url,
     required String title,
     required double? number,
-    required int entryOrder,
     required String basis,
     required String confidence,
     required List<EntryIdentityReading> inView,
+    int? entryOrder,
     String? nextSourceUrl,
   }) async {
     // A discovered entry is a row the user is invited to save. One on a
@@ -984,8 +1147,44 @@ class UpdateChecker extends ChangeNotifier implements SelectionHost {
     _visited.add(key);
     final existing = await db.findEntryByUrlKey(item.id, key);
     if (existing != null) {
-      return _DiscoveryWrite.skipped; // already known — never a duplicate row
+      // Already known — never a duplicate row. Still worth a second look: the
+      // source may have corrected a label since, or printed a number where it
+      // had none, or this may be the check that found on a collection page
+      // what a chain walk had only inferred. Nothing here decides what may be
+      // written; `refreshDiscoveredEntry` holds the field rules and refuses
+      // outright for a row that has become the user's.
+      final stored = existing.entryNumber;
+      if (stored != null && number != null && stored != number) {
+        // Reported, not resolved. Replacing a stored number on the strength of
+        // a second reading is how a good checkpoint becomes a guess.
+        _addLog(
+          'kept the stored number for ${existing.sourceMarker ?? existing.title} '
+          '— the source now reads ${_plainNumber(number)}',
+        );
+      }
+      final refreshed = await db.refreshDiscoveredEntry(
+        id: existing.id,
+        title: title,
+        number: number,
+        sourceMarker: sourceMarkerFrom(
+          title: title,
+          url: url,
+          number: number ?? stored,
+        ),
+        basis: basis,
+        confidence: confidence,
+        nextSourceUrl: nextSourceUrl,
+      );
+      if (refreshed.isEmpty) return _DiscoveryWrite.skipped;
+      _addLog('updated ${refreshed.join(", ")} for: $title');
+      return _DiscoveryWrite.refreshed;
     }
+
+    // No position to give it, so it is not created here. Reached only by a
+    // re-sighting pass, whose whole subject is entries that already exist —
+    // one that turns out not to is left for the next check to find as new,
+    // rather than being appended at a place nobody chose.
+    if (entryOrder == null) return _DiscoveryWrite.skipped;
 
     await db.upsertEntry(
       Entry(
@@ -1033,13 +1232,21 @@ class UpdateChecker extends ChangeNotifier implements SelectionHost {
   }
 }
 
+/// A number as the source would print it, for a log line.
+String _plainNumber(double n) => n == n.roundToDouble() ? '${n.round()}' : '$n';
+
 /// What one attempt to write a discovered entry did.
 enum _DiscoveryWrite {
   /// A new discovered entry row exists.
   written,
 
-  /// Nothing was written and nothing is wrong — the entry is already known, or
-  /// its address is on a restricted service. The caller carries on.
+  /// The entry was already known and its source-side metadata was brought up
+  /// to date. **Not** a discovery: nothing new was found, so nothing counts it.
+  refreshed,
+
+  /// Nothing was written and nothing is wrong — the entry is already known and
+  /// unchanged, or its address is on a restricted service. The caller carries
+  /// on.
   skipped,
 
   /// Nothing was written because the entry's number is not supported by the
@@ -1064,15 +1271,65 @@ class DiscoveredEntry {
 /// check save entry 1 when the user wanted 386.
 enum EntryListDirection { newestFirst, oldestFirst, unknown }
 
+/// The part of a source's entry list one reading can actually vouch for.
+///
+/// This exists so absence can mean something. A check reads **one page**, and a
+/// page is a window: paginated, latest-N, or built as the user scrolls. An
+/// entry missing from a page that never covered it has not been shown to be
+/// missing from the source, so the only honest statement a reading can make is
+/// "between these two numbers, this is the complete list" — which is exactly
+/// what this carries.
+///
+/// Built only by [discoverFromEntryList], and only when the reading was
+/// recognisable, unambiguously ordered, free of identity concerns, not
+/// truncated by a discovery bound, and able to place every entry it saw on the
+/// number line. Any of those missing and there is no window at all.
+class ObservedEntryWindow {
+  const ObservedEntryWindow({
+    required this.urlKeys,
+    required this.from,
+    required this.to,
+    required this.openAbove,
+  });
+
+  /// Every same-collection entry link the page showed, normalised — the
+  /// **complete** observation, before novelty filtering and before the
+  /// `maxNew` bound. A key missing from here was missing from the page.
+  final Set<String> urlKeys;
+
+  /// The lowest position the reading covered. A hard floor, never widened:
+  /// below it is where the previous page of a paginated list lives.
+  final double from;
+
+  /// The highest position the reading covered.
+  final double to;
+
+  /// Whether anything *above* [to] can be ruled out.
+  ///
+  /// True only for a list the page itself ran newest-first: such a list puts
+  /// the newest entry at its top, so an entry newer than [to] would have had
+  /// to appear above the ones that did. The one thing this assumes is that the
+  /// page read is the front of that list rather than a later page of it — the
+  /// same assumption the checker's novelty test already makes by treating this
+  /// page as where new entries appear. `reconcileDiscoveredEntries` withdraws
+  /// it whenever the library itself contradicts it.
+  final bool openAbove;
+
+  /// Would an entry numbered [number] have had to appear in this reading?
+  bool covers(double number) => number >= from && (openAbove || number <= to);
+}
+
 class EntryListDiscovery {
   const EntryListDiscovery({
     required this.listRecognised,
     required this.newEntries,
+    this.observedEntries = const [],
     this.knownSeen = 0,
     this.direction = EntryListDirection.unknown,
     this.orderingConfident = false,
     this.dropped = 0,
     this.concerns = const [],
+    this.observedWindow,
   });
 
   /// Whether the page plausibly showed this collection's entry list at all.
@@ -1082,6 +1339,16 @@ class EntryListDiscovery {
   /// New entries in **save order: oldest first**, so a partial run leaves
   /// a contiguous block rather than holes.
   final List<DiscoveredEntry> newEntries;
+
+  /// Every entry the page listed, new or already held, in the page's own
+  /// order — what the source says right now, before any question of novelty.
+  ///
+  /// [newEntries] answers "what should be recorded"; this answers "what did
+  /// the page say", and they are different questions. An entry already held is
+  /// absent from the first and present here, which is what lets a check notice
+  /// that the source has corrected a label since.
+  final List<DiscoveredEntry> observedEntries;
+
   final int knownSeen;
 
   /// Which way the list ran, as read off the page itself.
@@ -1101,6 +1368,11 @@ class EntryListDiscovery {
   /// finds any of these must stop rather than treat the rest as a clean
   /// reading of the page.
   final List<EntryIdentityConcern> concerns;
+
+  /// What this reading can vouch for being *complete*, or null when it can
+  /// vouch for nothing. Null is the safe answer and the common one; only a
+  /// non-null window may be used to conclude that an entry is gone.
+  final ObservedEntryWindow? observedWindow;
 }
 
 /// One same-collection link, with the two things ordering can be read from: the
@@ -1332,6 +1604,7 @@ EntryListDiscovery discoverFromEntryList(
   final trusted = doubted.isEmpty
       ? fresh
       : fresh.where((c) => !doubted.contains(c.url)).toList();
+  final dropped = trusted.length > maxNew ? trusted.length - maxNew : 0;
 
   return EntryListDiscovery(
     listRecognised: recognised,
@@ -1341,11 +1614,65 @@ EntryListDiscovery discoverFromEntryList(
           (c) => DiscoveredEntry(url: c.url, title: c.title, number: c.number),
         )
         .toList(),
+    observedEntries: [
+      for (final c in links)
+        if (!doubted.contains(c.url))
+          DiscoveredEntry(url: c.url, title: c.title, number: c.number),
+    ],
     knownSeen: knownSeen,
     direction: direction,
     orderingConfident: confident,
-    dropped: trusted.length > maxNew ? trusted.length - maxNew : 0,
+    dropped: dropped,
     concerns: concerns,
+    observedWindow: _observedWindow(
+      links: links,
+      recognised: recognised,
+      confident: confident,
+      direction: direction,
+      dropped: dropped,
+      concerns: concerns,
+    ),
+  );
+}
+
+/// The window this reading may be used to prove absence within, or null.
+///
+/// Every condition here is a way the reading could be incomplete, and each one
+/// alone is enough to refuse: an unrecognised page is not this collection's
+/// list, an ambiguous order means "above" and "below" have no meaning, a
+/// contradicted number means the list is being read wrongly, a `maxNew`
+/// truncation means the reading stopped short of what the page held, and an
+/// entry that could not be placed on the number line is one the interval does
+/// not describe. Returning null costs a check's worth of delay; returning a
+/// window that is not true costs the user rows they were still waiting to save.
+ObservedEntryWindow? _observedWindow({
+  required List<_EntryLink> links,
+  required bool recognised,
+  required bool confident,
+  required EntryListDirection direction,
+  required int dropped,
+  required List<EntryIdentityConcern> concerns,
+}) {
+  if (!recognised || !confident || dropped > 0 || concerns.isNotEmpty) {
+    return null;
+  }
+  if (links.isEmpty) return null;
+
+  var lowest = double.infinity;
+  var highest = double.negativeInfinity;
+  for (final link in links) {
+    final position = link.position;
+    // One unplaceable entry and the interval no longer describes the page.
+    if (position == null) return null;
+    if (position < lowest) lowest = position;
+    if (position > highest) highest = position;
+  }
+
+  return ObservedEntryWindow(
+    urlKeys: {for (final link in links) link.key},
+    from: lowest,
+    to: highest,
+    openAbove: direction == EntryListDirection.newestFirst,
   );
 }
 

@@ -1415,26 +1415,13 @@ class TaskQueueController extends ChangeNotifier {
     switch (queueTaskTypeFromName(task.taskType)) {
       case QueueTaskType.entrySave:
       case QueueTaskType.sequenceSave:
-        if (saveRunner != null) return saveRunner!(task);
-        await saveRun.start(
-          entryLimit: task.entryLimit ?? 1,
-          startUrl: task.startUrl,
-          policy: duplicatePolicyFromName(task.duplicatePolicy),
-          range: saveScopeFromName(task.scope),
-          maxBytes: task.maxBytes,
-          // Restored from the row, so work that waited in the queue produces
-          // what the user asked for rather than what today's detection thinks.
-          captureMode: captureModeFromName(task.captureMode),
-          captureModeIsUserSet: task.captureModeIsUserSet,
-          origin: SaveOrigin.queue,
-        );
-        final p = saveRun.progress;
-        final summary =
-            '${p.storedEntries} saved'
-            '${p.skippedEntries > 0 ? ', ${p.skippedEntries} skipped' : ''}';
-        return p.state == SaveState.failed
-            ? QueueOutcome.failure(p.lastError ?? summary)
-            : QueueOutcome.success(summary);
+        final outcome = await _runSave(task);
+        // Asked of the outcome rather than of the engine, so the note is taken
+        // however the work was carried out.
+        if (outcome.failed) {
+          await _noteDiscoveryCaptureFailure(task, outcome.summary);
+        }
+        return outcome;
       case QueueTaskType.removeOfflineFiles:
         if (checkRunner != null) return checkRunner!(task);
         return _runCleanup(task);
@@ -1448,16 +1435,75 @@ class TaskQueueController extends ChangeNotifier {
           );
         }
         final result = await checker.check(itemId);
+        // Stated separately from the discovery count, never folded into it:
+        // "found" and "no longer there" are opposite facts about the source,
+        // and one number for both would be unreadable.
+        final retracted = result.staleRemoved > 0
+            ? ', ${result.staleRemoved} no longer at the source'
+            : '';
         final summary = switch (result.state) {
-          UpdateCheckState.upToDate => 'up to date',
+          UpdateCheckState.upToDate => 'up to date$retracted',
           UpdateCheckState.updatesAvailable =>
-            '${result.newEntries} new entry(s)',
+            '${result.newEntries} new entry(s)$retracted',
           UpdateCheckState.cancelled => 'cancelled',
           _ => result.error ?? result.state.name,
         };
         return result.state == UpdateCheckState.failed
             ? QueueOutcome.failure(summary)
             : QueueOutcome.success(summary);
+    }
+  }
+
+  Future<QueueOutcome> _runSave(QueueTask task) async {
+    if (saveRunner != null) return saveRunner!(task);
+    await saveRun.start(
+      entryLimit: task.entryLimit ?? 1,
+      startUrl: task.startUrl,
+      policy: duplicatePolicyFromName(task.duplicatePolicy),
+      range: saveScopeFromName(task.scope),
+      maxBytes: task.maxBytes,
+      // Restored from the row, so work that waited in the queue produces what
+      // the user asked for rather than what today's detection thinks.
+      captureMode: captureModeFromName(task.captureMode),
+      captureModeIsUserSet: task.captureModeIsUserSet,
+      origin: SaveOrigin.queue,
+    );
+    final p = saveRun.progress;
+    final summary =
+        '${p.storedEntries} saved'
+        '${p.skippedEntries > 0 ? ', ${p.skippedEntries} skipped' : ''}';
+    return p.state == SaveState.failed
+        ? QueueOutcome.failure(p.lastError ?? summary)
+        : QueueOutcome.success(summary);
+  }
+
+  /// A single-entry save failed. If it was aimed at an entry this app only
+  /// ever *discovered*, note that on the row.
+  ///
+  /// Deliberately narrow. Only a one-entry task, because that is the only kind
+  /// whose failure names one address: a sequence save that stops part way says
+  /// nothing about the entry it started on. And it is a note about an attempt,
+  /// never a conclusion about the source — this app cannot tell a withdrawn
+  /// page from a dropped connection, and a row is never removed on the
+  /// strength of a failure. What it buys is that "save the new entries" stops
+  /// queueing the same failing address on every press; the entry stays listed
+  /// and stays retryable on its own.
+  Future<void> _noteDiscoveryCaptureFailure(
+    QueueTask task,
+    String error,
+  ) async {
+    if (queueTaskTypeFromName(task.taskType) != QueueTaskType.entrySave) return;
+    final url = task.startUrl;
+    if (url == null || url.trim().isEmpty) return;
+    try {
+      await db.recordDiscoveryCaptureFailure(
+        urlKey: normalizeUrl(url),
+        collectionId: task.collectionId,
+        error: error,
+      );
+    } catch (_) {
+      // History, not the operation. A failure to record one must not turn a
+      // failed save into a crashed queue.
     }
   }
 

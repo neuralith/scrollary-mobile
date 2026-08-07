@@ -33,9 +33,17 @@ Hosted at a developer-controlled origin. Tests and reviewer notes refer to it as
 ## 3. In-app support already present
 
 - `tool/fixture/fixture_site.dart` serves an equivalent set in-process for the
-  deterministic integration suites — no network, no third-party host.
-- Integration tests take the base URL from `--dart-define=DEMO_BASE_URL=…`, so no
-  hostname is compiled into the app or its tests.
+  deterministic integration suites — no network, no third-party host. This is
+  what every integration suite runs against today.
+- **No test targets a hosted demo site yet.** The six `integration_test/live_*.dart`
+  files that once named third-party sites were deleted (TERMINOLOGY.md §3) and
+  nothing replaced them, so `--dart-define=DEMO_BASE_URL=…` is a convention this
+  document is reserving, not a switch any current test reads. When the site
+  exists, a suite for it takes its origin that way; no hostname is ever compiled
+  into the app or its tests.
+- For the cases that need a *real* page rather than a demo one,
+  `integration_test/device_matrix_test.dart` takes `LIVE_ENTRY_A` / `LIVE_ENTRY_B`
+  at run time and skips those scenarios when they are absent.
 
 ## 4. Not blocking the implementation
 
