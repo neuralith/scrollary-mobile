@@ -6,6 +6,7 @@ import '../browser/saved_sites_repository.dart';
 import '../capability/foreground_gate.dart';
 import '../capability/foreground_multitasking.dart';
 import '../core/local_reset.dart';
+import '../library_ui/sync_status_section.dart';
 import '../providers.dart';
 import '../ui/palette.dart';
 import '../ui/status_style.dart';
@@ -151,6 +152,8 @@ class SettingsScreen extends ConsumerWidget {
             trailing: const Icon(Icons.chevron_right),
             onTap: () => LeaveBrowserGuard.push(context, '/activity'),
           ),
+          // Absent entirely until a scheduler is attached (D7).
+          const SyncStatusSection(),
           if (developerToolsAvailable) ...[
             const SectionLabel('DEVELOPER'),
             ListTile(
@@ -165,9 +168,15 @@ class SettingsScreen extends ConsumerWidget {
           Padding(
             padding: const EdgeInsets.fromLTRB(20, 18, 20, 8),
             child: Text(
-              'Everything is stored on this device. There is no account, no '
-              'sync and no background network activity — saves and update '
-              'checks only run when you start them.',
+              // The closing note has to describe the app that is running. With
+              // no scheduler attached the first sentence is literally true;
+              // with one it would be a lie, and a settings screen that lies
+              // about the network is the worst place for it.
+              syncIsAttached(ref)
+                  ? kSyncSettingsNote
+                  : 'Everything is stored on this device. There is no account, '
+                        'no sync and no background network activity — saves '
+                        'and update checks only run when you start them.',
               style: TextStyle(
                 fontSize: 13,
                 height: 1.55,
