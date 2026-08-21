@@ -1,19 +1,46 @@
 # Scrollary
 
-A general-purpose personal reading tool for iOS and Android. Save web pages you
-are legally permitted to keep, organise them in a personal library, and read them
-offline.
+A personal reading library for web-based reading content, on iOS and Android.
+Track what you are reading and where it came from, organise it into Collections
+and Entries, and — where you are legally permitted to keep a copy — download
+Entries to read offline.
 
-Built with Flutter: an embedded `WKWebView`/`WebView`, a local drift database, and
-an offline reader over app-private storage. No account, no server, no analytics.
+**An Entry is in the library because you want to read or track it, not because
+its content has been downloaded.** Downloading is a per-device capability of an
+Entry, and removing a download never removes the Entry.
+
+Built with Flutter: an embedded `WKWebView`/`WebView`, a local drift database,
+and an offline reader over app-private storage. Local-first: every action
+completes on the device in front of you, and the app is fully usable offline.
+No analytics, no advertising, and nothing about what you read is sent to the
+developer.
+
+The current build is single-device and needs no account. **V2** — a
+recognition-driven library where reading updates your library automatically,
+Collections have several Sources, Folders organise everything, and library
+metadata syncs across your devices — is fully designed and only its backend
+foundation is built. See [docs/PRODUCT.md](docs/PRODUCT.md) for the product,
+[docs/V2_ARCHITECTURE.md](docs/V2_ARCHITECTURE.md) for the domain and
+[docs/V2_ROADMAP.md](docs/V2_ROADMAP.md) for the plan.
 
 ## Documentation
 
-Start with [docs/TERMINOLOGY.md](docs/TERMINOLOGY.md), then
-[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Store readiness is covered by
-[docs/STORE_POLICY_MAP.md](docs/STORE_POLICY_MAP.md) and
+Start with [docs/README.md](docs/README.md), which lists every document and the
+order to trust them in. The short version: [docs/PRODUCT.md](docs/PRODUCT.md)
+for what the product is, [docs/TERMINOLOGY.md](docs/TERMINOLOGY.md) for the
+nouns, [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for what is actually built,
+and [docs/DECISIONS.md](docs/DECISIONS.md) for why. Store readiness is covered
+by [docs/STORE_POLICY_MAP.md](docs/STORE_POLICY_MAP.md) and
 [docs/STORE_PACKAGE.md](docs/STORE_PACKAGE.md). Contributor rules are in
 [CLAUDE.md](CLAUDE.md).
+
+## Repository layout
+
+| Path | What it is |
+|---|---|
+| `lib/`, `test/`, `integration_test/` | The Flutter app as built today |
+| `backend/` | The V2 synchronisation service — Go, Fiber v3, PostgreSQL. **Foundation only**; see [backend/README.md](backend/README.md) |
+| `docs/` | Product, architecture, V2 design and plan, store and privacy |
 
 ## Running
 

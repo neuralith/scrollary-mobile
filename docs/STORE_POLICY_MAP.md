@@ -4,6 +4,18 @@
 > Policy areas that bear on this app, the risk each one creates, and what was
 > done about it — in code, in the UI, and in the store listing.
 >
+> **Reviewed against the app as built: no account, no back end.** Two positions
+> here are load-bearing and both change under the planned V2 direction
+> ([DECISIONS.md](./DECISIONS.md) V2-D8): the position that *nothing is
+> transmitted to the developer*, and the reviewer note that *"there is no login
+> and no back end, so no demo account is needed."* For a signed-in user the
+> first must be re-scoped to anonymous use and the second becomes false — App
+> Review will require credentials and a working backend. Downloaded content is
+> still never uploaded, and no analytics, crash reporting or telemetry is ever
+> added ([V2_SYNC.md](./V2_SYNC.md) §14). Task 7.6 in
+> [V2_ROADMAP.md](./V2_ROADMAP.md). **Do not edit the analysis below to describe
+> unbuilt behaviour.**
+>
 > Reviewed against the guidelines as published July 2026. Sources:
 > [Apple App Store Review Guidelines](https://developer.apple.com/app-store/review/guidelines/) ·
 > [Play: Intellectual Property](https://support.google.com/googleplay/android-developer/answer/9888072) ·

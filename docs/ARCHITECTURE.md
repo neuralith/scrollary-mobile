@@ -1,10 +1,27 @@
 # Architecture
 
-> The as-built product and data model. Terminology is defined in
-> [TERMINOLOGY.md](./TERMINOLOGY.md); store positioning in
+> **The as-built product and data model — what the code does today, and nothing
+> else.** This document's value is that it can be trusted about the present, so
+> nothing proposed belongs in it.
+>
+> Terminology is defined in [TERMINOLOGY.md](./TERMINOLOGY.md); the product
+> definition in [PRODUCT.md](./PRODUCT.md); store positioning in
 > [STORE_PACKAGE.md](./STORE_PACKAGE.md); policy reasoning in
 > [STORE_POLICY_MAP.md](./STORE_POLICY_MAP.md); data flows in
 > [PRIVACY.md](./PRIVACY.md).
+>
+> **The V2 direction is planned and not built.** Scrollary is evolving into a
+> cross-platform reading library in which an Entry belongs to the library
+> because the user wants to read it, not because it has been downloaded, and in
+> which library state can follow the user across their own devices. That work is
+> specified in [V2_ARCHITECTURE.md](./V2_ARCHITECTURE.md) and
+> [V2_SYNC.md](./V2_SYNC.md), decided in [DECISIONS.md](./DECISIONS.md), and
+> sequenced in [V2_ROADMAP.md](./V2_ROADMAP.md). Where one of those and this
+> document disagree, **this one is right about the present**. §1 below describes
+> the current implementation, in which the library is still effectively
+> organised around what has been downloaded — [V2_ARCHITECTURE.md
+> §7](./V2_ARCHITECTURE.md) itemises every place that is true and what it
+> becomes.
 
 ## 1. What the app is
 

@@ -6,6 +6,20 @@
 >
 > **Nothing here guarantees approval.** Character limits were current in July
 > 2026 and should be re-checked in the consoles before submission.
+>
+> **This copy describes the app as built and needs a pass before submission.**
+> Two things changed after it was written. The product is a **reading library**
+> in which an Entry belongs to the library whether or not its content has been
+> downloaded ([PRODUCT.md](./PRODUCT.md)) — copy that equates "saved" with
+> "downloaded" now understates it. And an **optional** account with cross-device
+> sync is planned ([DECISIONS.md](./DECISIONS.md) V2-D3, V2-D8), so the
+> unqualified claims *"No account."* and *"Scrollary has no server and receives
+> nothing from you"* in §2, §3 and §7 must be re-scoped to anonymous use rather
+> than deleted. §8.1 App Privacy, §8.2 Data safety and §7's reviewer notes all
+> need redoing, and a demo account will be required. Tasks 7.5–7.8 in
+> [V2_ROADMAP.md](./V2_ROADMAP.md); the full obligation list is
+> [V2_SYNC.md](./V2_SYNC.md) §14. **Do not edit the copy below to describe
+> unbuilt behaviour** — it is rewritten when the behaviour exists.
 
 ---
 

@@ -1,0 +1,289 @@
+# Decision log
+
+> Durable product and architecture decisions. A decision here is **settled** — it
+> is revisited only by adding a superseding record, never by editing one away.
+> Anything genuinely open lives in [V2_PRODUCTIZATION.md](./V2_PRODUCTIZATION.md)
+> or §Open below, and must **not** be written elsewhere as though decided.
+
+The V2 direction: **a recognition-driven, cross-platform personal reading
+library.** You read; Scrollary recognises what it is and keeps your library
+current; reading state follows the logical Entry; downloading is an optional
+per-device capability.
+
+Product: [PRODUCT.md](./PRODUCT.md) · Domain:
+[V2_ARCHITECTURE.md](./V2_ARCHITECTURE.md) · Sync and backend:
+[V2_SYNC.md](./V2_SYNC.md) · Plan: [V2_ROADMAP.md](./V2_ROADMAP.md).
+
+---
+
+## Still in force from the first V2 pass
+
+**V2-D1 · No store release until the V2 library and sync work ships.**
+Every remaining V1 release blocker is external — accessibility passes, Android
+hardware, legal URLs, console and trademark work. Consequence: there are no
+released users, so V2 starts from a fresh database and the V1 schema rule needs
+no revision. A migration system is required before the first store build, not
+before V2 code.
+
+**V2-D5 · A removal on one device never destroys bytes on another.**
+Library removal syncs as metadata. Bytes are freed only by a local action. A
+device that has been offline for weeks cannot object to a deletion, so it is
+never asked to obey one destructively. Invariant I14.
+
+**V2-D6 · Reading progress is last-write-wins; completion is revertible.**
+Highest-progress-wins breaks *Mark as unread*, which exists to lower progress.
+Completion is a value, not a floor.
+
+**V2-D7 · Sync's relation to the paid boundary is deferred.**
+Binding regardless of the answer: local writes and the outbox are never gated;
+`lib/capability/` stays the only entitlement reader; any gate may sit only on the
+network drain. Moved to [V2_PRODUCTIZATION.md](./V2_PRODUCTIZATION.md).
+
+**V2-D8 · The backend holds library metadata in plaintext.**
+Identity arbitration needs to compute over it and clients need to display it.
+Consequence: the privacy audit and both store declarations must be redone before
+release. Downloaded bytes are never uploaded.
+
+**V2-D9 · Opening an Entry at its source records access; completion stays explicit.**
+Sets first-opened and last-read. Never infers completion. `CompletionPolicy` is
+unchanged. Invariant I16.
+
+**V2-D10 · Documentation stays flat; V2 documents sit beside the as-built ones.**
+
+**V2-D11 · Sign-out keeps everything on the device.**
+Tokens clear, the drain stops, rows and downloads and the outbox all stay.
+
+**V2-D3 · Accounts are optional — now scoped to mobile.**
+The mobile app is the complete product with no account, permanently. Amended by
+V2-D19: the extension requires one by nature.
+
+---
+
+## Superseded by the first-principles pass
+
+**V2-D2 · Library membership = user state attached to a row.**
+→ Superseded by **V2-D13**. Following a Collection is a single explicit act and a
+cleaner boundary than a derived property of seventeen columns. The predicate
+survives with its real job (V2-D15).
+
+**V2-D4 · One canonical source per Collection, mutable, previous retained.**
+→ Superseded by **V2-D14**. A mutable single pointer with a history list was a
+workaround for a schema that could not hold a set. It was diff-minimisation, not
+design.
+
+**Keep the V1 schema; add columns to `onCreate`.**
+→ Superseded by **V2-D26**.
+
+**One Entry table with three column groups.**
+→ Superseded by **V2-D15** and **V2-D22**.
+
+**Phase 1 delivers library-first inside the V1 tables.**
+→ Superseded by **V2-D12**. That work would be thrown away by the rewrite.
+
+---
+
+## V2 final
+
+### V2-D12 · Broader rewrite, with a defended port-as-is boundary
+
+New product, domain, data and application structure. Device-validated low-level
+components are **ported as files, not as intentions** — call sites change,
+internals do not.
+
+*Why.* `update_checker.dart` and `save_run.dart` assume one Source per Collection
+and URL-scoped traversal; the queue's unit of work and the three large screens are
+built on the V1 shape. Keeping the V1 tables would carry URL-as-Entry-identity
+into every query, sync record and client contract, because that axiom is in the
+primary keys.
+
+*The risk, recorded once.* V1 encodes behaviour that was expensive to find and is
+invisible in the source — why `requestAnimationFrame` is the only honest
+covered-rendering signal, scroller-coordinate image reads, lazy settling, the
+decode budget's unverified-dimensions rule, atomic commit with
+interrupted-replacement restore, single-winner cancellation.
+`FOREGROUND_MULTITASKING_PLAN.md §7` is a list of assumptions that failed on
+hardware. Re-deriving them re-opens bugs no test will catch, because the tests
+were written *after* the discoveries. The port inventory in
+[V2_ROADMAP.md](./V2_ROADMAP.md) is what contains that risk.
+
+### V2-D13 · Following a Collection is the authorising act
+
+A Collection in the library **is followed**. Following licenses Scrollary to keep
+it current from the user's reading. Reading an Entry of a followed Collection
+updates the library; anything else lands in device-local history with a one-tap
+promotion. Archive is how following stops, and it preserves everything.
+
+*Why.* One explicit act at the Collection level, inherited by every Entry beneath
+it, rather than a derived property. It also keeps the library curated while the
+recognition loop is real.
+
+### V2-D14 · A Collection has a set of Sources, with lifecycle
+
+A **Source** is this Collection on one site: host, path key, language, lifecycle
+(`active · dormant · dead · resolvedInto`). Active alternatives and dead
+predecessors are the same structure at different times — a site returning is a
+state change, not a row moved between tables. No separate source-history table.
+Preference is a single pointer on the Collection.
+
+### V2-D15 · An Entry is not a URL; the V1 keys move down one level
+
+`url_key` becomes **Location** identity, unchanged. `host + collection_key`
+becomes **Source** identity, unchanged. `normalizeUrl`,
+`collectionFingerprint` and `parseEntryNumber` keep their behaviour and their
+tests. `isDiscoveredOnlyEntry` stops being the library boundary and becomes what
+it was written for: **the rule for what a Source's own reading may retract**.
+
+### V2-D16 · Cross-source equivalence is by ordinal, and is gated by ordering basis
+
+Available only for `explicitNumericIndex`. Equal ordinals merge; different
+ordinals stay two Entries; unparseable or ambiguous ones stay **unplaced** —
+visible, readable, offered to the user. Date-ordered, next-link and
+discovery-ordered Collections may hold several Sources but their Entries are not
+merged.
+
+*Why.* Reliability over pretending every website can be normalised. This is the
+posture `entry_identity.dart` already takes within one Source: stop and keep the
+contradiction rather than repair it.
+
+### V2-D17 · A translation is a Source of the same Collection
+
+Language belongs to the Source. Reading Entry 101 anywhere marks 101 read — you
+read the work once, and the app can say which language you read it in.
+
+### V2-D18 · Measurement scope replaces progress confidence
+
+Reading *state* is on the Entry and syncs. A *measurement* is keyed
+`(entry, source)` and carries the rendering it was taken against. The *anchor*
+lives on the OfflineCopy and never leaves the device.
+
+*Why.* A fraction measured against one Source's rendering is not an
+approximation of another's — it is a fact about a different thing. No
+precise/estimated/observed taxonomy is needed. Whether an approximation may ever
+be *shown* across Sources is deferred to Productization; the architecture does
+not assume it.
+
+### V2-D19 · The extension requires an account, and tracks rather than captures
+
+It exists to put things into a library shared with a phone, so it is inherently a
+sync client. Mobile stays fully usable without an account.
+
+It does not capture: capture would mean re-implementing the restricted-site
+policy, the media rules, magic-number asset validation, manifest writing and the
+atomic commit in JavaScript — a second safety-critical implementation of the
+parts that most need to exist once.
+
+### V2-D20 · Metadata synchronisation is automatic; the blanket network rule is split
+
+The V1 rule that *every network operation is user-started, visible and
+cancellable* now applies to **content-affecting source automation only** —
+capture, source traversal, update checking, anything that drives the browser.
+
+**Lightweight metadata synchronisation is exempt.** It is automatic,
+opportunistic, non-blocking, retryable, resumed after connectivity returns, safe
+to interrupt, and background-capable where a platform allows it. It fetches no
+page, drives no browser and stores no content.
+
+*Not promised:* permanent background execution. No mobile platform offers it.
+What is promised is durable local state plus reliable continuation.
+
+### V2-D21 · Folder is user organisation, with a single system root
+
+A Folder holds Collections and standalone Entries. Hierarchy is in the schema
+from day one; a nested-folder UI is not required to ship with it. Folder state
+syncs. Sources are never attached to Folders.
+
+**A single system root Folder**, rather than a nullable placement or a separate
+`Unfiled` folder. Every item then has exactly one parent, "move to folder" is
+always the same operation, every placement syncs as a value rather than sometimes
+as a null, and no query needs a null branch. "At the library root" means "in the
+root Folder".
+
+**Deletion is conservative**: children reparent to the deleted Folder's parent.
+It never cascades into Collections or Entries.
+
+An Entry inside a Collection has no Folder membership of its own. A standalone
+Entry has one directly and is never wrapped in a Collection of one.
+
+### V2-D22 · OfflineCopy is a device-local entity carrying a provenance snapshot
+
+Bytes captured from one Location, on one device, at one time, in one format. One
+active copy per Entry per device; a re-download replaces it through the existing
+atomic path. **Provenance is stored as values, not references** — the Location
+URL, the Source name, host and language, the capture time — so a Source dying or
+a Location being retracted cannot orphan a copy already on a device.
+
+Nothing about an OfflineCopy is ever sent to or received from the server.
+
+### V2-D23 · Backend is Go + Fiber v3 + managed PostgreSQL, one stateless service
+
+The entity graph is genuinely relational and the core server job — identity
+arbitration — is logic rather than CRUD, which is the part least worth expressing
+through someone else's abstraction. No Redis, no queues, no brokers, no object
+storage, no orchestration: nothing V2 functionality needs.
+
+### V2-D24 · Identity arbitration is server-side, and the server never fetches pages
+
+Clients inspect pages and submit **evidence**; the server returns canonical
+identity or `unresolved`. Offline clients mint provisional identity and
+canonicalise on the next sync.
+
+**The server makes no outbound request.** Arbitrating over evidence clients
+gathered is a different thing from fetching pages, and the distinction carries
+the product's whole position.
+
+The hot path stays local: a known `url_key` resolves through a local index with
+no round trip.
+
+### V2-D25 · Download to Mobile is an intent, fulfilled by a device
+
+The extension creates a **DownloadRequest**. The backend records it and never
+fetches content. A device claims it through a single-winner conditional update,
+converts it into an ordinary local save task, and applies its own capture policy
+and validation unchanged. Terminal state is reported back.
+
+A DownloadRequest is not OfflineCopy state. At most one non-terminal request per
+`(library, entry)`, so pressing the button twice does not queue two saves. A
+failure never changes library membership. Device targeting stays minimal —
+anything more drags account work into the foundation.
+
+### V2-D26 · A fresh V2 schema, with no V1 migration
+
+There are no released users (V2-D1). The local database is designed from the
+domain, not from V1 tables. Development databases are reset by hand. No
+compatibility layer, no dual-write, no V1 reader.
+
+### V2-D27 · An OpenAPI document is the shared contract boundary
+
+Three languages — Dart, Go, and later JavaScript — must agree on the same
+payloads, and the two most divergence-prone parts of this design are *evidence
+submission* and *mutation shape*, both structured records with many optional
+fields. One schema all three validate against removes a class of drift that would
+otherwise surface as silent duplicates in someone's library. Written once at Gate
+B and frozen. Not a runtime dependency, and not adopted for any other reason.
+
+### V2-D28 · A development library namespace stands in for authentication
+
+The functionality build needs only enough for several development clients to
+address the same test library: an `X-Scrollary-Library` header, behind an
+explicit `SCROLLARY_DEV_MODE` flag the server refuses to start without.
+
+It is labelled development-only, authenticates nothing and says so, is one
+middleware to remove, and distorts nothing — `library_id` is a real column the
+production account model will populate.
+
+---
+
+## Open
+
+Only items that are genuinely undecided **and** not already deferred to
+Productization.
+
+| # | Question | Blocks |
+|---|---|---|
+| O-A | Whether the nested-folder UI ships in the first functional release, or only flat folders over the hierarchical schema | Lane D scope only. The schema supports both |
+| O-B | Whether an unplaced Entry is surfaced inside its Collection's list or in a separate "needs placement" view | Lane D presentation only |
+
+Everything else previously open — authentication, monetization, tombstone
+retention, cross-device unreadable Sources, cross-source progress presentation,
+privacy and store declarations — is deferred deliberately and lives in
+[V2_PRODUCTIZATION.md](./V2_PRODUCTIZATION.md).

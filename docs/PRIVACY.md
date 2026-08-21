@@ -2,6 +2,21 @@
 
 > Every data flow, and the exact claims the listing is allowed to make.
 > Written to be checkable: each row names where in the code the behaviour lives.
+>
+> **This document describes the app as built: single-device, accountless, with
+> no server.** Every claim below is accurate for the current code and must not
+> be edited to describe unbuilt behaviour.
+>
+> **It must be rewritten before the first release.** The V2 direction adds an
+> *optional* account and cross-device sync of library metadata and reading state
+> ([DECISIONS.md](./DECISIONS.md) V2-D3, V2-D8). For a signed-in user, §2's
+> "nothing goes to the developer" and §3's permitted claims *"No account."* and
+> *"The app has no server and receives nothing from you"* become false and must
+> be **re-scoped, not deleted** — they stay true for anonymous use, which stays
+> a permanently supported configuration. Downloaded content is never uploaded
+> under any circumstances ([V2_SYNC.md](./V2_SYNC.md) §8.2). The full list of
+> what V2 adds to the release obligations is [V2_SYNC.md](./V2_SYNC.md) §14, and
+> the task is 7.5 in [V2_ROADMAP.md](./V2_ROADMAP.md).
 
 ## 1. What is stored locally
 

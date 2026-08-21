@@ -1,23 +1,68 @@
 # Scrollary — project instructions
 
-A general-purpose personal reading tool, iOS-first and Android-compatible:
-embedded browser + explicit page saving + offline reading library.
+A personal reading library for web-based reading content, iOS-first and
+Android-compatible: embedded browser + a library of Collections and Entries +
+optional offline copies.
 
 Read [docs/TERMINOLOGY.md](docs/TERMINOLOGY.md) before writing any code. The
-as-built model is [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md); store positioning
-is [docs/STORE_PACKAGE.md](docs/STORE_PACKAGE.md); the policy reasoning behind the
+product definition is [docs/PRODUCT.md](docs/PRODUCT.md); the as-built model is
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md); why a decision was made is
+[docs/DECISIONS.md](docs/DECISIONS.md); store positioning is
+[docs/STORE_PACKAGE.md](docs/STORE_PACKAGE.md); the policy reasoning behind the
 safety rules is [docs/STORE_POLICY_MAP.md](docs/STORE_POLICY_MAP.md).
 
 ## What this app is, and is not
 
-It lets a user save web pages they are legally permitted to keep, organise them,
-and read them offline.
+It lets a user track web-based reading content they want to read, organise it
+into Collections and Entries, keep their reading state, and — where they are
+legally permitted to keep a copy — download Entries and read them offline.
+
+**An Entry is in the library because the user wants to read or track it, not
+because its content has been downloaded.** Downloading is a per-device
+capability of an Entry, not the precondition for the Entry's existence, and
+removing a download never removes the Entry. Do not write code, comments, tests
+or copy that treats a non-downloaded Entry as second-class, or that uses "saved"
+and "downloaded" as synonyms for "in the library".
 
 It is **not** a bulk fetcher, an automated harvester, a site archiver, a client
-for particular websites, or a tool for getting past any access control. Do not write
-code, comments, tests, fixtures, docs or store copy that position it as any of
-those. `test/repository_cleanliness_test.dart` enforces this and will fail the
-build.
+for particular websites, a generic bookmark manager, a hosted content platform,
+a content redistribution service, or a tool for getting past any access control.
+Do not write code, comments, tests, fixtures, docs or store copy that position it
+as any of those. `test/repository_cleanliness_test.dart` enforces part of this
+and will fail the build.
+
+### V2 is a rewrite in planning; almost every standing rule below survives it
+
+The V2 direction is a **recognition-driven, cross-platform reading library**: you
+read, Scrollary recognises what it is, and your library stays current across your
+devices. Downloading becomes a per-device capability of an Entry. Folders are
+user organisation; a Collection has several Sources; an Entry has Locations.
+
+Specified in [docs/PRODUCT.md](docs/PRODUCT.md),
+[docs/V2_ARCHITECTURE.md](docs/V2_ARCHITECTURE.md) and
+[docs/V2_SYNC.md](docs/V2_SYNC.md); sequenced for parallel worktrees in
+[docs/V2_ROADMAP.md](docs/V2_ROADMAP.md); deferred production work in
+[docs/V2_PRODUCTIZATION.md](docs/V2_PRODUCTIZATION.md); every decision recorded
+in [docs/DECISIONS.md](docs/DECISIONS.md).
+
+**Only the backend foundation exists** (`backend/`). No mobile V2 code is
+written. Do not start the Flutter rewrite without an explicit request, and never
+describe planned work as though it were built.
+
+Three things future agents get wrong here:
+
+- **V2 replaces the V1 domain, not the V1 device knowledge.** A defined set of
+  components is ported verbatim — render guards, image enumeration, lazy
+  settling, the decode budget, FileStore, manifest, document, capture policy,
+  detection, extraction, stop conditions, the asset fetcher, both readers.
+  Change their call sites, never their internals
+  ([docs/V2_ROADMAP.md](docs/V2_ROADMAP.md) §9).
+- **There is no V1 → V2 migration.** Nothing has shipped, so V2 starts from a
+  fresh schema and development databases are reset by hand (V2-D26). The
+  version-1 schema rule above still applies to V1 for as long as it runs.
+- **An Entry is not a URL.** That was V1's axiom. `url_key` becomes Location
+  identity and `host + collection_key` becomes Source identity — same
+  algorithms, one level down (V2-D15).
 
 ## Standing rules
 
@@ -95,6 +140,25 @@ build.
   condition, the estimate, and how to cancel.
 - Nothing saves in the background. Queued work waits for an explicit Start, and
   that authorisation is never persisted.
+
+### Two kinds of network work, and only one of them is explicit
+
+This rule was once written as *"every network operation is user-started, visible
+and cancellable."* It is now **two rules**, because collapsing them would forbid
+V2's metadata sync for reasons that only apply to capture.
+
+- **Content-affecting source automation stays explicit.** Capture, source
+  traversal, update checking and anything that drives the browser remain
+  user-started, visible, bounded and cancellable. Every ceiling is a number the
+  user chose and can see. Nothing about this weakens.
+- **Lightweight metadata synchronisation is automatic.** Synchronising library
+  organisation and reading state is opportunistic and mostly invisible: it
+  fetches no page, drives no browser and stores no content. It runs when the app
+  has a reasonable execution opportunity, resumes after connectivity returns and
+  is safe to interrupt at any point. It is **not** a promise of permanent
+  background execution — no mobile platform offers one. See
+  [docs/DECISIONS.md](docs/DECISIONS.md) V2-D20 and
+  [docs/PRODUCT.md](docs/PRODUCT.md) §6.
 
 ### The app stops; it never works around
 
