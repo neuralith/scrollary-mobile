@@ -12,8 +12,7 @@ import 'package:web_reader/storage/database.dart';
 import 'package:web_reader/storage/file_store.dart';
 
 import 'helpers/fake_browser.dart';
-import 'package:web_reader/features/collection_detail_screen.dart'
-    show kEntrySortKey;
+import 'package:web_reader/features/library_formats.dart' show kEntrySortKey;
 
 /// The development reset: everything goes, in a controlled order, and a
 /// partial failure says so rather than claiming success.

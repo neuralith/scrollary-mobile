@@ -18,7 +18,7 @@ import 'features/resume_point.dart';
 import 'features/v2_composition.dart';
 import 'save/queue_runner.dart';
 import 'features/library_check_flow.dart';
-import 'features/library_screen.dart' show LibraryCollection;
+import 'features/library_formats.dart';
 import 'library/library_sort.dart';
 import 'library/collection_deletion.dart';
 import 'library/collection_repository.dart';

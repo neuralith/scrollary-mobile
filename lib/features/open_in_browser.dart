@@ -7,7 +7,7 @@ import '../providers.dart';
 import '../storage/database.dart';
 import '../ui/palette.dart';
 import '../ui/status_style.dart';
-import 'entry_actions.dart' show connectivityProvider, hasUsableSourceUrl;
+import 'entry_source_state.dart';
 
 /// The copy the product uses when a row has nowhere to go.
 const kNoSourcePageMessage = 'This entry does not have a source page.';

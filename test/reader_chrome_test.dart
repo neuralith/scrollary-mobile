@@ -8,7 +8,6 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
 import 'package:path/path.dart' as p;
 import 'package:web_reader/browser/browser_controller.dart';
-import 'package:web_reader/features/collection_detail_screen.dart';
 import 'package:web_reader/features/document_reader.dart';
 import 'package:web_reader/features/operation_indicator.dart';
 import 'package:web_reader/features/reader_screen.dart';
@@ -806,4 +805,13 @@ void main() {
       );
     });
   });
+}
+
+/// Stands in for the retired V1 collection screen: these tests assert the
+/// reader RETURNS somewhere, not what that somewhere renders.
+class CollectionDetailScreen extends StatelessWidget {
+  const CollectionDetailScreen({super.key, this.collectionId = ''});
+  final String collectionId;
+  @override
+  Widget build(BuildContext context) => const SizedBox.expand();
 }

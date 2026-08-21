@@ -9,7 +9,6 @@ import 'package:path/path.dart' as p;
 import 'package:web_reader/browser/browser_controller.dart';
 import 'package:web_reader/save/save_run.dart';
 import 'package:web_reader/features/reader_screen.dart';
-import 'package:web_reader/features/collection_detail_screen.dart';
 import 'package:web_reader/providers.dart';
 import 'package:web_reader/storage/database.dart';
 import 'package:web_reader/storage/file_store.dart';
@@ -287,4 +286,13 @@ void main() {
       reason: 'in-and-out must not pile up routes',
     );
   });
+}
+
+/// Stands in for the retired V1 collection screen: these tests assert the
+/// reader RETURNS somewhere, not what that somewhere renders.
+class CollectionDetailScreen extends StatelessWidget {
+  const CollectionDetailScreen({super.key, this.collectionId = ''});
+  final String collectionId;
+  @override
+  Widget build(BuildContext context) => const SizedBox.expand();
 }

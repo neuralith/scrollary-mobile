@@ -12,7 +12,7 @@ import '../ui/palette.dart';
 import '../ui/status_style.dart';
 import '../ui/theme.dart';
 import 'cleanup_dialogs.dart';
-import 'library_screen.dart' show LibraryCollection, formatBytes;
+import 'library_formats.dart';
 import '../library/entry_labels.dart';
 
 const int _bytesPerMb = 1024 * 1024;

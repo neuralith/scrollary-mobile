@@ -30,8 +30,7 @@ import '../ui/palette.dart';
 import 'document_reader.dart';
 import 'save_queue_ui.dart';
 import 'cleanup_dialogs.dart';
-import 'library_screen.dart' show formatRelative;
-import 'collection_detail_screen.dart' show sortEntriesForReading;
+import 'library_formats.dart';
 
 /// How long the reader waits before writing a scroll position.
 ///

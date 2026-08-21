@@ -10,7 +10,7 @@ import '../ui/status_style.dart';
 import '../ui/theme.dart';
 import 'open_in_browser.dart';
 import 'save_queue_ui.dart';
-import 'library_screen.dart' show formatRelative;
+import 'library_formats.dart';
 import '../library/entry_labels.dart';
 import '../core/config.dart';
 

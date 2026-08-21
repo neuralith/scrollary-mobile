@@ -11,7 +11,7 @@ import 'save/save_run.dart';
 import 'features/activity_screen.dart';
 import 'features/operation_indicator.dart';
 import 'ui/app_page.dart';
-import 'features/archived_screen.dart';
+
 import 'core/local_reset.dart';
 import 'features/browser_history_screen.dart';
 import 'features/browser_screen.dart';
@@ -108,10 +108,6 @@ class _WebReaderAppState extends ConsumerState<WebReaderApp>
       GoRoute(
         path: '/settings',
         pageBuilder: (context, state) => _page(state, const SettingsScreen()),
-      ),
-      GoRoute(
-        path: '/archived',
-        pageBuilder: (context, state) => _page(state, const ArchivedScreen()),
       ),
       GoRoute(
         path: '/storage',

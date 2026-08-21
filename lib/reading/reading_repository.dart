@@ -1,6 +1,6 @@
 import 'package:drift/drift.dart' show Value;
 
-import '../features/collection_detail_screen.dart' show sortEntriesForReading;
+import '../features/library_formats.dart';
 import '../storage/database.dart';
 import 'reading_position.dart';
 

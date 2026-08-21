@@ -2,7 +2,8 @@ import 'package:drift/drift.dart' show Value;
 import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:web_reader/browser/page_data.dart';
-import 'package:web_reader/features/library_screen.dart' show LibraryCollection;
+import 'package:web_reader/features/library_formats.dart'
+    show LibraryCollection;
 import 'package:web_reader/library/update_checker.dart';
 import 'package:web_reader/storage/database.dart';
 

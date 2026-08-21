@@ -12,7 +12,7 @@ import '../ui/status_style.dart';
 import 'appearance_selector.dart';
 import 'browser_data_dialogs.dart';
 import 'foreground_gate_sheet.dart';
-import 'library_screen.dart' show formatBytes;
+import 'library_formats.dart';
 import '../library/entry_labels.dart';
 
 /// Settings is a list of doors, not a control panel. Everything that changes
