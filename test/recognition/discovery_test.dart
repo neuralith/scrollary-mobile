@@ -3,6 +3,8 @@
 /// (V2-D16) and a retraction on somebody else's Source (I15).
 library;
 
+import 'package:drift/drift.dart' hide isNull, isNotNull;
+import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:web_reader/data/data_violations.dart';
 import 'package:web_reader/data/schema.dart';
@@ -12,6 +14,7 @@ import 'package:web_reader/domain/location.dart';
 import 'package:web_reader/recognition/discovery.dart';
 import 'package:web_reader/recognition/recognise.dart';
 
+import '../data/support/repo_harness.dart';
 import 'support/recognition_harness.dart';
 
 void main() {
@@ -535,6 +538,45 @@ void main() {
         outcome.retractedLocationIds,
         isEmpty,
         reason: 'with no number line there is no position to rule out',
+      );
+    });
+
+    /// Applying a reading a second time over a Collection already holding
+    /// [count] parts: nothing new, nothing to retract, so what is left is
+    /// what looking costs. The counted harness replaces the shared one so
+    /// only ever one database is open.
+    Future<int> selectsForSecondApply(int count) async {
+      await h.close();
+      final counter = CountingInterceptor();
+      h = RecognitionHarness(
+        executor: NativeDatabase.memory().interceptWith(counter),
+      );
+      final collection = await h.collection();
+      final alpha = await h.source(collection: collection, host: kHostA);
+      final parts = [for (var n = 1; n <= count; n++) n];
+      final window = h.window(source: alpha, host: kHostA, parts: parts);
+      await h.discovery.apply(window);
+
+      counter.selects = 0;
+      final outcome = await h.discovery.apply(window);
+      expect(outcome.alreadyHeld, count);
+      expect(outcome.retractedLocationIds, isEmpty);
+      return counter.selects;
+    }
+
+    test('the retraction pass is one indexed read, not a walk of the '
+        'Collection', () async {
+      final three = await selectsForSecondApply(3);
+      final six = await selectsForSecondApply(6);
+
+      // Measured: 6 and 9. Before the Source-scoped read they were 9 and
+      // 15 — the pass asked for one Entry's Locations at a time.
+      expect(
+        six - three,
+        3,
+        reason:
+            'three more addresses cost three lookups, and looking for what '
+            'to retract costs the same one read either way',
       );
     });
 

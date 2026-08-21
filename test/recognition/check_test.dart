@@ -4,8 +4,11 @@
 /// overwrite something already established with a second opinion.
 library;
 
+import 'package:drift/drift.dart' hide isNull, isNotNull;
+import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:web_reader/data/schema.dart';
+import 'package:web_reader/domain/collection.dart';
 import 'package:web_reader/domain/entry.dart';
 import 'package:web_reader/domain/source.dart';
 import 'package:web_reader/domain/location.dart';
@@ -14,6 +17,7 @@ import 'package:web_reader/recognition/discovery.dart';
 import 'package:web_reader/recognition/recognise.dart';
 import 'package:web_reader/save/capture_policy.dart';
 
+import '../data/support/repo_harness.dart';
 import 'support/recognition_harness.dart';
 
 /// A scripted stand-in for whatever drives the browser. Records what it was
@@ -302,10 +306,24 @@ void main() {
           seeded,
           reason: 'the Entry already held is not rewritten by a re-listing',
         );
+        final relisted = (await h.repos.entries.locationById(
+          seededLocation.id,
+        ))!;
         expect(
-          await h.repos.entries.locationById(seededLocation.id),
-          seededLocation,
-          reason: 'nor is its Location',
+          (relisted.sourceLabel, relisted.sourceNumber, relisted.discoveredAt),
+          (
+            seededLocation.sourceLabel,
+            seededLocation.sourceNumber,
+            seededLocation.discoveredAt,
+          ),
+          reason:
+              'nothing its Location had established is rewritten, and a '
+              're-sighting is not a discovery',
+        );
+        expect(
+          relisted.discoveryBasis,
+          kSourceListingBasis,
+          reason: 'the one blank this re-listing filled',
         );
         expect(
           (await h.repos.reading.stateOf(seeded.id)).firstOpenedAt,
@@ -314,8 +332,10 @@ void main() {
         );
         expect(
           await h.repos.outboxCount(),
-          before + 4,
-          reason: 'two Entries and two Locations, each one intent',
+          before + 5,
+          reason:
+              'two Entries and two Locations, each one intent, and one more '
+              'for the blank the re-listing filled',
         );
       },
     );
@@ -1030,29 +1050,147 @@ void main() {
       },
     );
 
-    test('a check reports a disagreement and keeps the stored number', () async {
+    test(
+      'a check reports a disagreement and keeps the stored number',
+      () async {
+        final collection = await h.collection();
+        final alpha = await h.source(collection: collection, host: kHostA);
+        final (_, stored) = await h.placedEntry(
+          collection: collection,
+          source: alpha,
+          host: kHostA,
+          number: 5,
+        );
+
+        // The site now prints "Part 9" at the address it used to print "Part 5"
+        // at, alongside addresses whose two readings still agree.
+        final observations = ScriptedObservations([
+          SourceObservation.read(
+            url: 'https://$kHostA$kWorkPath',
+            listings: [
+              ObservedEntryListing.read(
+                url: partUrl(kHostA, 5),
+                label: 'Part 9',
+              ),
+              ObservedEntryListing.read(
+                url: partUrl(kHostA, 6),
+                label: 'Part 6',
+              ),
+            ],
+            listRecognised: true,
+            orderingConfident: true,
+            newestFirst: false,
+          ),
+        ]);
+        final outcome = await checkerOver(observations).checkPreferredSource(
+          collection.id,
+          limits: kGenerousLimits,
+          shouldContinue: observations.shouldContinue,
+        );
+
+        expect(outcome.fillIns, hasLength(1));
+        expect(outcome.fillIns.single.locationId, stored.id);
+        expect(outcome.fillIns.single.disagreedNumber, 9);
+        expect(
+          outcome.fillIns.single.fields,
+          isNot(contains(SourceFillInField.sourceNumber)),
+        );
+        final after = (await h.repos.entries.locationById(stored.id))!;
+        expect(
+          after.sourceNumber,
+          5,
+          reason:
+              'the disagreement is reported and never resolved: the stored '
+              'number is this Source\'s checkpoint',
+        );
+        expect(
+          after.sourceLabel,
+          'Part 9',
+          reason:
+              'the label is a transcription of what the source prints, so the '
+              'field the judgement did name is written',
+        );
+      },
+    );
+
+    test(
+      'the blanks the judgement names are written, and only those',
+      () async {
+        final collection = await h.collection();
+        final alpha = await h.source(collection: collection, host: kHostA);
+        // A placed Entry whose Location carries nothing this Source said.
+        final (entry, _) = await h.repos.entries.createInCollection(
+          collectionId: collection.id,
+          ordinal: 12,
+        );
+        final url = partUrl(kHostA, 12);
+        final (blank, _) = await h.repos.entries.addLocation(
+          entryId: entry!.id,
+          url: url,
+          urlKey: RecognitionKeys.of(url).urlKey,
+          sourceId: alpha.id,
+        );
+
+        final before = await h.repos.outboxCount();
+        final observations = ScriptedObservations([
+          listingPage(host: kHostA, parts: [12]),
+        ]);
+        final outcome = await checkerOver(observations).checkPreferredSource(
+          collection.id,
+          limits: kGenerousLimits,
+          shouldContinue: observations.shouldContinue,
+        );
+
+        expect(outcome.fillIns, hasLength(1));
+        expect(outcome.fillIns.single.fields, {
+          SourceFillInField.sourceLabel,
+          SourceFillInField.sourceNumber,
+          SourceFillInField.discoveryBasis,
+        });
+        final filled = (await h.repos.entries.locationById(blank!.id))!;
+        expect(
+          (filled.sourceLabel, filled.sourceNumber, filled.discoveryBasis),
+          ('Part 12', 12, kSourceListingBasis),
+        );
+        expect(
+          (filled.url, filled.urlKey, filled.discoveredAt, filled.lifecycle),
+          (blank.url, blank.urlKey, blank.discoveredAt, blank.lifecycle),
+          reason:
+              'a re-sighting is not a discovery, and identity is not '
+              'evidence',
+        );
+        expect(
+          await h.repos.outboxCount(),
+          before + 1,
+          reason: 'one intent for the one Location this reading changed',
+        );
+      },
+    );
+
+    test('a Location of another Source is never filled in from this '
+        'reading', () async {
       final collection = await h.collection();
       final alpha = await h.source(collection: collection, host: kHostA);
-      final (_, stored) = await h.placedEntry(
+      final beta = await h.source(
         collection: collection,
-        source: alpha,
-        host: kHostA,
-        number: 5,
+        host: kHostB,
+        language: 'tr',
+      );
+      await h.repos.collections.setPreferredSource(collection.id, alpha.id);
+      final (entry, _) = await h.repos.entries.createInCollection(
+        collectionId: collection.id,
+        ordinal: 12,
+      );
+      final betaUrl = partUrl(kHostB, 12);
+      final (betaBlank, _) = await h.repos.entries.addLocation(
+        entryId: entry!.id,
+        url: betaUrl,
+        urlKey: RecognitionKeys.of(betaUrl).urlKey,
+        sourceId: beta.id,
       );
 
-      // The site now prints "Part 9" at the address it used to print "Part 5"
-      // at, alongside addresses whose two readings still agree.
       final observations = ScriptedObservations([
-        SourceObservation.read(
-          url: 'https://$kHostA$kWorkPath',
-          listings: [
-            ObservedEntryListing.read(url: partUrl(kHostA, 5), label: 'Part 9'),
-            ObservedEntryListing.read(url: partUrl(kHostA, 6), label: 'Part 6'),
-          ],
-          listRecognised: true,
-          orderingConfident: true,
-          newestFirst: false,
-        ),
+        listingPage(host: kHostA, parts: [12]),
       ]);
       final outcome = await checkerOver(observations).checkPreferredSource(
         collection.id,
@@ -1060,20 +1198,11 @@ void main() {
         shouldContinue: observations.shouldContinue,
       );
 
-      expect(outcome.fillIns, hasLength(1));
-      expect(outcome.fillIns.single.locationId, stored.id);
-      expect(outcome.fillIns.single.disagreedNumber, 9);
+      expect(outcome.fillIns, isEmpty);
       expect(
-        outcome.fillIns.single.fields,
-        isNot(contains(SourceFillInField.sourceNumber)),
-      );
-      expect(
-        await h.repos.entries.locationById(stored.id),
-        stored,
-        reason:
-            'reported, not resolved — and `EntryRepository` has no field '
-            'writer for an existing Location, so nothing could be written even '
-            'where the judgement allows it',
+        await h.repos.entries.locationById(betaBlank!.id),
+        betaBlank,
+        reason: 'alpha\'s reading says nothing about beta\'s row',
       );
     });
 
@@ -1114,6 +1243,277 @@ void main() {
         );
       },
     );
+  });
+
+  group('placing an Entry its Source has now numbered (V2-D16)', () {
+    /// An unplaced Entry with one Location on [source], carrying whatever the
+    /// Source had said about it when it was found.
+    Future<(EntryRow, LocationRow)> unplacedAt({
+      required CollectionRow collection,
+      required SourceRow source,
+      required String url,
+      double? sourceNumber,
+    }) async {
+      final (entry, entryViolation) = await h.repos.entries.createInCollection(
+        collectionId: collection.id,
+        placement: Placement.unplaced,
+        title: 'Found, unplaced',
+      );
+      expect(entryViolation, isNull);
+      final (location, locationViolation) = await h.repos.entries.addLocation(
+        entryId: entry!.id,
+        url: url,
+        urlKey: RecognitionKeys.of(url).urlKey,
+        sourceId: source.id,
+        sourceNumber: sourceNumber,
+      );
+      expect(locationViolation, isNull);
+      return (entry, location!);
+    }
+
+    test('an explicit number nothing contradicts places it — as the app, '
+        'never as the user', () async {
+      final collection = await h.collection();
+      final alpha = await h.source(collection: collection, host: kHostA);
+      final (entry, _) = await unplacedAt(
+        collection: collection,
+        source: alpha,
+        url: partUrl(kHostA, 5),
+      );
+
+      final before = await h.repos.outboxCount();
+      final observations = ScriptedObservations([
+        listingPage(host: kHostA, parts: [5]),
+      ]);
+      final outcome = await checkerOver(observations).checkPreferredSource(
+        collection.id,
+        limits: kGenerousLimits,
+        shouldContinue: observations.shouldContinue,
+      );
+
+      expect(outcome.placedEntryIds, [entry.id]);
+      final placed = (await h.repos.entries.byId(entry.id))!;
+      expect(placed.ordinal, 5);
+      expect(
+        placed.placement,
+        Placement.placed.name,
+        reason: 'userPlaced is the user\'s own answer and this is not it',
+      );
+      expect(await h.repos.entries.unplacedOf(collection.id), isEmpty);
+      expect(
+        await h.repos.outboxCount(),
+        before + 2,
+        reason: 'the blanks this reading filled, and the placement',
+      );
+    });
+
+    test('a position already taken keeps the Entry unplaced', () async {
+      final collection = await h.collection();
+      final alpha = await h.source(collection: collection, host: kHostA);
+      // Somebody is already at 5 — the user, or an earlier reading.
+      final (occupant, _) = await h.repos.entries.createInCollection(
+        collectionId: collection.id,
+        ordinal: 5,
+        title: 'Already at five',
+      );
+      final (entry, _) = await unplacedAt(
+        collection: collection,
+        source: alpha,
+        url: postUrl(kHostA, 'a-late-arrival'),
+      );
+
+      final observations = ScriptedObservations([
+        SourceObservation.read(
+          url: 'https://$kHostA$kWorkPath',
+          listings: [
+            ObservedEntryListing.read(
+              url: postUrl(kHostA, 'a-late-arrival'),
+              label: 'Part 5',
+            ),
+          ],
+          listRecognised: true,
+          orderingConfident: true,
+          newestFirst: false,
+        ),
+      ]);
+      final outcome = await checkerOver(observations).checkPreferredSource(
+        collection.id,
+        limits: kGenerousLimits,
+        shouldContinue: observations.shouldContinue,
+      );
+
+      expect(outcome.placedEntryIds, isEmpty);
+      expect(
+        (await h.repos.entries.byId(entry.id))!.placement,
+        Placement.unplaced.name,
+        reason: 'a second opinion does not move an Entry already placed',
+      );
+      expect((await h.repos.entries.byId(occupant!.id))!.ordinal, 5);
+    });
+
+    test('one Entry its addresses number two ways stays unplaced', () async {
+      final collection = await h.collection();
+      final alpha = await h.source(collection: collection, host: kHostA);
+      final (entry, _) = await unplacedAt(
+        collection: collection,
+        source: alpha,
+        url: partUrl(kHostA, 5),
+      );
+      final second = partUrl(kHostA, 6);
+      await h.repos.entries.addLocation(
+        entryId: entry.id,
+        url: second,
+        urlKey: RecognitionKeys.of(second).urlKey,
+        sourceId: alpha.id,
+      );
+
+      final observations = ScriptedObservations([
+        listingPage(host: kHostA, parts: [5, 6]),
+      ]);
+      final outcome = await checkerOver(observations).checkPreferredSource(
+        collection.id,
+        limits: kGenerousLimits,
+        shouldContinue: observations.shouldContinue,
+      );
+
+      expect(outcome.placedEntryIds, isEmpty);
+      expect(
+        (await h.repos.entries.byId(entry.id))!.placement,
+        Placement.unplaced.name,
+        reason: 'two answers is not an answer',
+      );
+    });
+
+    test(
+      'a number that contradicts the stored one keeps it unplaced',
+      () async {
+        final collection = await h.collection();
+        final alpha = await h.source(collection: collection, host: kHostA);
+        final (entry, stored) = await unplacedAt(
+          collection: collection,
+          source: alpha,
+          url: partUrl(kHostA, 5),
+          sourceNumber: 4,
+        );
+
+        final observations = ScriptedObservations([
+          listingPage(host: kHostA, parts: [5]),
+        ]);
+        final outcome = await checkerOver(observations).checkPreferredSource(
+          collection.id,
+          limits: kGenerousLimits,
+          shouldContinue: observations.shouldContinue,
+        );
+
+        expect(outcome.fillIns.single.disagreedNumber, 5);
+        expect(outcome.placedEntryIds, isEmpty);
+        expect(
+          (await h.repos.entries.byId(entry.id))!.placement,
+          Placement.unplaced.name,
+          reason: 'a disagreement is reported, never resolved',
+        );
+        expect(
+          (await h.repos.entries.locationById(stored.id))!.sourceNumber,
+          4,
+          reason: 'and the stored number is the one that stands',
+        );
+      },
+    );
+
+    test('a Collection ordered any other way never places', () async {
+      final collection = await h.collection(
+        basis: OrderingBasis.publicationDate,
+      );
+      final alpha = await h.source(collection: collection, host: kHostA);
+      final (entry, _) = await unplacedAt(
+        collection: collection,
+        source: alpha,
+        url: partUrl(kHostA, 5),
+      );
+
+      final observations = ScriptedObservations([
+        listingPage(host: kHostA, parts: [5]),
+      ]);
+      final outcome = await checkerOver(observations).checkPreferredSource(
+        collection.id,
+        limits: kGenerousLimits,
+        shouldContinue: observations.shouldContinue,
+      );
+
+      expect(outcome.placedEntryIds, isEmpty);
+      expect(
+        (await h.repos.entries.byId(entry.id))!.placement,
+        Placement.unplaced.name,
+        reason: 'only an explicit numeric index makes a number a position',
+      );
+    });
+
+    test('an address with no printed number never places', () async {
+      final collection = await h.collection();
+      final alpha = await h.source(collection: collection, host: kHostA);
+      final (entry, _) = await unplacedAt(
+        collection: collection,
+        source: alpha,
+        url: partUrl(kHostA, 5),
+      );
+
+      // The address spells a number; the source prints none. The address's
+      // digits are never adopted.
+      final observations = ScriptedObservations([
+        SourceObservation.read(
+          url: 'https://$kHostA$kWorkPath',
+          listings: [
+            ObservedEntryListing.read(
+              url: partUrl(kHostA, 5),
+              label: 'A walk before rain',
+            ),
+          ],
+          listRecognised: true,
+          orderingConfident: true,
+          newestFirst: false,
+        ),
+      ]);
+      final outcome = await checkerOver(observations).checkPreferredSource(
+        collection.id,
+        limits: kGenerousLimits,
+        shouldContinue: observations.shouldContinue,
+      );
+
+      expect(outcome.placedEntryIds, isEmpty);
+      expect(
+        (await h.repos.entries.byId(entry.id))!.placement,
+        Placement.unplaced.name,
+      );
+    });
+
+    test('an Entry the user placed is never re-placed', () async {
+      final collection = await h.collection();
+      final alpha = await h.source(collection: collection, host: kHostA);
+      final (entry, _) = await unplacedAt(
+        collection: collection,
+        source: alpha,
+        url: partUrl(kHostA, 5),
+      );
+      final (userPlaced, violation) = await h.repos.entries.placeEntry(
+        entry.id,
+        7,
+      );
+      expect(violation, isNull);
+      expect(userPlaced!.placement, Placement.userPlaced.name);
+
+      final observations = ScriptedObservations([
+        listingPage(host: kHostA, parts: [5]),
+      ]);
+      final outcome = await checkerOver(observations).checkPreferredSource(
+        collection.id,
+        limits: kGenerousLimits,
+        shouldContinue: observations.shouldContinue,
+      );
+
+      expect(outcome.placedEntryIds, isEmpty);
+      final after = (await h.repos.entries.byId(entry.id))!;
+      expect((after.ordinal, after.placement), (7, Placement.userPlaced.name));
+    });
   });
 
   group('checking another Source is a separate act', () {
@@ -1248,6 +1648,57 @@ void main() {
 
       expect(observations.askedSources, [newSite.id]);
       expect(outcome.sourceId, newSite.id);
+    });
+  });
+
+  group('what a check costs', () {
+    /// One check over a Collection already holding [count] numbered parts,
+    /// whose Source lists exactly those — nothing new, nothing retracted.
+    ///
+    /// The counted harness replaces the shared one so only ever one database
+    /// is open, and tearDown closes whichever is last.
+    Future<int> selectsForCheckOver(int count) async {
+      await h.close();
+      final counter = CountingInterceptor();
+      h = RecognitionHarness(
+        executor: NativeDatabase.memory().interceptWith(counter),
+      );
+      final collection = await h.collection();
+      final alpha = await h.source(collection: collection, host: kHostA);
+      final parts = [for (var n = 1; n <= count; n++) n];
+      await h.discovery.apply(
+        h.window(source: alpha, host: kHostA, parts: parts),
+      );
+
+      final observations = ScriptedObservations([
+        listingPage(host: kHostA, parts: parts),
+      ]);
+      counter.selects = 0;
+      final outcome = await checkerOver(observations).checkPreferredSource(
+        collection.id,
+        limits: kGenerousLimits,
+        shouldContinue: observations.shouldContinue,
+      );
+      expect(outcome.state, SourceCheckState.upToDate);
+      expect(outcome.fillIns, isEmpty);
+      return counter.selects;
+    }
+
+    test('the checkpoint and the retraction pass are one indexed read each, '
+        'however much the Collection holds', () async {
+      final three = await selectsForCheckOver(3);
+      final six = await selectsForCheckOver(6);
+
+      // Measured: 15 and 21. Before the Source-scoped read they were 21 and
+      // 33 — the checkpoint and the retraction pass each walked the
+      // Collection's Entries and asked for one Entry's Locations at a time.
+      expect(
+        six - three,
+        6,
+        reason:
+            'three more addresses cost three joined lookups here and three '
+            'in discovery, and nothing else grows with the library',
+      );
     });
   });
 }

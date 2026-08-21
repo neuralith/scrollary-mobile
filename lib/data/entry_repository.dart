@@ -134,6 +134,28 @@ class EntryRepository {
   Future<(EntryRow?, InvariantViolation?)> placeEntry(
     String id,
     double ordinal,
+  ) => _placeAt(id, ordinal, Placement.userPlaced);
+
+  /// The unplaced → placed transition the *app* may make: a Source printed an
+  /// explicit number for an Entry that had none (V2-D16).
+  ///
+  /// Deliberately not [Placement.userPlaced]. That spelling is the user's own
+  /// answer, and a position derived from what a site printed is not it — the
+  /// two stay distinguishable so a later reading, or the user, can tell which
+  /// of them put the Entry where it is. Everything else is [placeEntry]'s: the
+  /// same I8 refusal when the position is taken, and the same single intent.
+  ///
+  /// Whether a reading *may* place an Entry is `recognition/check.dart`'s
+  /// judgement, not this writer's: this one writes what it is handed.
+  Future<(EntryRow?, InvariantViolation?)> placeFromSource(
+    String id,
+    double ordinal,
+  ) => _placeAt(id, ordinal, Placement.placed);
+
+  Future<(EntryRow?, InvariantViolation?)> _placeAt(
+    String id,
+    double ordinal,
+    Placement placement,
   ) async {
     return _db.transaction(() async {
       final row = await byId(id);
@@ -143,7 +165,7 @@ class EntryRepository {
         await (_db.update(_db.entries)..where((e) => e.id.equals(id))).write(
           EntriesCompanion(
             ordinal: Value(ordinal),
-            placement: Value(Placement.userPlaced.name),
+            placement: Value(placement.name),
             updatedAt: Value(at),
           ),
         );
@@ -158,7 +180,7 @@ class EntryRepository {
         entityId: id,
         op: OutboxOp.upsert,
         at: at,
-        fields: {'ordinal': ordinal, 'placement': Placement.userPlaced.name},
+        fields: {'ordinal': ordinal, 'placement': placement.name},
       );
       return (await byId(id), null);
     });
@@ -284,6 +306,60 @@ class EntryRepository {
     });
   }
 
+  /// The fill-in writer: the fields a second reading of an address has
+  /// established that the stored Location did not carry.
+  ///
+  /// Narrow on purpose. **Only the arguments named are written** — a null
+  /// argument is *absent*, never a clearing null — because deciding which
+  /// blanks a re-listing may fill is `recognition/check.dart`'s judgement and
+  /// nothing else may reach these columns. There is deliberately no way to
+  /// write `url`, `url_key`, `discovered_at` or `lifecycle` here: identity is
+  /// not evidence, when an address was first seen is not a re-sighting, and
+  /// the lifecycle has its own scoped writer above.
+  ///
+  /// The row's clock moves, and the one intent carries exactly the fields the
+  /// row did — the contract's `fields` object is sparse, so an omitted key is
+  /// "unchanged" on the server too. A call that names nothing writes nothing,
+  /// outbox included: a mutation that changes no field is not one.
+  Future<(LocationRow?, InvariantViolation?)> updateLocationEvidence(
+    String locationId, {
+    String? sourceLabel,
+    double? sourceNumber,
+    String? discoveryBasis,
+  }) async {
+    return _db.transaction(() async {
+      final row = await locationById(locationId);
+      if (row == null) return (null, unknownRow);
+      // An omitted key is "unchanged"; a null value would be "cleared", and a
+      // fill-in never clears anything. The null-aware `?` leaves the key out.
+      final fields = <String, Object?>{
+        'source_label': ?sourceLabel,
+        'source_number': ?sourceNumber,
+        'discovery_basis': ?discoveryBasis,
+      };
+      if (fields.isEmpty) return (row, null);
+      final at = _now();
+      await (_db.update(
+        _db.locations,
+      )..where((l) => l.id.equals(locationId))).write(
+        LocationsCompanion(
+          sourceLabel: Value.absentIfNull(sourceLabel),
+          sourceNumber: Value.absentIfNull(sourceNumber),
+          discoveryBasis: Value.absentIfNull(discoveryBasis),
+          updatedAt: Value(at),
+        ),
+      );
+      await _outbox.record(
+        kind: SyncedEntityKind.location,
+        entityId: locationId,
+        op: OutboxOp.upsert,
+        at: at,
+        fields: fields,
+      );
+      return (await locationById(locationId), null);
+    });
+  }
+
   /// Source-scoped retraction (I15). Evidence, not a user removal: it writes
   /// the lifecycle locally and DOES NOT sync — no outbox row, no tombstone
   /// (V2_SYNC.md §5). [readingSourceId] names the Source whose own reading
@@ -346,6 +422,21 @@ class EntryRepository {
   Future<List<LocationRow>> locationsOf(String entryId) {
     return (_db.select(_db.locations)
           ..where((l) => l.entryId.equals(entryId))
+          ..orderBy([(l) => OrderingTerm.asc(l.discoveredAt)]))
+        .get();
+  }
+
+  /// Every Location one Source has shown, in the order they were discovered —
+  /// **one** read on `idx_locations_source`.
+  ///
+  /// What a source-scoped reading needs is a Source's own Locations, and
+  /// asking for them by Entry meant a walk of the Collection's Entries with a
+  /// query per Entry. This is that answer asked for directly. Retracted rows
+  /// are included: whether a lifecycle disqualifies a row is the caller's
+  /// judgement (a checkpoint excludes them; a reconciliation must see them).
+  Future<List<LocationRow>> locationsOfSource(String sourceId) {
+    return (_db.select(_db.locations)
+          ..where((l) => l.sourceId.equals(sourceId))
           ..orderBy([(l) => OrderingTerm.asc(l.discoveredAt)]))
         .get();
   }

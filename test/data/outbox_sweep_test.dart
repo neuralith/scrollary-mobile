@@ -139,6 +139,19 @@ void main() {
       final (_, v) = await h.entries.placeEntry(unplacedId, 2);
       return v;
     });
+    late String sourcePlacedId;
+    await expectDelta('entry create unplaced, again', 1, () async {
+      final (e, v) = await h.entries.createInCollection(
+        collectionId: collectionId,
+        placement: Placement.unplaced,
+      );
+      sourcePlacedId = e!.id;
+      return v;
+    });
+    await expectDelta('entry placed from what a Source printed', 1, () async {
+      final (_, v) = await h.entries.placeFromSource(sourcePlacedId, 3);
+      return v;
+    });
     late String locationId;
     await expectDelta('location add', 1, () async {
       final (l, v) = await h.entries.addLocation(
@@ -150,6 +163,23 @@ void main() {
       locationId = l!.id;
       return v;
     });
+    await expectDelta('location evidence fill-in', 1, () async {
+      final (_, v) = await h.entries.updateLocationEvidence(
+        locationId,
+        sourceLabel: 'Part 1',
+        sourceNumber: 1,
+        discoveryBasis: 'sourceListing',
+      );
+      return v;
+    });
+    await expectDelta(
+      'a fill-in that names no field is not a mutation',
+      0,
+      () async {
+        final (_, v) = await h.entries.updateLocationEvidence(locationId);
+        return v;
+      },
+    );
     await expectDelta('location retraction is evidence, not a mutation', 0, () {
       return h.entries.retractLocation(locationId, readingSourceId: sourceId);
     });

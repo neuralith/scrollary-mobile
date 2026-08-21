@@ -9,23 +9,8 @@ import 'package:web_reader/domain/reading_state.dart';
 import 'package:web_reader/library/collection_identity.dart';
 import 'package:web_reader/recognition/recognise.dart';
 
+import '../data/support/repo_harness.dart';
 import 'support/recognition_harness.dart';
-
-/// Counts statements reaching the executor, so "no network" can be stated as
-/// "this many local lookups and nothing else".
-class CountingInterceptor extends QueryInterceptor {
-  int selects = 0;
-
-  @override
-  Future<List<Map<String, Object?>>> runSelect(
-    QueryExecutor executor,
-    String statement,
-    List<Object?> args,
-  ) {
-    selects++;
-    return executor.runSelect(statement, args);
-  }
-}
 
 void main() {
   group('key derivation', () {

@@ -8,22 +8,6 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'support/repo_harness.dart';
 
-/// Counts SELECT statements reaching the executor, so a test can assert the
-/// hot path is a single lookup rather than a chain.
-class CountingInterceptor extends QueryInterceptor {
-  int selects = 0;
-
-  @override
-  Future<List<Map<String, Object?>>> runSelect(
-    QueryExecutor executor,
-    String statement,
-    List<Object?> args,
-  ) {
-    selects++;
-    return executor.runSelect(statement, args);
-  }
-}
-
 void main() {
   late RepoHarness h;
   late CountingInterceptor counter;

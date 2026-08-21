@@ -128,6 +128,10 @@ class OfflineCopyRepository {
     )..where((c) => c.entryId.equals(entryId))).go();
   }
 
+  // Drift reads a stored timestamp back in local time; a capture time is
+  // written in UTC (see `recordCopy`) and is read back in it, the way
+  // `ReadingStateRepository` normalises its own. Fixed here at the repository
+  // boundary so no caller has to remember to compare in UTC.
   OfflineCopy _toDomain(OfflineCopyRow row) => OfflineCopy(
     id: row.id,
     entryId: row.entryId,
@@ -135,7 +139,7 @@ class OfflineCopyRepository {
     sourceName: row.sourceName,
     sourceHost: row.sourceHost,
     sourceLanguage: row.sourceLanguage,
-    capturedAt: row.capturedAt,
+    capturedAt: row.capturedAt.toUtc(),
     artifactFormat: row.artifactFormat,
     contentPath: row.contentPath,
     byteSize: row.byteSize,
