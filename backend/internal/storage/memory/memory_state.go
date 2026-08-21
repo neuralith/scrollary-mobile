@@ -31,6 +31,9 @@ func (x *readingStates) Put(_ context.Context, r *domain.ReadingState) error {
 	s := (*Store)(x)
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if e, ok := s.entries[r.EntryID]; !ok || e.LibraryID != r.LibraryID {
+		return domain.ErrNotFound
+	}
 	if existing, ok := s.reading[r.EntryID]; ok && existing.UpdatedAt.After(r.UpdatedAt) {
 		return nil
 	}
@@ -77,6 +80,12 @@ func (x *measurements) Put(_ context.Context, m *domain.Measurement) error {
 	s := (*Store)(x)
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if e, ok := s.entries[m.EntryID]; !ok || e.LibraryID != m.LibraryID {
+		return domain.ErrNotFound
+	}
+	if src, ok := s.sources[m.SourceID]; !ok || src.LibraryID != m.LibraryID {
+		return domain.ErrNotFound
+	}
 	key := [2]domain.ID{m.EntryID, m.SourceID}
 	if existing, ok := s.measurements[key]; ok && existing.ObservedAt.After(m.ObservedAt) {
 		return nil
@@ -160,10 +169,21 @@ func (x *downloadRequests) Resolve(_ context.Context, lib domain.LibraryID, id d
 
 type tombstones Store
 
+// Add keeps one row per (library, kind, entity) and advances it to the newer
+// revision, exactly as the Postgres primary-key upsert does.
 func (x *tombstones) Add(_ context.Context, t domain.Tombstone) error {
 	s := (*Store)(x)
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	for i := range s.tombstones {
+		e := &s.tombstones[i]
+		if e.LibraryID == t.LibraryID && e.Kind == t.Kind && e.EntityID == t.EntityID {
+			if t.Revision > e.Revision {
+				*e = t
+			}
+			return nil
+		}
+	}
 	s.tombstones = append(s.tombstones, t)
 	return nil
 }

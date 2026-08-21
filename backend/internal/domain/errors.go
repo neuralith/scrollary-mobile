@@ -17,6 +17,10 @@ var (
 	ErrPreferredSourceForeign = errors.New("I9: a preferred source must belong to its collection")
 	ErrMeasurementNeedsScope  = errors.New("I12: a measurement must name the source it was measured against")
 
+	// ErrPlacementUnsupported refuses ordinal placement for a collection whose
+	// ordering basis gives an ordinal nothing to mean (V2-D16).
+	ErrPlacementUnsupported = errors.New("ordinal placement is not available for this collection")
+
 	ErrNotFound       = errors.New("not found")
 	ErrAlreadyExists  = errors.New("already exists")
 	ErrRequestClaimed = errors.New("download request already claimed")

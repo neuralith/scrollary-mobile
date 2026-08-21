@@ -56,6 +56,8 @@ func (s *Store) ReadingStates() storage.ReadingStates       { return (*readingSt
 func (s *Store) Measurements() storage.Measurements         { return (*measurements)(s) }
 func (s *Store) DownloadRequests() storage.DownloadRequests { return (*downloadRequests)(s) }
 func (s *Store) Tombstones() storage.Tombstones             { return (*tombstones)(s) }
+func (s *Store) Mutations() storage.Mutations               { return (*mutationsLedger)(s) }
+func (s *Store) Changes() storage.ChangeFeed                { return (*changeFeed)(s) }
 
 // translate maps a PostgreSQL constraint violation onto the named domain error
 // the in-memory store returns for the same rule.
