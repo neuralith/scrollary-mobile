@@ -250,7 +250,7 @@ class FolderRepository {
   }) async {
     await _db
         .into(_db.folders)
-        .insert(
+        .insertOnConflictUpdate(
           FoldersCompanion(
             id: Value(id),
             serverId: Value(serverId),
@@ -261,7 +261,6 @@ class FolderRepository {
             revision: Value(revision),
             updatedAt: Value(updatedAt),
           ),
-          mode: InsertMode.insertOrReplace,
         );
   }
 
@@ -276,4 +275,19 @@ class FolderRepository {
   Future<FolderRow?> _byId(String id) => (_db.select(
     _db.folders,
   )..where((f) => f.id.equals(id))).getSingleOrNull();
+
+  // ---- Sync-lane surface (additive, roadmap G3): no outbox, no clock. ------
+
+  /// Records the canonical server id beside the permanent local id.
+  Future<void> applyServerId(String id, String serverId) async {
+    await (_db.update(_db.folders)..where((f) => f.id.equals(id))).write(
+      FoldersCompanion(serverId: Value(serverId)),
+    );
+  }
+
+  /// Repoints child folders of [from] at [to] during a duplicate merge.
+  Future<void> rewriteFolderParentRefs(String from, String to) async {
+    await (_db.update(_db.folders)..where((f) => f.parentId.equals(from)))
+        .write(FoldersCompanion(parentId: Value(to)));
+  }
 }

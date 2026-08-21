@@ -54,6 +54,45 @@ class OutboxRepository {
     final row = await query.getSingle();
     return row.read(count) ?? 0;
   }
+
+  // ---- Drain surface (additive, roadmap G1). -------------------------------
+
+  /// The marker a terminally-rejected intent carries in `last_error`. A parked
+  /// row stays visible (the user can see what failed and why) but never
+  /// re-enters a drain — resending it would be rejected identically forever.
+  static const rejectedPrefix = 'rejected:';
+
+  /// Drainable intents after [afterOpId], oldest first, excluding parked
+  /// rejections. Keyset pagination so a wall of parked rows cannot stall the
+  /// drain.
+  Future<List<OutboxRow>> pendingAfter(int afterOpId, {int limit = 50}) {
+    return (_db.select(_db.outbox)
+          ..where(
+            (o) =>
+                o.opId.isBiggerThanValue(afterOpId) &
+                (o.lastError.isNull() |
+                    o.lastError.like('$rejectedPrefix%').not()),
+          )
+          ..orderBy([(o) => OrderingTerm.asc(o.opId)])
+          ..limit(limit))
+        .get();
+  }
+
+  /// Parks a row the server rejected with a named reason. Not an ack: the row
+  /// stays for the problems surface, marked so drains skip it.
+  Future<void> markRejected(int opId, String reason) async {
+    await (_db.update(_db.outbox)..where((o) => o.opId.equals(opId))).write(
+      OutboxCompanion(lastError: Value('$rejectedPrefix$reason')),
+    );
+  }
+
+  /// Parked rejections, for the sync-status surface.
+  Future<List<OutboxRow>> rejected() {
+    return (_db.select(_db.outbox)
+          ..where((o) => o.lastError.like('$rejectedPrefix%'))
+          ..orderBy([(o) => OrderingTerm.asc(o.opId)]))
+        .get();
+  }
 }
 
 /// The singleton sync-state row (`CHECK (id = 1)`).

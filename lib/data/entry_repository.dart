@@ -366,7 +366,7 @@ class EntryRepository {
   }) async {
     await _db
         .into(_db.entries)
-        .insert(
+        .insertOnConflictUpdate(
           EntriesCompanion(
             id: Value(id),
             serverId: Value(serverId),
@@ -379,7 +379,6 @@ class EntryRepository {
             revision: Value(revision),
             updatedAt: Value(updatedAt),
           ),
-          mode: InsertMode.insertOrReplace,
         );
   }
 
@@ -404,7 +403,7 @@ class EntryRepository {
   }) async {
     await _db
         .into(_db.locations)
-        .insert(
+        .insertOnConflictUpdate(
           LocationsCompanion(
             id: Value(id),
             serverId: Value(serverId),
@@ -420,12 +419,51 @@ class EntryRepository {
             revision: Value(revision),
             updatedAt: Value(updatedAt),
           ),
-          mode: InsertMode.insertOrReplace,
         );
   }
 
   Future<void> applyRemoteLocationDelete(String id) async {
     await (_db.delete(_db.locations)..where((l) => l.id.equals(id))).go();
+  }
+
+  // ---- Sync-lane surface (additive, roadmap G3): no outbox, no clock. ------
+
+  Future<void> applyEntryServerId(String id, String serverId) async {
+    await (_db.update(_db.entries)..where((e) => e.id.equals(id))).write(
+      EntriesCompanion(serverId: Value(serverId)),
+    );
+  }
+
+  Future<void> applyLocationServerId(String id, String serverId) async {
+    await (_db.update(_db.locations)..where((l) => l.id.equals(id))).write(
+      LocationsCompanion(serverId: Value(serverId)),
+    );
+  }
+
+  /// The Location holding this natural identity, if any — the collision probe
+  /// for merge-before-insert (`url_key` is unique locally, I6).
+  Future<LocationRow?> locationByUrlKey(String urlKey) => (_db.select(
+    _db.locations,
+  )..where((l) => l.urlKey.equals(urlKey))).getSingleOrNull();
+
+  Future<void> rewriteEntryFolderRefs(String from, String to) async {
+    await (_db.update(_db.entries)..where((e) => e.folderId.equals(from)))
+        .write(EntriesCompanion(folderId: Value(to)));
+  }
+
+  Future<void> rewriteEntryCollectionRefs(String from, String to) async {
+    await (_db.update(_db.entries)..where((e) => e.collectionId.equals(from)))
+        .write(EntriesCompanion(collectionId: Value(to)));
+  }
+
+  Future<void> rewriteLocationEntryRefs(String from, String to) async {
+    await (_db.update(_db.locations)..where((l) => l.entryId.equals(from)))
+        .write(LocationsCompanion(entryId: Value(to)));
+  }
+
+  Future<void> rewriteLocationSourceRefs(String from, String to) async {
+    await (_db.update(_db.locations)..where((l) => l.sourceId.equals(from)))
+        .write(LocationsCompanion(sourceId: Value(to)));
   }
 
   bool _mentions(Exception e, String needle) => e.toString().contains(needle);
