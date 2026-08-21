@@ -17,10 +17,12 @@
 ///   disk (I14), and this row is what lets the cleanup surface say what it is
 ///   offering to remove.
 ///
-/// `save_queue` and `save_runs` are deliberately absent for now: they are
-/// ported from V1 and retargeted to `(entry, location)` by the capture lane
-/// (E3), which owns their shape. Adding a guessed shape here would be a
-/// second author for the same table.
+/// `save_queue` is the capture lane's own table (E3): V1's `queue_tasks`,
+/// ported and retargeted to `(entry, location)`. `save_runs` is still absent —
+/// it is the resume record of a **Browser-driven traversal**, and that
+/// orchestration does not exist in V2 yet (see `lib/save/entry_capture.dart`
+/// for the seam it waits on). Writing the table before its only writer would
+/// be a guessed shape with no caller.
 library;
 
 import 'package:drift/drift.dart';
@@ -286,6 +288,71 @@ class OfflineCopies extends Table {
   Set<Column> get primaryKey => {id};
 }
 
+/// The device's save queue — V1's `queue_tasks`, retargeted to
+/// `(entry, location)` (V2-D15). Device state, never synced (V2_SYNC.md §4.8).
+///
+/// The five states and their rules are ported verbatim from V1 and carried in
+/// `lib/save/queue_task.dart`. Three of them are load-bearing here:
+///
+/// * `cancelled` is a **state, not a deletion** — a cancel preserves the row,
+///   and only `lib/save/queue_repository.dart` deletes one, and only while it
+///   is already terminal.
+/// * `order_index` survives a cancellation, which is what lets the Undo behind
+///   "removed from the queue" put a waiting row back exactly where it was
+///   rather than at the end.
+/// * every claim and every cancel is one conditional `UPDATE` against these
+///   columns, so exactly one of a racing pair wins and the loser is told.
+///
+/// [locationUrl] is denormalised on purpose. `location_id` is a pointer into
+/// library rows a Source may retract or a sync may remove; the address the
+/// user asked to save is what the task is *about*, and a task that forgot it
+/// could neither run, report nor be retried.
+@DataClassName('SaveTaskRow')
+class SaveQueue extends Table {
+  TextColumn get id => text()();
+  TextColumn get entryId => text()();
+  TextColumn get locationId => text().nullable()();
+  TextColumn get locationUrl => text()();
+
+  /// `CaptureMode.name`, or null for a task queued before a mode was chosen —
+  /// which means "decide from the settled page", not "assume one".
+  TextColumn get captureMode => text().nullable()();
+  BoolColumn get captureModeIsUserSet =>
+      boolean().withDefault(const Constant(false))();
+
+  /// queued | running | completed | failed | cancelled
+  TextColumn get state => text().withDefault(const Constant('queued'))();
+
+  /// `queue` | `direct` — queued work, or the record of a save started
+  /// straight from the Browser. A `direct` row is only ever terminal.
+  TextColumn get origin => text().withDefault(const Constant('queue'))();
+
+  TextColumn get outcome => text().nullable()();
+  TextColumn get lastError => text().nullable()();
+
+  /// `StopReason.name`, when a named condition ended it.
+  TextColumn get stopReason => text().nullable()();
+
+  IntColumn get orderIndex => integer().withDefault(const Constant(0))();
+  DateTimeColumn get queuedAt => dateTime()();
+  DateTimeColumn get startedAt => dateTime().nullable()();
+  DateTimeColumn get finishedAt => dateTime().nullable()();
+
+  @override
+  Set<Column> get primaryKey => {id};
+
+  @override
+  List<String> get customConstraints => [
+    "CHECK (state IN ('queued','running','completed','failed','cancelled'))",
+    "CHECK (origin IN ('queue','direct'))",
+    // A direct save creates no pending work: there is nothing for a pump to
+    // release, so such a row exists only as history.
+    "CHECK (origin <> 'direct' OR state NOT IN ('queued','running'))",
+    'FOREIGN KEY (entry_id) REFERENCES entries (id) ON DELETE CASCADE',
+    'FOREIGN KEY (location_id) REFERENCES locations (id) ON DELETE SET NULL',
+  ];
+}
+
 /// One row per manual page visit. Unchanged in spirit from V1's
 /// `browsing_history`: only navigation the user performed themselves is
 /// written here, and it never synchronises — cloud sync is not cloud browsing
@@ -424,6 +491,7 @@ class LocalSettings extends Table {
     Measurements,
     DownloadRequests,
     OfflineCopies,
+    SaveQueue,
     History,
     Outbox,
     SyncState,
@@ -471,6 +539,18 @@ class LibraryDatabase extends _$LibraryDatabase {
         'CREATE UNIQUE INDEX IF NOT EXISTS idx_download_requests_open '
             'ON download_requests(entry_id) '
             "WHERE state IN ('pending','claimed')",
+        // Idempotent by construction, exactly as the request index above:
+        // an Entry has one active copy (I13), so a second tap while a save
+        // for it is still waiting or running is the same request, not a
+        // second one. Keyed on the Entry rather than on `(entry, location)`
+        // because saving one Entry from two Sources at once could only
+        // produce two candidates for one active copy.
+        'CREATE UNIQUE INDEX IF NOT EXISTS idx_save_queue_open '
+            'ON save_queue(entry_id) '
+            "WHERE state IN ('queued','running')",
+        // The pump's own read: pending work in the order it was queued.
+        'CREATE INDEX IF NOT EXISTS idx_save_queue_pending '
+            'ON save_queue(state, order_index)',
         // Read paths.
         'CREATE INDEX IF NOT EXISTS idx_locations_entry '
             'ON locations(entry_id)',
