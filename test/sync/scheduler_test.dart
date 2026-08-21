@@ -72,6 +72,14 @@ class _Wire implements SyncTransport {
   }
 
   @override
+  Future<TransportReply> claimDownloadRequest(
+    String requestId,
+    Map<String, Object?> body,
+  ) {
+    return _pass(() => _inner.claimDownloadRequest(requestId, body));
+  }
+
+  @override
   Future<TransportReply> postMutations(Map<String, Object?> body) {
     mutationCalls += 1;
     return _pass(() => _inner.postMutations(body));
