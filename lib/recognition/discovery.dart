@@ -35,6 +35,13 @@ import '../domain/invariants.dart';
 import '../domain/location.dart';
 import 'entry_identity.dart';
 
+/// How a Location found by reading a Source's own listing says it was found.
+///
+/// One spelling, in one place: a blank basis filled in later by a second
+/// reading (`check.dart`) has to record the same fact as the first reading
+/// recorded here, or two rows discovered the same way would disagree about it.
+const String kSourceListingBasis = 'sourceListing';
+
 /// One address a Source's reading listed, with its two readings kept apart.
 ///
 /// Keeping them apart is the whole point (`entry_identity.dart`): the number
@@ -323,7 +330,7 @@ class SourceDiscovery {
         sourceId: window.sourceId,
         sourceLabel: listing.label,
         sourceNumber: listing.printedNumber,
-        discoveryBasis: 'sourceListing',
+        discoveryBasis: kSourceListingBasis,
       );
       if (locationViolation != null || location == null) {
         refusals.add(
@@ -337,7 +344,7 @@ class SourceDiscovery {
       locations.add(location.id);
     }
 
-    final retracted = await _retract(window, collection.id, refusals);
+    final retracted = await _retract(window, refusals);
 
     return DiscoveryOutcome(
       createdEntryIds: created,
@@ -399,31 +406,27 @@ class SourceDiscovery {
   /// writes a lifecycle and does not sync (V2_SYNC.md §5).
   Future<List<String>> _retract(
     ObservedEntryWindow window,
-    String collectionId,
     List<DiscoveryRefusal> refusals,
   ) async {
     final retracted = <String>[];
     // A reading that vouches for no interval can rule nothing out, so there
     // is nothing to look through.
     if (!window.vouchesForInterval) return retracted;
-    // The repository offers Locations by Entry, so the Collection's Entries
-    // are the enumeration available. Every Location of this Source hangs off
-    // one of them (I7).
-    for (final entry in await _entries.entriesOf(collectionId)) {
-      for (final location in await _entries.locationsOf(entry.id)) {
-        if (!windowRetracts(window, location)) continue;
-        final violation = await _entries.retractLocation(
-          location.id,
-          readingSourceId: window.sourceId,
+    // The candidates are this Source's own Locations and only ever those
+    // (I15), read in one indexed pass rather than walked Entry by Entry.
+    for (final location in await _entries.locationsOfSource(window.sourceId)) {
+      if (!windowRetracts(window, location)) continue;
+      final violation = await _entries.retractLocation(
+        location.id,
+        readingSourceId: window.sourceId,
+      );
+      if (violation != null) {
+        refusals.add(
+          DiscoveryRefusal(urlKey: location.urlKey, violation: violation),
         );
-        if (violation != null) {
-          refusals.add(
-            DiscoveryRefusal(urlKey: location.urlKey, violation: violation),
-          );
-          continue;
-        }
-        retracted.add(location.id);
+        continue;
       }
+      retracted.add(location.id);
     }
     return retracted;
   }

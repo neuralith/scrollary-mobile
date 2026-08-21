@@ -41,6 +41,7 @@ import '../data/entry_repository.dart';
 import '../data/recognition_index.dart';
 import '../data/schema.dart';
 import '../domain/collection.dart';
+import '../domain/entry.dart' show Placement;
 import '../domain/location.dart' show LocationLifecycle;
 import '../domain/source.dart' as domain;
 import '../save/capture_policy.dart';
@@ -152,8 +153,9 @@ enum SourceFillInField { sourceLabel, sourceNumber, discoveryBasis }
 /// What one re-listed address's second reading established.
 ///
 /// V1's `refreshDiscoveredEntry` returned the names of the fields it wrote;
-/// this is the same answer, computed by [sourceFillIn] and reported the same
-/// way. Empty is the ordinary result.
+/// this is the same answer, computed by [sourceFillIn], written through
+/// `EntryRepository.updateLocationEvidence` and reported the same way. Empty
+/// is the ordinary result.
 class SourceFillIn {
   const SourceFillIn({
     required this.locationId,
@@ -228,6 +230,7 @@ class SourceCheckOutcome {
     this.checkpoint,
     this.discovery = const DiscoveryOutcome(),
     this.fillIns = const [],
+    this.placedEntryIds = const [],
     this.concerns = const [],
     this.notClaimedAsNew = 0,
     this.restrictedAddresses = 0,
@@ -252,10 +255,17 @@ class SourceCheckOutcome {
   /// What applying the reading did, straight from `discovery.dart`.
   final DiscoveryOutcome discovery;
 
-  /// Second readings of addresses the library already holds. Non-empty means
-  /// the source has filled a blank — see [sourceFillIn] and §"repository gap"
-  /// on [SourceCheck].
+  /// Second readings of addresses the library already holds, as they were
+  /// applied: each entry's [SourceFillIn.fields] were written, and each
+  /// [SourceFillIn.disagreedNumber] was reported and left alone.
   final List<SourceFillIn> fillIns;
+
+  /// Entries the library already held with **no** position, which this
+  /// reading placed because its own Source printed one and nothing
+  /// contradicted it (V2-D16). Ambiguity is absent from this list by
+  /// construction — an Entry it could not place stays unplaced, which is an
+  /// answer the user can act on.
+  final List<String> placedEntryIds;
 
   /// Present when the check stopped on an address whose number the reading's
   /// own evidence contradicts. The evidence, kept rather than repaired.
@@ -368,18 +378,25 @@ abstract interface class SourceObservationSource {
 
 /// One Source, read once, applied through `discovery.dart`.
 ///
-/// ## Repository gap this lane could not close
+/// ## What a re-listed address may change
 ///
-/// [sourceFillIn] is the whole V1 judgement and it is computed for every
-/// re-listed address, but `EntryRepository` currently exposes `addLocation`,
-/// `retractLocation` and `removeLocationByHand` and **no field writer for an
-/// existing Location**. So a fill-in whose subject is a Location the library
-/// already holds is reported on [SourceCheckOutcome.fillIns] and not written;
-/// the case that *is* writable — an Entry the library holds that this Source
-/// had no address for — goes through `discovery.dart`'s ordinary merge path
-/// and does appear as an added Location. `applyRemoteLocation` is not an
-/// option: it is the pull path and writes no outbox row, so a local
-/// observation applied through it would never reach the server.
+/// Addresses the library already holds are the ones a second reading has
+/// something to say about, and there are exactly two things it may say:
+///
+/// * **A blank this Source has now filled** — [sourceFillIn] is the whole
+///   judgement, unchanged, and what it names is written through
+///   `EntryRepository.updateLocationEvidence`, whose narrowness is the point:
+///   it can reach three evidence columns and nothing else. A disagreement is
+///   still only reported (see [SourceFillIn.disagreedNumber]).
+/// * **A position for an Entry that had none** — see [_placementFor]. It is
+///   V2-D16's one automatic case and is applied through
+///   `EntryRepository.placeFromSource`, which writes [Placement.placed] and
+///   never [Placement.userPlaced].
+///
+/// Both are local observations, so both go through the ordinary write path
+/// and carry their outbox intent. `applyRemoteLocation` is not an option for
+/// either: it is the pull path and writes no intent, so an observation
+/// applied through it would never reach the server.
 class SourceCheck {
   SourceCheck({
     required this._collections,
@@ -604,21 +621,22 @@ class SourceCheck {
     }
 
     // --- the checkpoint: what this Source has already shown -------------------
-    final checkpoint = await _checkpoint(
-      collectionId: collection.id,
-      sourceId: source.id,
-      reading: full,
-    );
+    final checkpoint = await _checkpoint(sourceId: source.id, reading: full);
 
     // --- which addresses this reading may act on -----------------------------
     final held = <String, LocationRow>{};
     final novel = <ObservedEntryListing>[];
-    final fillIns = <SourceFillIn>[];
+    // Each fill-in beside the listing that established it, so applying one
+    // needs no second pass over the reading to find its words again.
+    final fillIns = <(SourceFillIn, ObservedEntryListing)>[];
+    final placements = <_SourcePlacement>[];
     var notClaimedAsNew = 0;
     var restricted = 0;
 
     for (final listing in listings) {
-      final hit = await _index.lookupUrl(listing.urlKey);
+      // One statement resolves the address, its Entry and the Collection whose
+      // rules a placement is judged against.
+      final hit = await _index.lookupUrlWithCollection(listing.urlKey);
       if (hit != null) {
         held[listing.urlKey] = hit.location;
         // The source's current words about an address already held. Judged, and
@@ -640,8 +658,14 @@ class SourceCheck {
             fields: fields,
             disagreedNumber: disagreed,
           );
-          if (!fillIn.isEmpty) fillIns.add(fillIn);
+          if (!fillIn.isEmpty) fillIns.add((fillIn, listing));
         }
+        final placement = _placementFor(
+          hit: hit,
+          listing: listing,
+          sourceId: source.id,
+        );
+        if (placement != null) placements.add(placement);
         continue;
       }
       if (!_isNew(listing, checkpoint)) {
@@ -703,6 +727,13 @@ class SourceCheck {
     // conclude an *absence*, and it cannot — the interval above is null.
     final outcome = await _discovery.apply(window);
 
+    // What the source said about addresses already held, written for the same
+    // reason: it is what this reading saw, and a reading cut short still saw
+    // it. Placement runs after the discovery above so that a position taken by
+    // an Entry this very reading created is seen as taken.
+    await _applyFillIns(fillIns);
+    final placed = await _place(placements);
+
     return SourceCheckOutcome(
       sourceId: source.id,
       state: outcome.addedLocationIds.isNotEmpty
@@ -714,10 +745,83 @@ class SourceCheck {
       pagesRead: pagesRead,
       checkpoint: checkpoint,
       discovery: outcome,
-      fillIns: fillIns,
+      fillIns: [for (final (fillIn, _) in fillIns) fillIn],
+      placedEntryIds: placed,
       notClaimedAsNew: notClaimedAsNew,
       restrictedAddresses: restricted,
     );
+  }
+
+  /// Writes the blanks this reading filled, and only those.
+  ///
+  /// [sourceFillIn] decided which fields; this hands exactly those to the
+  /// repository's narrow writer, which writes exactly what it is named. A
+  /// disagreed number is not among them — it is evidence, kept rather than
+  /// acted on.
+  Future<void> _applyFillIns(
+    List<(SourceFillIn, ObservedEntryListing)> fillIns,
+  ) async {
+    for (final (fillIn, listing) in fillIns) {
+      if (fillIn.fields.isEmpty) continue;
+      await _entries.updateLocationEvidence(
+        fillIn.locationId,
+        sourceLabel: fillIn.fields.contains(SourceFillInField.sourceLabel)
+            ? listing.label.trim()
+            : null,
+        sourceNumber: fillIn.fields.contains(SourceFillInField.sourceNumber)
+            ? listing.printedNumber
+            : null,
+        discoveryBasis: fillIn.fields.contains(SourceFillInField.discoveryBasis)
+            ? kSourceListingBasis
+            : null,
+      );
+    }
+  }
+
+  /// Places the Entries this reading gave a position to, and only the ones
+  /// nothing contradicts.
+  ///
+  /// Ambiguity is anything that gives one answer more than one meaning, and
+  /// each kind of it leaves the Entry unplaced rather than guessing:
+  ///
+  /// * this reading numbered one Entry's addresses two different ways;
+  /// * it sent two Entries to the same position;
+  /// * the position is already somebody else's — the user's, another
+  ///   Source's, or one this very reading created. A second opinion does not
+  ///   move an Entry that is already placed.
+  ///
+  /// A refusal from the repository (I8, the position taken between the check
+  /// and the write) means the same thing and is treated the same way.
+  Future<List<String>> _place(List<_SourcePlacement> candidates) async {
+    if (candidates.isEmpty) return const [];
+    final ordinalsPerEntry = <String, Set<double>>{};
+    final entriesPerOrdinal = <(String, double), Set<String>>{};
+    for (final candidate in candidates) {
+      (ordinalsPerEntry[candidate.entryId] ??= {}).add(candidate.ordinal);
+      (entriesPerOrdinal[(candidate.collectionId, candidate.ordinal)] ??= {})
+          .add(candidate.entryId);
+    }
+
+    final placed = <String>[];
+    final seen = <String>{};
+    for (final candidate in candidates) {
+      if (!seen.add(candidate.entryId)) continue;
+      if (ordinalsPerEntry[candidate.entryId]!.length > 1) continue;
+      final key = (candidate.collectionId, candidate.ordinal);
+      if (entriesPerOrdinal[key]!.length > 1) continue;
+      final occupant = await _index.lookupOrdinal(
+        candidate.collectionId,
+        candidate.ordinal,
+      );
+      if (occupant != null && occupant.id != candidate.entryId) continue;
+      final (row, violation) = await _entries.placeFromSource(
+        candidate.entryId,
+        candidate.ordinal,
+      );
+      if (violation != null || row == null) continue;
+      placed.add(candidate.entryId);
+    }
+    return placed;
   }
 
   /// Whether this reading may claim [listing] as new.
@@ -751,24 +855,20 @@ class SourceCheck {
   /// which reconciled first and then re-read the page in hand against the
   /// corrected checkpoint — the same correction, made in one pass).
   ///
-  /// The repository offers Locations by Entry, so the Collection's Entries are
-  /// the enumeration available; every Location of this Source hangs off one of
-  /// them (I7).
+  /// The rows are this Source's own, read in one indexed pass: a checkpoint is
+  /// a fact about one Source, so it is asked of the Source rather than
+  /// assembled by walking the Collection's Entries.
   Future<double?> _checkpoint({
-    required String collectionId,
     required String sourceId,
     required ObservedEntryWindow reading,
   }) async {
     double? highest;
-    for (final entry in await _entries.entriesOf(collectionId)) {
-      for (final location in await _entries.locationsOf(entry.id)) {
-        if (location.sourceId != sourceId) continue;
-        if (location.lifecycle != LocationLifecycle.active.name) continue;
-        if (windowRetracts(reading, location)) continue;
-        final number = location.sourceNumber;
-        if (number != null && (highest == null || number > highest)) {
-          highest = number;
-        }
+    for (final location in await _entries.locationsOfSource(sourceId)) {
+      if (location.lifecycle != LocationLifecycle.active.name) continue;
+      if (windowRetracts(reading, location)) continue;
+      final number = location.sourceNumber;
+      if (number != null && (highest == null || number > highest)) {
+        highest = number;
       }
     }
     return highest;
@@ -780,6 +880,60 @@ class SourceCheck {
         state: SourceCheckState.stopped,
         stopReason: stop,
       );
+}
+
+/// One position this reading established for an Entry that had none.
+class _SourcePlacement {
+  const _SourcePlacement({
+    required this.entryId,
+    required this.collectionId,
+    required this.ordinal,
+  });
+
+  final String entryId;
+  final String collectionId;
+  final double ordinal;
+}
+
+/// Whether a re-listed address is the one automatic placement V2-D16 allows.
+///
+/// Every clause is a refusal, and the honest outcome of any of them is that
+/// the Entry stays unplaced — visible, readable, offered to the user:
+///
+/// * the address is on the Source being read (a reading speaks for its own
+///   site, never for another's);
+/// * its Entry has no position at all — an Entry already placed is not
+///   re-placed by a second opinion, and a `userPlaced` one least of all;
+/// * its Collection is ordered by an explicit numeric index, so a number
+///   *means* a position there;
+/// * the source printed the number. A number read out of an address is never
+///   adopted (`entry_identity.dart`), and this is the same rule;
+/// * nothing stored contradicts it. A disagreement between what is stored and
+///   what is now printed is reported and never resolved here.
+_SourcePlacement? _placementFor({
+  required RecognitionCollectionHit hit,
+  required ObservedEntryListing listing,
+  required String sourceId,
+}) {
+  if (hit.location.sourceId != sourceId) return null;
+  final collection = hit.collection;
+  if (collection == null) return null;
+  if (!OrderingBasis.values
+      .byName(collection.orderingBasis)
+      .supportsCrossSourceMerge) {
+    return null;
+  }
+  if (hit.entry.placement != Placement.unplaced.name) return null;
+  if (hit.entry.ordinal != null) return null;
+  final printed = listing.printedNumber;
+  if (printed == null) return null;
+  final stored = hit.location.sourceNumber;
+  if (stored != null && stored != printed) return null;
+  return _SourcePlacement(
+    entryId: hit.entry.id,
+    collectionId: collection.id,
+    ordinal: printed,
+  );
 }
 
 /// Whether this Source may currently be read from. The rule is the domain's

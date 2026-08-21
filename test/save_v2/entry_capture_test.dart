@@ -165,12 +165,14 @@ void main() {
       expect(copy.sourceHost, 'reading.example.com');
       expect(copy.sourceLanguage, 'en');
       expect(
-        copy.capturedAt.toUtc(),
+        copy.capturedAt,
         onDisk.savedAt,
         reason:
             'the capture time is the manifest\'s own; drift reads a stored '
-            'timestamp back in local time, so the comparison is made in UTC',
+            'timestamp back in local time and the repository normalises it '
+            'to UTC at its boundary, so no caller has to remember to',
       );
+      expect(copy.capturedAt.isUtc, isTrue);
       expect(copy.artifactFormat, ArtifactFormat.imageSequence.name);
       expect(copy.contentPath, relative);
       expect(copy.byteSize, greaterThan(0));

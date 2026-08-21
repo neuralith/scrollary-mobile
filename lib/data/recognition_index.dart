@@ -23,6 +23,23 @@ class RecognitionHit {
   String? get collectionId => entry.collectionId;
 }
 
+/// A [RecognitionHit] with the Entry's Collection resolved beside it, in the
+/// same statement.
+///
+/// [collection] is null for a standalone Entry's Location — an answer (I3),
+/// not a miss.
+class RecognitionCollectionHit {
+  const RecognitionCollectionHit({
+    required this.location,
+    required this.entry,
+    required this.collection,
+  });
+
+  final LocationRow location;
+  final EntryRow entry;
+  final CollectionRow? collection;
+}
+
 class RecognitionIndex {
   RecognitionIndex(this._db);
 
@@ -46,6 +63,40 @@ class RecognitionIndex {
     return RecognitionHit(
       location: row.readTable(_db.locations),
       entry: row.readTable(_db.entries),
+    );
+  }
+
+  /// `url_key` → (Location, Entry, Collection) in ONE statement, or null.
+  ///
+  /// The same unique index as [lookupUrl], with the Entry's Collection joined
+  /// on beside it for a caller that must judge an address against the rules
+  /// its Collection sets — the ordering basis a placement is gated by
+  /// (V2-D16). Resolving it afterwards would be a second statement per
+  /// address, which on a listing of a hundred is a hundred of them.
+  ///
+  /// The Collection join is outer, because a standalone Entry has none.
+  Future<RecognitionCollectionHit?> lookupUrlWithCollection(
+    String urlKey,
+  ) async {
+    final query =
+        _db.select(_db.locations).join([
+            innerJoin(
+              _db.entries,
+              _db.entries.id.equalsExp(_db.locations.entryId),
+            ),
+            leftOuterJoin(
+              _db.collections,
+              _db.collections.id.equalsExp(_db.entries.collectionId),
+            ),
+          ])
+          ..where(_db.locations.urlKey.equals(urlKey))
+          ..limit(1);
+    final row = await query.getSingleOrNull();
+    if (row == null) return null;
+    return RecognitionCollectionHit(
+      location: row.readTable(_db.locations),
+      entry: row.readTable(_db.entries),
+      collection: row.readTableOrNull(_db.collections),
     );
   }
 

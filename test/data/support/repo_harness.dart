@@ -1,6 +1,10 @@
 /// Shared harness for the V2 repository tests: an in-memory database with
 /// foreign keys on (the schema's `beforeOpen` pragma), every repository over
 /// it, a deterministic advancing clock, and outbox counting.
+///
+/// [CountingInterceptor] lives here too, because "this is one indexed lookup
+/// and not a walk" is a claim several suites make and it should be measured
+/// the same way in all of them.
 library;
 
 import 'package:drift/drift.dart' hide isNull;
@@ -16,6 +20,23 @@ import 'package:web_reader/data/recognition_index.dart';
 import 'package:web_reader/data/reading_state_repository.dart';
 import 'package:web_reader/data/schema.dart';
 import 'package:web_reader/domain/collection.dart';
+
+/// Counts SELECT statements reaching the executor, so a test can assert that
+/// a path is a single lookup rather than a chain, and that its cost does not
+/// grow with the size of the library.
+class CountingInterceptor extends QueryInterceptor {
+  int selects = 0;
+
+  @override
+  Future<List<Map<String, Object?>>> runSelect(
+    QueryExecutor executor,
+    String statement,
+    List<Object?> args,
+  ) {
+    selects++;
+    return executor.runSelect(statement, args);
+  }
+}
 
 class RepoHarness {
   RepoHarness({QueryExecutor? executor})
