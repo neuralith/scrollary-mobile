@@ -1,0 +1,169 @@
+# Scrollary V2 — evidence payload specification (roadmap task A4).
+#
+# $ref-ed from openapi.yaml; part of the frozen contract.
+#
+# Evidence is WHAT A CLIENT OBSERVED, never what it concluded. The client
+# reads the page; the server decides which Collection and Entry the evidence
+# is about (DECISIONS.md V2-D24). The server never fetches a page, so
+# everything it knows arrives through these schemas.
+#
+# What a client must NEVER invent — these rules are part of the contract:
+#
+#   * No guessed ordinals. `ordinal` may be submitted only when
+#     `ordering_basis` is `explicitNumericIndex` and the number was printed by
+#     the source. A number that merely appears inside a URL is not an ordinal
+#     and must not become one.
+#   * No structure inferred from a URL. A path segment that looks numeric says
+#     nothing about the page.
+#   * No page content. No body text, no full HTML, no scripts, no snippets.
+#   * No asset URLs. Images, media and their CDNs are not evidence.
+#   * Nothing the source did not print. `source_label` and `source_number`
+#     are transcriptions, not interpretations.
+
+components:
+  schemas:
+    Evidence:
+      type: object
+      description: >-
+        One observation of one page. Fields the client did not observe are
+        omitted, never fabricated. `url_key` is the client's deterministic
+        normalisation of `url` (the V1 algorithm, unchanged, now naming a
+        Location); `host` and `path_key` are the deterministic Source-identity
+        pair.
+      required: [url, url_key, host, observed_at]
+      properties:
+        url:
+          type: string
+          format: uri
+          description: The page URL as navigated to, after top-level redirects.
+        url_key:
+          type: string
+          description: >-
+            Deterministic normalisation of `url`. Location identity (I6). The
+            normalisation deliberately does not strip `www.` and does not
+            unify scheme.
+        host:
+          type: string
+          description: The host component of `url`.
+        path_key:
+          type: string
+          description: >-
+            Deterministic Source-identity key derived from the path — what V1
+            computed as its collection key, at the level it actually
+            identifies. Omitted when no stable key could be derived.
+        page_title:
+          type: string
+          description: The document title as the page presented it.
+        collection_title:
+          type: string
+          description: >-
+            The work's title as detected on the page, if the page names one.
+            Detection uses standard HTML semantics only.
+        source_label:
+          type: string
+          description: >-
+            The label the source printed for this unit, transcribed verbatim
+            ("Part 12", "Part 3"). Evidence, never identity.
+        source_number:
+          type: number
+          description: >-
+            The number the source explicitly printed for this unit. Absent
+            when the source printed none. Never derived from a URL.
+        ordering_basis:
+          type: string
+          description: >-
+            How the source orders this Collection, as observed. Spellings are
+            the schema's CHECK vocabulary and are the same enumeration the
+            Collection resource uses.
+          enum:
+            - explicitNumericIndex
+            - publicationDate
+            - detectedNextLink
+            - discoveryOrder
+            - userDefinedManualOrder
+        ordinal:
+          type: number
+          description: >-
+            The unit's position in the Collection's explicit numeric order.
+            PERMITTED ONLY when `ordering_basis` is `explicitNumericIndex`;
+            submitting one with any other basis is `validation_failed`.
+        language:
+          type: string
+          description: >-
+            BCP 47 tag of the source's language, when the page declares one
+            (for example via the html lang attribute). Never guessed from
+            content.
+        observed_at:
+          type: string
+          format: date-time
+          description: When the client observed the page (client clock, UTC).
+
+    ProvisionalIdentity:
+      type: object
+      description: >-
+        Locally minted UUIDs the client is already using for what this
+        evidence describes, created while offline or ahead of arbitration.
+        Local ids are permanent primary keys on the device; the server maps
+        them to canonical identity and never asks a client to rewrite one.
+      properties:
+        collection_id:
+          type: string
+          format: uuid
+        source_id:
+          type: string
+          format: uuid
+        entry_id:
+          type: string
+          format: uuid
+        location_id:
+          type: string
+          format: uuid
+
+    ArbitrationRequest:
+      type: object
+      required: [evidence]
+      properties:
+        evidence:
+          $ref: '#/components/schemas/Evidence'
+        provisional:
+          $ref: '#/components/schemas/ProvisionalIdentity'
+
+    IdentityMapping:
+      type: object
+      description: >-
+        One provisional id resolved to canonical identity. If the canonical id
+        is new to the client, it records the server id beside its local id;
+        if the client already holds a row for the canonical id, it rewrites
+        references to the surviving local row and tombstones its duplicate
+        locally (V2_SYNC.md §4.5). Local file paths are untouched either way.
+      required: [kind, provisional_id, canonical_id]
+      properties:
+        kind:
+          type: string
+          enum: [collection, source, entry, location]
+        provisional_id:
+          type: string
+          format: uuid
+        canonical_id:
+          type: string
+          format: uuid
+
+    ArbitrationResponse:
+      type: object
+      description: >-
+        `resolved` carries the identity mappings. `unresolved` is a visible
+        state, not an error: the client keeps its provisional identity, the
+        Entry stays unplaced and readable, and `reason` names the refusal
+        using the shared error vocabulary. HTTP status is 200 in both cases.
+      required: [outcome]
+      properties:
+        outcome:
+          type: string
+          enum: [resolved, unresolved]
+        mappings:
+          type: array
+          description: Present when `outcome` is `resolved`.
+          items:
+            $ref: '#/components/schemas/IdentityMapping'
+        reason:
+          $ref: 'errors.yaml#/components/schemas/ErrorCode'
