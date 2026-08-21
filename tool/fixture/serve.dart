@@ -19,6 +19,10 @@ Future<void> main(List<String> args) async {
     '$kContentImagesPerEntry panels each · '
     'entry $kBrokenEntry panel $kBrokenPanel returns 503 on purpose',
   );
+  stdout.writeln(
+    'Multi-source scenarios under /s/<site>/ · '
+    'manifest at /scenarios.json',
+  );
 
   await for (final req in server) {
     try {

@@ -6,6 +6,7 @@
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'multi_source_fixtures.dart';
 import 'text_fixtures.dart';
 
 const int kEntryCount = 3;
@@ -173,6 +174,9 @@ Future<bool> handleFixtureRequest(
     await _png(res, solidPng(spec[0], spec[1], spec[2], spec[3], spec[4]));
     return true;
   }
+
+  // Multi-source scenarios: `/s/<site>/...` and `/scenarios.json`.
+  if (await handleMultiSourceRequest(req)) return true;
 
   res.statusCode = 404;
   await res.close();
