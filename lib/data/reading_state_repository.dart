@@ -128,7 +128,7 @@ class ReadingStateRepository {
     return _serialised(() async {
       await _db
           .into(_db.readingStates)
-          .insert(
+          .insertOnConflictUpdate(
             ReadingStatesCompanion(
               entryId: Value(entryId),
               status: Value(status),
@@ -138,7 +138,6 @@ class ReadingStateRepository {
               revision: Value(revision),
               updatedAt: Value(updatedAt),
             ),
-            mode: InsertMode.insertOrReplace,
           );
     });
   }
@@ -148,6 +147,38 @@ class ReadingStateRepository {
       await (_db.delete(
         _db.readingStates,
       )..where((r) => r.entryId.equals(entryId))).go();
+    });
+  }
+
+  /// Moves the state row of a merged-away duplicate Entry onto its survivor
+  /// (roadmap G3). If the survivor already has a row, the newer clock wins.
+  Future<void> rewriteEntryRef(String from, String to) {
+    return _serialised(() async {
+      final moving = await (_db.select(
+        _db.readingStates,
+      )..where((r) => r.entryId.equals(from))).getSingleOrNull();
+      if (moving == null) return;
+      final existing = await (_db.select(
+        _db.readingStates,
+      )..where((r) => r.entryId.equals(to))).getSingleOrNull();
+      await (_db.delete(
+        _db.readingStates,
+      )..where((r) => r.entryId.equals(from))).go();
+      if (existing == null || existing.updatedAt.isBefore(moving.updatedAt)) {
+        await _db
+            .into(_db.readingStates)
+            .insertOnConflictUpdate(
+              ReadingStatesCompanion(
+                entryId: Value(to),
+                status: Value(moving.status),
+                firstOpenedAt: Value(moving.firstOpenedAt),
+                lastReadAt: Value(moving.lastReadAt),
+                completedAt: Value(moving.completedAt),
+                revision: Value(moving.revision),
+                updatedAt: Value(moving.updatedAt),
+              ),
+            );
+      }
     });
   }
 
@@ -179,7 +210,7 @@ class ReadingStateRepository {
   Future<void> _write(ReadingState state, DateTime at) async {
     await _db
         .into(_db.readingStates)
-        .insert(
+        .insertOnConflictUpdate(
           ReadingStatesCompanion(
             entryId: Value(state.entryId),
             status: Value(state.status.name),
@@ -188,7 +219,6 @@ class ReadingStateRepository {
             completedAt: Value(state.completedAt),
             updatedAt: Value(at),
           ),
-          mode: InsertMode.insertOrReplace,
         );
     await _outbox.record(
       kind: SyncedEntityKind.readingState,

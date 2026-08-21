@@ -381,7 +381,7 @@ class CollectionRepository {
   }) async {
     await _db
         .into(_db.collections)
-        .insert(
+        .insertOnConflictUpdate(
           CollectionsCompanion(
             id: Value(id),
             serverId: Value(serverId),
@@ -395,7 +395,6 @@ class CollectionRepository {
             revision: Value(revision),
             updatedAt: Value(updatedAt),
           ),
-          mode: InsertMode.insertOrReplace,
         );
   }
 
@@ -419,7 +418,7 @@ class CollectionRepository {
   }) async {
     await _db
         .into(_db.sources)
-        .insert(
+        .insertOnConflictUpdate(
           SourcesCompanion(
             id: Value(id),
             serverId: Value(serverId),
@@ -434,12 +433,55 @@ class CollectionRepository {
             revision: Value(revision),
             updatedAt: Value(updatedAt),
           ),
-          mode: InsertMode.insertOrReplace,
         );
   }
 
   Future<void> applyRemoteSourceDelete(String id) async {
     await (_db.delete(_db.sources)..where((s) => s.id.equals(id))).go();
+  }
+
+  // ---- Sync-lane surface (additive, roadmap G3): no outbox, no clock. ------
+
+  Future<void> applyCollectionServerId(String id, String serverId) async {
+    await (_db.update(_db.collections)..where((c) => c.id.equals(id))).write(
+      CollectionsCompanion(serverId: Value(serverId)),
+    );
+  }
+
+  Future<void> applySourceServerId(String id, String serverId) async {
+    await (_db.update(_db.sources)..where((s) => s.id.equals(id))).write(
+      SourcesCompanion(serverId: Value(serverId)),
+    );
+  }
+
+  /// The Source holding this natural identity, if any — the collision probe
+  /// for merge-before-insert (the local `(host, path_key)` index is unique).
+  Future<SourceRow?> sourceByIdentity(String host, String pathKey) =>
+      (_db.select(_db.sources)
+            ..where((s) => s.host.equals(host) & s.pathKey.equals(pathKey)))
+          .getSingleOrNull();
+
+  /// Repoints collection rows living in folder [from] at [to].
+  Future<void> rewriteCollectionFolderRefs(String from, String to) async {
+    await (_db.update(_db.collections)..where((c) => c.folderId.equals(from)))
+        .write(CollectionsCompanion(folderId: Value(to)));
+  }
+
+  /// Repoints sources of collection [from] at [to].
+  Future<void> rewriteSourceCollectionRefs(String from, String to) async {
+    await (_db.update(_db.sources)..where((s) => s.collectionId.equals(from)))
+        .write(SourcesCompanion(collectionId: Value(to)));
+  }
+
+  /// Repoints source-valued references ([from] → [to]) held by this
+  /// repository's tables: preferred pointers and `resolvedInto` targets.
+  Future<void> rewriteSourceRefs(String from, String to) async {
+    await (_db.update(_db.collections)
+          ..where((c) => c.preferredSourceId.equals(from)))
+        .write(CollectionsCompanion(preferredSourceId: Value(to)));
+    await (_db.update(_db.sources)
+          ..where((s) => s.resolvedIntoSourceId.equals(from)))
+        .write(SourcesCompanion(resolvedIntoSourceId: Value(to)));
   }
 
   // ---- helpers -------------------------------------------------------------

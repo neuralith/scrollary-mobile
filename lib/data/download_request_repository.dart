@@ -148,7 +148,7 @@ class DownloadRequestRepository {
     final existing = await byId(id);
     await _db
         .into(_db.downloadRequests)
-        .insert(
+        .insertOnConflictUpdate(
           DownloadRequestsCompanion(
             id: Value(id),
             serverId: Value(serverId),
@@ -165,7 +165,6 @@ class DownloadRequestRepository {
             revision: Value(revision),
             localSaveTaskId: Value(existing?.localSaveTaskId),
           ),
-          mode: InsertMode.insertOrReplace,
         );
   }
 
@@ -173,5 +172,24 @@ class DownloadRequestRepository {
     await (_db.delete(
       _db.downloadRequests,
     )..where((r) => r.id.equals(id))).go();
+  }
+
+  // ---- Sync-lane surface (additive, roadmap G3). ---------------------------
+
+  Future<void> applyServerId(String id, String serverId) async {
+    await (_db.update(_db.downloadRequests)..where((r) => r.id.equals(id)))
+        .write(DownloadRequestsCompanion(serverId: Value(serverId)));
+  }
+
+  Future<void> rewriteEntryRefs(String from, String to) async {
+    await (_db.update(_db.downloadRequests)
+          ..where((r) => r.entryId.equals(from)))
+        .write(DownloadRequestsCompanion(entryId: Value(to)));
+  }
+
+  Future<void> rewriteLocationRefs(String from, String to) async {
+    await (_db.update(_db.downloadRequests)
+          ..where((r) => r.locationId.equals(from)))
+        .write(DownloadRequestsCompanion(locationId: Value(to)));
   }
 }

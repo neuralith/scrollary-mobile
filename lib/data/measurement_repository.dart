@@ -51,14 +51,13 @@ class MeasurementRepository {
       if (entry == null) return (null, unknownRow);
       await _db
           .into(_db.measurements)
-          .insert(
+          .insertOnConflictUpdate(
             MeasurementsCompanion(
               entryId: Value(entryId),
               sourceId: Value(sourceId),
               fraction: Value(fraction),
               observedAt: Value(when),
             ),
-            mode: InsertMode.insertOrReplace,
           );
       await _outbox.record(
         kind: SyncedEntityKind.measurement,
@@ -119,7 +118,7 @@ class MeasurementRepository {
   }) async {
     await _db
         .into(_db.measurements)
-        .insert(
+        .insertOnConflictUpdate(
           MeasurementsCompanion(
             entryId: Value(entryId),
             sourceId: Value(sourceId),
@@ -127,7 +126,6 @@ class MeasurementRepository {
             observedAt: Value(observedAt),
             revision: Value(revision),
           ),
-          mode: InsertMode.insertOrReplace,
         );
   }
 
@@ -139,5 +137,55 @@ class MeasurementRepository {
           (m) => m.entryId.equals(entryId) & m.sourceId.equals(sourceId),
         ))
         .go();
+  }
+
+  /// Moves measurements of a merged-away duplicate onto its survivor
+  /// (roadmap G3). Per key, the newer observation wins.
+  Future<void> rewriteEntryRef(String from, String to) =>
+      _rewriteKey(fromEntry: from, toEntry: to);
+
+  Future<void> rewriteSourceRef(String from, String to) =>
+      _rewriteKey(fromSource: from, toSource: to);
+
+  Future<void> _rewriteKey({
+    String? fromEntry,
+    String? toEntry,
+    String? fromSource,
+    String? toSource,
+  }) async {
+    final moving =
+        await (_db.select(_db.measurements)..where(
+              (m) => fromEntry != null
+                  ? m.entryId.equals(fromEntry)
+                  : m.sourceId.equals(fromSource!),
+            ))
+            .get();
+    for (final row in moving) {
+      final entryId = toEntry ?? row.entryId;
+      final sourceId = toSource ?? row.sourceId;
+      final existing =
+          await (_db.select(_db.measurements)..where(
+                (m) => m.entryId.equals(entryId) & m.sourceId.equals(sourceId),
+              ))
+              .getSingleOrNull();
+      await (_db.delete(_db.measurements)..where(
+            (m) =>
+                m.entryId.equals(row.entryId) & m.sourceId.equals(row.sourceId),
+          ))
+          .go();
+      if (existing == null || existing.observedAt.isBefore(row.observedAt)) {
+        await _db
+            .into(_db.measurements)
+            .insertOnConflictUpdate(
+              MeasurementsCompanion(
+                entryId: Value(entryId),
+                sourceId: Value(sourceId),
+                fraction: Value(row.fraction),
+                observedAt: Value(row.observedAt),
+                revision: Value(row.revision),
+              ),
+            );
+      }
+    }
   }
 }
