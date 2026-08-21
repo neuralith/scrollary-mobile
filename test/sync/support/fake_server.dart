@@ -1,7 +1,8 @@
 /// An in-process fake of the sync service, faithful to the contract's
 /// semantics: the mutation ledger's idempotency, per-library revisions, the
 /// revision-ordered change feed with tombstones, scalar LWW on the client
-/// clock, arbitration, and the terminal-only download-request resolve.
+/// clock, arbitration, the single-winner download-request claim and the
+/// terminal-only resolve.
 ///
 /// Deterministic and network-local; the real service is exercised by the
 /// integration lane, never by these unit tests.
@@ -23,6 +24,13 @@ class FakeBackend {
   final Map<String, Map<String, Object?>> ledger = {};
 
   final List<List<Map<String, Object?>>> mutationBatches = [];
+
+  /// Every `/claim` this server was asked for, in order — including the losing
+  /// ones, which is how a race is told apart from a single caller.
+  final List<String> claimRequests = [];
+
+  /// Every `/resolve`, with the body the device reported.
+  final List<(String, Map<String, Object?>)> resolveRequests = [];
 
   /// When set, `/mutations` answers HTTP 500 this many times first.
   int failMutationsTimes = 0;
@@ -128,10 +136,19 @@ class FakeBackend {
         }
         return _reply(request, 200, handler(json));
       }
+      final claim = RegExp(
+        r'^/download-requests/([^/]+)/claim$',
+      ).firstMatch(path);
+      if (request.method == 'POST' && claim != null) {
+        claimRequests.add(claim.group(1)!);
+        final (status, reply) = _claim(claim.group(1)!, json);
+        return _reply(request, status, reply);
+      }
       final resolve = RegExp(
         r'^/download-requests/([^/]+)/resolve$',
       ).firstMatch(path);
       if (request.method == 'POST' && resolve != null) {
+        resolveRequests.add((resolve.group(1)!, json));
         final (status, reply) = _resolve(resolve.group(1)!, json);
         return _reply(request, status, reply);
       }
@@ -298,6 +315,56 @@ class FakeBackend {
     moveAll('folder', 'parent_id');
     moveAll('collection', 'folder_id');
     moveAll('entry', 'folder_id');
+  }
+
+  /// The single-winner claim: `pending → claimed` for exactly one caller.
+  /// Everyone else gets 409 naming the device that holds it, which is what
+  /// lets a device recognise a claim it won and then died before recording.
+  (int, Map<String, Object?>) _claim(String id, Map<String, Object?> body) {
+    final row = kindRows('downloadRequest')[id];
+    if (row == null) {
+      return (
+        404,
+        {
+          'error': {'code': 'unknown_entity', 'message': 'no such request'},
+        },
+      );
+    }
+    const terminal = {'completed', 'failed', 'cancelled'};
+    if (terminal.contains(row['state'])) {
+      return (
+        409,
+        {
+          'error': {
+            'code': 'download_request_terminal',
+            'message': 'this request already reached a terminal state',
+          },
+        },
+      );
+    }
+    if (row['state'] != 'pending') {
+      return (
+        409,
+        {
+          'error': {
+            'code': 'download_request_already_claimed',
+            'message': 'another device already claimed this request',
+            'details': {'claimed_by_device': row['claimed_by_device'] ?? ''},
+          },
+        },
+      );
+    }
+    row['state'] = 'claimed';
+    row['claimed_by_device'] = body['device'];
+    row['claimed_at'] = DateTime.now().toUtc().toIso8601String();
+    row['revision'] = ++revision;
+    feed.add({
+      'type': 'entity',
+      'entity_type': 'downloadRequest',
+      'revision': row['revision'],
+      'entity': Map<String, Object?>.from(row),
+    });
+    return (200, Map<String, Object?>.from(row));
   }
 
   (int, Map<String, Object?>) _resolve(String id, Map<String, Object?> body) {
