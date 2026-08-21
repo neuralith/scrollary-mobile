@@ -14,6 +14,7 @@ import 'asset_fetcher.dart';
 import 'capture_mode.dart';
 import 'capture_policy.dart';
 import 'document_extraction.dart';
+import 'save_result_sink.dart';
 import 'save_state.dart';
 import 'image_candidates.dart';
 import 'next_page.dart';
@@ -178,18 +179,28 @@ CarriedReading carryReading(Entry? existing, ArtifactFormat artifact) {
 /// decodes, and only extracts once the page has been quiet for a configured
 /// period. That is the whole reason this class exists.
 class SaveEngine {
+  /// [db] builds the default [LibrarySaveResultSink] — the V1 library, and the
+  /// only thing every existing caller passes. A caller with no V1 library
+  /// passes [sink] instead and the engine ends at a staged package; see
+  /// `save_result_sink.dart`. One of the two is required, because a save has
+  /// to end somewhere.
   SaveEngine({
     required this.browser,
-    required this.db,
+    AppDatabase? db,
     required this.fileStore,
     required this.downloader,
+    SaveResultSink? sink,
     this.config = kDefaultSaveConfig,
     this.onProgress,
     this.onLog,
-  });
+  }) : assert(
+         db != null || sink != null,
+         'a save has to end somewhere: pass the V1 database or a sink',
+       ),
+       sink = sink ?? LibrarySaveResultSink(db: db!, fileStore: fileStore);
 
   final BrowserController browser;
-  final AppDatabase db;
+  final SaveResultSink sink;
   final FileStore fileStore;
   final AssetFetcher downloader;
   final SaveConfig config;
@@ -333,9 +344,7 @@ class SaveEngine {
       // reading position stranded on the one nothing pointed at any more.
       // Neither the composite UNIQUE nor the standalone partial index can catch
       // that, because the two rows differ in `collection_id`.
-      final existing = await db.findEntryByUrlKeyAnywhere(
-        normalizeUrl(pageUrl),
-      );
+      final existing = await sink.findExistingEntry(normalizeUrl(pageUrl));
       if (existing != null) {
         entryId = existing.id;
         _log(
@@ -550,7 +559,7 @@ class SaveEngine {
       await _checkpoint();
 
       // 7. Download into staging ----------------------------------------
-      staging = await fileStore.beginEntry(
+      staging = await sink.beginEntry(
         collectionId: owningCollectionId,
         entryId: entryId,
       );
@@ -694,12 +703,19 @@ class SaveEngine {
       // Replacing keeps the old copy until the new one is safely in place, so
       // a failed re-download leaves the readable entry untouched.
       tPhase = DateTime.now();
-      final relativePath = replaceExisting || existing?.contentPath != null
-          ? await fileStore.commitReplacing(staging, manifest)
-          : await fileStore.commit(staging, manifest);
+      final committed = await sink.commitEntry(
+        staging,
+        manifest,
+        replacing: replaceExisting || existing?.contentPath != null,
+      );
+      // A sink that leaves the package staged owns it from here, discard
+      // included, so the engine lets go of the handle either way.
       staging = null;
 
-      final byteSize = await fileStore.entryByteSize(relativePath);
+      final relativePath = committed ?? '';
+      final byteSize = committed == null
+          ? 0
+          : await fileStore.entryByteSize(relativePath);
       // The page's own headings and breadcrumb tail are read too: some sites
       // put a clean "Entry 487" in an <h1> while the <title> carries the
       // site name and a tagline.
@@ -725,7 +741,7 @@ class SaveEngine {
         );
       }
 
-      await db.upsertEntry(
+      await sink.recordEntry(
         Entry(
           id: entryId,
           collectionId: owningCollectionId,
@@ -788,15 +804,9 @@ class SaveEngine {
           discoveryBasis: existing?.discoveryBasis,
           discoveryConfidence: existing?.discoveryConfidence,
         ),
+        collectionId: owningCollectionId,
+        savedAt: manifest.savedAt,
       );
-      // Files are back, so the user-removed marker must go (a null on the
-      // data class would be treated as "leave it alone").
-      await db.clearOfflineRemovedMark(entryId);
-      // Standalone entries have no collection to stamp; the entry's own
-      // `savedAt` is the whole record.
-      if (owningCollectionId != null) {
-        await db.markCollectionSaved(owningCollectionId, manifest.savedAt);
-      }
 
       _time('commit', tPhase);
       _log(
@@ -916,7 +926,7 @@ class SaveEngine {
       );
 
       // 2. Inline images ------------------------------------------------
-      staging = await fileStore.beginEntry(
+      staging = await sink.beginEntry(
         collectionId: owningCollectionId,
         entryId: entryId,
       );
@@ -1033,12 +1043,19 @@ class SaveEngine {
       }
 
       final tCommit = DateTime.now();
-      final relativePath = replaceExisting || existing?.contentPath != null
-          ? await fileStore.commitReplacing(staging, manifest)
-          : await fileStore.commit(staging, manifest);
+      final committed = await sink.commitEntry(
+        staging,
+        manifest,
+        replacing: replaceExisting || existing?.contentPath != null,
+      );
+      // A sink that leaves the package staged owns it from here, discard
+      // included, so the engine lets go of the handle either way.
       staging = null;
 
-      final byteSize = await fileStore.entryByteSize(relativePath);
+      final relativePath = committed ?? '';
+      final byteSize = committed == null
+          ? 0
+          : await fileStore.entryByteSize(relativePath);
       final hints = probe.pageHints;
       final entryNumber = parseEntryNumber(
         title: pageTitle,
@@ -1058,7 +1075,7 @@ class SaveEngine {
         );
       }
 
-      await db.upsertEntry(
+      await sink.recordEntry(
         Entry(
           id: entryId,
           collectionId: owningCollectionId,
@@ -1105,11 +1122,9 @@ class SaveEngine {
           discoveryBasis: existing?.discoveryBasis,
           discoveryConfidence: existing?.discoveryConfidence,
         ),
+        collectionId: owningCollectionId,
+        savedAt: manifest.savedAt,
       );
-      await db.clearOfflineRemovedMark(entryId);
-      if (owningCollectionId != null) {
-        await db.markCollectionSaved(owningCollectionId, manifest.savedAt);
-      }
 
       _time('commit', tCommit);
       _log(

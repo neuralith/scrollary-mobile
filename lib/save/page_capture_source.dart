@@ -22,34 +22,34 @@
 /// twice on its own account, before anything is staged and again immediately
 /// before the commit.
 ///
-/// ## The production implementation is blocked, deliberately
+/// ## The production implementation
 ///
-/// **No implementation over `SaveEngine` is written here, and writing one
-/// requires an internal change to a frozen component** — which is its own
-/// reviewed task, never a side effect of a call-site edit
-/// (docs/V2_PORT_CHECKLIST.md).
+/// [SaveEnginePageCaptureSource] wraps the ported save engine, which was given
+/// exactly one seam to make that possible (reviewed as an internal change to a
+/// frozen component — docs/V2_PORT_CHECKLIST.md). The engine's final phase used
+/// to open staging under the store, commit the package and write four V1 rows
+/// — `findEntryByUrlKeyAnywhere`, `upsertEntry`, `clearOfflineRemovedMark`,
+/// `markCollectionSaved`. Those calls now go through an injected
+/// `SaveResultSink`, whose default is precisely the V1 library, so a V1 save is
+/// the save it always was. A V2 capture passes `StagedPackageSink` instead: the
+/// engine fills the staging directory the pipeline opened, writes no row, and
+/// ends at a staged package with a manifest describing what it holds.
 ///
-/// `SaveEngine.saveCurrentPage` and `SaveEngine._saveDocument` do not stop at
-/// a staged package. Both take `AppDatabase db`, and both end their last phase
-/// by writing V1 library rows — `findEntryByUrlKeyAnywhere`, `upsertEntry`,
-/// `clearOfflineRemovedMark`, `markCollectionSaved` — and by performing the
-/// FileStore commit themselves. A V2 host has no V1 database and must not
-/// acquire one, and the commit belongs to the pipeline, where the policy's
-/// last gate sits.
-///
-/// The reviewed task is therefore: give the engine a way to end at "the
-/// package is staged and here is what it holds" — the four database calls
-/// behind an injected result sink, and the commit either moved out or its
-/// output returned — leaving every measurement, judgement and stopping
-/// condition inside it untouched. Until then this seam has exactly one
-/// implementation, in `test/save_v2/`, and Lane E's device-bound validation
-/// waits on that task.
+/// Everything above that phase — every measurement, settle window, decode
+/// decision, stopping condition and retry posture — is untouched and stays
+/// untouched.
 library;
 
+import 'dart:async';
+
+import '../browser/browser_controller.dart';
 import '../storage/document.dart';
 import '../storage/file_store.dart';
 import '../storage/manifest.dart';
 import 'capture_mode.dart';
+import 'capture_policy.dart';
+import 'save_engine.dart';
+import 'save_result_sink.dart';
 import 'stop_conditions.dart';
 
 /// What driving one page produced.
@@ -188,3 +188,141 @@ DocumentRef documentRefFor(StructuredDocument document) => DocumentRef(
   blockCount: document.blockCount,
   textLength: document.textLength,
 );
+
+/// Builds the save engine for one capture, over the sink that keeps its
+/// package staged.
+///
+/// A function rather than an engine, because the sink is per-capture: it
+/// carries the staging directory the pipeline opened. Everything WebView-bound
+/// — the controller, the asset fetcher, the config — is closed over by whoever
+/// supplies this, which is what lets a host test build the same source over a
+/// fake browser.
+typedef SaveEngineFactory = SaveEngine Function(SaveResultSink sink);
+
+/// The production [PageCaptureSource]: the ported save engine, ended at a
+/// staged package.
+///
+/// It owns the two things only the thing that drives the page can own — the
+/// navigation, and therefore the landed-URL boundary — and nothing else. It
+/// writes no row, commits nothing, and decides nothing about whether the
+/// capture was allowed to start; `entry_capture.dart` does all three.
+class SaveEnginePageCaptureSource implements PageCaptureSource {
+  SaveEnginePageCaptureSource({
+    required this.browser,
+    required this.engineFor,
+    this.cancelPollInterval = const Duration(milliseconds: 250),
+  });
+
+  /// The one thing in the capture path that may touch a WebView.
+  final BrowserController browser;
+  final SaveEngineFactory engineFor;
+
+  /// How often the cooperative stop is relayed to the engine.
+  ///
+  /// The engine's own checkpoints are what actually stop it; `cancel()` is how
+  /// it is asked, and it is asked from here because [PageCaptureSource] states
+  /// the stop as a question the caller answers rather than a signal it sends.
+  final Duration cancelPollInterval;
+
+  @override
+  Future<PageCaptureOutcome> capturePage({
+    required String url,
+    required StagingHandle staging,
+    required CaptureMode? requestedMode,
+    required bool Function() shouldContinue,
+  }) async {
+    if (!shouldContinue()) return _cancelled(url);
+
+    final engine = engineFor(StagedPackageSink(staging));
+    final poll = Timer.periodic(cancelPollInterval, (_) {
+      if (!shouldContinue()) engine.cancel();
+    });
+
+    final EntrySaveResult result;
+    try {
+      // Claim the surface *before* the first navigation. WebKit fixes a
+      // document's visibility at creation, so a document created in a view
+      // that is not being composited is born hidden and stays that way — see
+      // `browser_surface_policy.dart` and the guard the engine then applies to
+      // every phase.
+      await browser.awaitPaintedSurface();
+      browser.allowNextNavigation(url);
+      await browser.loadAndWait(url);
+      result = await engine.saveCurrentPage(
+        // V2 identity is the caller's: the Entry, the Location and the
+        // collection are already decided, and the engine's own ids and
+        // ordinals never leave the staged manifest.
+        collectionId: null,
+        entryOrder: 0,
+        visitedNormalized: const <String>{},
+        // Null means "decide from the settled page", which is a decision made
+        // where the measurement is. Passed straight through, never defaulted.
+        captureMode: requestedMode,
+      );
+    } finally {
+      poll.cancel();
+    }
+    return outcomeOf(result, requestedUrl: url);
+  }
+
+  static PageCaptureOutcome _cancelled(String url) => PageCaptureOutcome.failed(
+    pageUrl: url,
+    error: 'cancelled',
+    stopReason: StopReason.cancelledByUser,
+  );
+}
+
+/// Turn what the engine reports into what the pipeline records.
+///
+/// **Nothing is re-derived here.** Every judgement — the artifact, the mode
+/// that was honoured, `complete` against `partial` and why, the counts, the
+/// shape — is read off the manifest the engine built on the settled page,
+/// because that is the only place the measurement exists. This function maps;
+/// it does not decide.
+///
+/// Visible for the seam's own tests, which drive the engine over a fake
+/// browser and check what comes back.
+PageCaptureOutcome outcomeOf(
+  EntrySaveResult result, {
+  required String requestedUrl,
+}) {
+  final landed = result.pageUrl.isEmpty ? requestedUrl : result.pageUrl;
+  final manifest = result.manifest;
+  if (!result.isUsable || manifest == null) {
+    // The engine refuses a restricted page with its own named reason and its
+    // one user-facing sentence; both are the app's, not the site's, so the
+    // refusal keeps its own outcome rather than becoming a failure.
+    if (result.error == kCaptureRestrictedMessage ||
+        isCaptureRestricted(landed)) {
+      return PageCaptureOutcome.refused(pageUrl: landed);
+    }
+    return PageCaptureOutcome.failed(
+      pageUrl: landed,
+      error: result.error,
+      stopReason: result.error == 'cancelled'
+          ? StopReason.cancelledByUser
+          : null,
+    );
+  }
+  return PageCaptureOutcome.captured(
+    // The manifest's address, not the requested one: a redirect between the
+    // navigation and DOM-ready lands somewhere else, and this is what the
+    // package claims to be a copy of.
+    pageUrl: manifest.sourceUrl,
+    canonicalUrl: manifest.canonicalUrl,
+    title: manifest.title,
+    artifact: manifest.artifact,
+    captureMode: result.captureMode,
+    captureModeIsUserSet: manifest.captureModeIsUserSet ?? false,
+    status: manifest.status,
+    statusReason: manifest.statusReason,
+    detectedAssetCount: manifest.detectedAssetCount,
+    storedAssetCount: manifest.storedAssetCount,
+    assets: manifest.assets,
+    document: manifest.document,
+    contentKind: manifest.contentKind,
+    contentKindConfidence: manifest.contentKindConfidence,
+    publishedAt: manifest.publishedAt,
+    nextUrl: manifest.nextUrl,
+  );
+}
