@@ -1,0 +1,146 @@
+# Scrollary V2 — shared error and refusal vocabulary (roadmap task A3).
+#
+# This file is $ref-ed from openapi.yaml and is part of the frozen contract.
+# Every machine-readable failure the API can express is a named code from the
+# single enumeration below — never free text. The human sentence travels in a
+# separate display field and carries no meaning a client may branch on.
+#
+# Codes are also reused OUTSIDE HTTP errors: an arbitration response that is
+# `unresolved` names its reason with a code from this same vocabulary, because
+# a refusal is a first-class outcome, not an exception.
+
+components:
+  schemas:
+    ErrorCode:
+      type: string
+      description: >-
+        The complete enumerated failure and refusal vocabulary. A client may
+        branch only on this field. Adding a code is a contract change and goes
+        through the Lane A protocol in README.md.
+
+
+        Request shape:
+
+        * `invalid_request` — the body or parameters could not be parsed.
+
+        * `validation_failed` — parseable, but a field violates its schema or
+          a documented rule (for example an `ordinal` submitted with an
+          `ordering_basis` other than `explicitNumericIndex`).
+
+
+        Addressing:
+
+        * `unknown_entity` — a referenced entity id does not exist in this
+          library.
+
+        * `dev_mode_required` — the `X-Scrollary-Library` header was sent to a
+          server not started with `SCROLLARY_DEV_MODE`.
+
+        * `library_unresolved` — development mode is on but no library name
+          could be resolved from the header or configuration.
+
+
+        Pull feed:
+
+        * `invalid_cursor` — the cursor is not a non-negative integer.
+
+        * `cursor_expired` — the cursor predates retained history; the client
+          must re-bootstrap from cursor 0. (Retention policy itself is
+          deferred to V2_PRODUCTIZATION.md; the code exists so clients handle
+          it from day one.)
+
+
+        Mutations:
+
+        * `invalid_mutation` — the envelope names an unknown `entity_type` or
+          `op`.
+
+        * `invariant_violation` — applying the mutation would violate a domain
+          invariant (I1–I17); `details.invariant` names which.
+
+
+        Placement arbitration:
+
+        * `placement_conflict` — another placement won; the server serialises
+          ordinal placement and this request lost. `details` carries the
+          current holder.
+
+        * `invalid_placement` — the placement request itself is unacceptable,
+          for example the Collection's `ordering_basis` does not support
+          ordinal placement.
+
+
+        Identity arbitration refusals (also used as the `reason` of an
+        `unresolved` arbitration outcome):
+
+        * `insufficient_evidence` — the evidence does not identify a
+          Collection or Entry with the confidence required to answer.
+
+        * `conflicting_ordinals` — independent readings contradict each other
+          (100 against 99.5). The contradiction is kept, never repaired.
+
+        * `ordering_basis_unsupported` — cross-source equivalence was implied
+          for a Collection whose ordering basis does not permit it.
+
+
+        Download requests:
+
+        * `download_request_already_claimed` — the single-winner claim was
+          lost; exactly one device wins `pending → claimed`.
+
+        * `download_request_terminal` — a claim or resolve was attempted on a
+          request already in a terminal state.
+
+
+        Server fault:
+
+        * `internal` — the server failed; the request may be retried.
+      enum:
+        - invalid_request
+        - validation_failed
+        - unknown_entity
+        - dev_mode_required
+        - library_unresolved
+        - invalid_cursor
+        - cursor_expired
+        - invalid_mutation
+        - invariant_violation
+        - placement_conflict
+        - invalid_placement
+        - insufficient_evidence
+        - conflicting_ordinals
+        - ordering_basis_unsupported
+        - download_request_already_claimed
+        - download_request_terminal
+        - internal
+
+    Error:
+      type: object
+      description: >-
+        The single error payload shape. `code` is the machine field and the
+        only one a client branches on; `message` is display text with no
+        stable meaning; `details` is code-specific structured context.
+      required: [code, message]
+      properties:
+        code:
+          $ref: '#/components/schemas/ErrorCode'
+        message:
+          type: string
+          description: Human-readable sentence for display. Never parsed.
+        details:
+          type: object
+          description: >-
+            Code-specific context. `invariant_violation` carries
+            `{"invariant": "I3"}`; `placement_conflict` carries
+            `{"current_entry_id": "...", "current_ordinal": 100}`;
+            `download_request_already_claimed` carries
+            `{"claimed_by_device": "..."}`.
+          additionalProperties: true
+
+    ErrorResponse:
+      type: object
+      description: Envelope for every non-2xx response body.
+      required: [error]
+      properties:
+        error:
+          $ref: '#/components/schemas/Error'

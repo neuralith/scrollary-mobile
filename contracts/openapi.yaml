@@ -1,0 +1,1098 @@
+openapi: 3.1.0
+
+# Scrollary V2 — the shared API contract (roadmap task A2).
+#
+# Three languages — Dart, Go and later JavaScript — must agree on these
+# payloads. This document is the single authority (DECISIONS.md V2-D27); it is
+# written by Lane A, frozen at Gate B, and changed only through the protocol
+# in README.md. errors.yaml and evidence.yaml are part of the same contract
+# and are $ref-ed so one lint validates the whole graph.
+#
+# Vocabulary rule: wire field names are snake_case and match the column names
+# and CHECK-constraint spellings of backend/migrations/0001_init.up.sql — the
+# single spelling authority. The one exception is GET /version, which mirrors
+# the handler that already ships (`devMode`).
+
+info:
+  title: Scrollary synchronisation service
+  version: 0.1.0
+  summary: Library metadata and reading-state synchronisation for Scrollary V2.
+  description: >-
+    One stateless service over PostgreSQL. It holds library metadata, reading
+    state, revisions, tombstones, the mutation ledger and download-request
+    intents, and it arbitrates identity over client-submitted evidence.
+
+
+    The server NEVER makes an outbound request: it does not fetch, read or
+    enrich third-party pages, and it never stores page content or downloaded
+    bytes. Clients see pages; the server sees evidence. Nothing in this
+    contract may be extended in a way that implies otherwise.
+
+
+    Everything here is scoped to one library. During the functionality
+    programme the library is named by the development-only
+    `X-Scrollary-Library` header (see the parameter description); production
+    authentication replaces that header without changing any payload.
+  license:
+    name: Proprietary
+    url: https://scrollary.example/license
+
+servers:
+  - url: http://localhost:8080
+    description: Local development server (scrollaryd).
+
+# Explicitly no security: production authentication is deferred to
+# V2_PRODUCTIZATION.md P1 and will be added there as a wrapper, changing no
+# payload. The X-Scrollary-Library header is a development namespace and
+# authenticates nothing, so declaring it a security scheme would be a lie.
+security: []
+
+tags:
+  - name: system
+    description: Liveness and build identity.
+  - name: identity
+    description: Evidence submission and canonical identity arbitration.
+  - name: sync
+    description: Mutation push, change-feed pull, and placement arbitration.
+  - name: download
+    description: Download-to-Mobile intents. Never content; the server never fetches.
+
+paths:
+  /healthz:
+    get:
+      operationId: getHealth
+      tags: [system]
+      summary: Liveness probe
+      description: >-
+        Answers liveness only and deliberately touches no dependency. Matches
+        the shipped handler exactly.
+      responses:
+        '200':
+          description: The process is alive.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                properties:
+                  status:
+                    type: string
+                    const: ok
+              example:
+                status: ok
+
+  /version:
+    get:
+      operationId: getVersion
+      tags: [system]
+      summary: Build identity
+      description: >-
+        Reports the build version and whether the development namespace is
+        enabled. Field spellings match the shipped handler.
+      responses:
+        '200':
+          description: Build identity.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [version, devMode]
+                properties:
+                  version:
+                    type: string
+                  devMode:
+                    type: boolean
+              example:
+                version: 0.0.0-dev
+                devMode: true
+
+  /identity/arbitrate:
+    post:
+      operationId: arbitrateIdentity
+      tags: [identity]
+      summary: Submit evidence, receive canonical identity or unresolved
+      description: >-
+        The client submits what it observed on one page, plus any provisional
+        ids it minted while working offline. The server answers which
+        Collection, Source, Entry and Location the evidence is about —
+        or `unresolved`, which is a first-class outcome (HTTP 200), not an
+        error: the client keeps its provisional identity and the Entry stays
+        visible, readable and unplaced.
+
+
+        Refusal is deliberate where evidence is insufficient or contradictory
+        (DECISIONS.md V2-D16): equal ordinals merge, different ordinals stay
+        two Entries, and ambiguity is kept rather than repaired. The server
+        arbitrates only over what clients submitted; it never fetches the
+        page to check.
+      parameters:
+        - $ref: '#/components/parameters/DevLibraryHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: 'evidence.yaml#/components/schemas/ArbitrationRequest'
+            examples:
+              resolvable:
+                summary: Evidence with an explicit printed number
+                value:
+                  evidence:
+                    url: https://reading.example.com/serial-alpha/part-101
+                    url_key: https://reading.example.com/serial-alpha/part-101
+                    host: reading.example.com
+                    path_key: serial-alpha
+                    page_title: Serial Alpha — Part 101
+                    collection_title: Serial Alpha
+                    source_label: Part 101
+                    source_number: 101
+                    ordering_basis: explicitNumericIndex
+                    ordinal: 101
+                    language: en
+                    observed_at: 2026-08-21T10:15:00Z
+                  provisional:
+                    collection_id: 5f7a1c8e-4b2d-4c3a-9e6f-1a2b3c4d5e6f
+                    entry_id: 7d9b2e4f-6a1c-4d8e-b3f5-2c4d6e8f0a1b
+      responses:
+        '200':
+          description: Arbitration outcome — resolved mappings or unresolved.
+          content:
+            application/json:
+              schema:
+                $ref: 'evidence.yaml#/components/schemas/ArbitrationResponse'
+              examples:
+                resolved:
+                  summary: Provisional ids mapped to canonical identity
+                  value:
+                    outcome: resolved
+                    mappings:
+                      - kind: collection
+                        provisional_id: 5f7a1c8e-4b2d-4c3a-9e6f-1a2b3c4d5e6f
+                        canonical_id: 0b1c2d3e-4f5a-6b7c-8d9e-0f1a2b3c4d5e
+                      - kind: entry
+                        provisional_id: 7d9b2e4f-6a1c-4d8e-b3f5-2c4d6e8f0a1b
+                        canonical_id: 9e8d7c6b-5a4f-3e2d-1c0b-9a8f7e6d5c4b
+                unresolved:
+                  summary: Refused — the client keeps provisional identity
+                  value:
+                    outcome: unresolved
+                    reason: insufficient_evidence
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '403':
+          $ref: '#/components/responses/DevModeRequired'
+
+  /mutations:
+    post:
+      operationId: pushMutations
+      tags: [sync]
+      summary: Push a batch of idempotent mutations from the outbox
+      description: >-
+        The client drains its append-only outbox in order. Each envelope
+        carries a client-minted `mutation_id`; the server's mutation ledger
+        makes retries after an ambiguous failure safe — a duplicate
+        `mutation_id` produces ONE effect and the same reply (`duplicate`,
+        carrying the originally assigned revision).
+
+
+        Outcome semantics: `applied` means accepted and merged under the
+        library's merge rules (scalar last-write-wins on the row clock,
+        add-wins sets with tombstones, keyed scalars) — a write that an
+        already-newer value supersedes is still `applied`, because losing
+        last-write-wins is convergence, not failure. Only `rejected` needs
+        client attention, and it names its reason from the shared vocabulary.
+
+
+        Clients pull before pushing (V2_SYNC.md §4.4), so mutations land on
+        the server's current view rather than racing it.
+      parameters:
+        - $ref: '#/components/parameters/DevLibraryHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [mutations]
+              properties:
+                mutations:
+                  type: array
+                  description: Applied in order. An empty batch is valid.
+                  items:
+                    $ref: '#/components/schemas/MutationEnvelope'
+            example:
+              mutations:
+                - mutation_id: 1c9f2a4e-8b3d-4e6f-a1c2-d3e4f5a6b7c8
+                  entity_type: folder
+                  entity_id: 2d3e4f5a-6b7c-8d9e-0f1a-2b3c4d5e6f7a
+                  op: upsert
+                  fields:
+                    kind: user
+                    name: Weekly
+                    parent_id: 0a1b2c3d-4e5f-6a7b-8c9d-0e1f2a3b4c5d
+                    sort_key: 10
+                  client_time: 2026-08-21T10:16:02Z
+                - mutation_id: 3e5a7c9b-1d2f-4a6c-8e0b-2d4f6a8c0e1f
+                  entity_type: readingState
+                  entity_id: 7d9b2e4f-6a1c-4d8e-b3f5-2c4d6e8f0a1b
+                  op: upsert
+                  fields:
+                    status: completed
+                    completed_at: 2026-08-21T10:16:00Z
+                    last_read_at: 2026-08-21T10:16:00Z
+                  client_time: 2026-08-21T10:16:02Z
+      responses:
+        '200':
+          description: Per-mutation outcomes plus the library's new revision.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [library_revision, results]
+                properties:
+                  library_revision:
+                    type: integer
+                    format: int64
+                    description: The library's revision after this batch.
+                  results:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/MutationResult'
+              example:
+                library_revision: 118
+                results:
+                  - mutation_id: 1c9f2a4e-8b3d-4e6f-a1c2-d3e4f5a6b7c8
+                    outcome: applied
+                    revision: 117
+                  - mutation_id: 3e5a7c9b-1d2f-4a6c-8e0b-2d4f6a8c0e1f
+                    outcome: applied
+                    revision: 118
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '403':
+          $ref: '#/components/responses/DevModeRequired'
+
+  /changes:
+    get:
+      operationId: pullChanges
+      tags: [sync]
+      summary: Incremental pull of creates, updates and tombstones
+      description: >-
+        The pull half of sync. The server assigns a monotonic revision per
+        library; every synced row and tombstone carries the revision at which
+        it last changed. A client's cursor is the highest revision it has
+        seen; passing it returns everything newer, in revision order.
+        Cursor 0 is a full bootstrap.
+
+
+        Entity payloads are full rows in their current state (not diffs), so
+        applying a page is idempotent. Tombstones record deliberate user
+        removals only — a Location a Source merely stopped listing never
+        produces one.
+      parameters:
+        - $ref: '#/components/parameters/DevLibraryHeader'
+        - name: cursor
+          in: query
+          required: true
+          description: >-
+            The highest revision the client has seen; 0 for a full bootstrap.
+          schema:
+            type: integer
+            format: int64
+            minimum: 0
+        - name: limit
+          in: query
+          required: false
+          description: Maximum change items to return; the server may return fewer.
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 1000
+            default: 200
+      responses:
+        '200':
+          description: Changes after the cursor, in revision order.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [changes, next_cursor, latest_revision, has_more]
+                properties:
+                  changes:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Change'
+                  next_cursor:
+                    type: integer
+                    format: int64
+                    description: Pass this as `cursor` on the next pull.
+                  latest_revision:
+                    type: integer
+                    format: int64
+                    description: The library's current revision.
+                  has_more:
+                    type: boolean
+                    description: True when another page exists before `latest_revision`.
+              example:
+                changes:
+                  - type: entity
+                    entity_type: collection
+                    revision: 117
+                    entity:
+                      id: 0b1c2d3e-4f5a-6b7c-8d9e-0f1a2b3c4d5e
+                      folder_id: 0a1b2c3d-4e5f-6a7b-8c9d-0e1f2a3b4c5d
+                      name: Serial Alpha
+                      detected_title: Serial Alpha
+                      ordering_basis: explicitNumericIndex
+                      lifecycle: active
+                      preferred_source_id: null
+                      sort_key: 0
+                      revision: 117
+                      updated_at: 2026-08-21T10:16:02Z
+                  - type: tombstone
+                    revision: 118
+                    tombstone:
+                      kind: location
+                      entity_id: 4f6a8c0e-2b4d-6f8a-0c2e-4a6c8e0b2d4f
+                      revision: 118
+                      deleted_at: 2026-08-21T10:16:03Z
+                next_cursor: 118
+                latest_revision: 118
+                has_more: false
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '403':
+          $ref: '#/components/responses/DevModeRequired'
+
+  /entries/{entry_id}/placement:
+    post:
+      operationId: placeEntry
+      tags: [sync]
+      summary: Place an unplaced Entry at an ordinal, serialised centrally
+      description: >-
+        Ordinal placement is arbitrated by the server so two devices placing
+        the same unplaced Entry differently is detected centrally rather than
+        resolved by a clock (V2_SYNC.md §4.6). The winning placement moves the
+        Entry to `userPlaced` at the requested ordinal; a losing request
+        receives `placement_conflict` with the current holder — a conflict
+        the user can see, consistent with the refusal posture everywhere
+        else.
+      parameters:
+        - $ref: '#/components/parameters/DevLibraryHeader'
+        - name: entry_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [ordinal]
+              properties:
+                ordinal:
+                  type: number
+                  description: The position the user assigned.
+                mutation_id:
+                  type: string
+                  format: uuid
+                  description: >-
+                    Optional client mutation id, entered into the ledger so a
+                    retried placement is idempotent.
+            example:
+              ordinal: 99.5
+              mutation_id: 5a7c9e1b-3d5f-7a9c-1e3b-5d7f9a1c3e5f
+      responses:
+        '200':
+          description: Placement accepted; the Entry row in its new state.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [entry, library_revision]
+                properties:
+                  entry:
+                    $ref: '#/components/schemas/Entry'
+                  library_revision:
+                    type: integer
+                    format: int64
+              example:
+                entry:
+                  id: 7d9b2e4f-6a1c-4d8e-b3f5-2c4d6e8f0a1b
+                  collection_id: 0b1c2d3e-4f5a-6b7c-8d9e-0f1a2b3c4d5e
+                  folder_id: null
+                  ordinal: 99.5
+                  placement: userPlaced
+                  title: Part 99.5
+                  sort_key: 0
+                  revision: 119
+                  updated_at: 2026-08-21T10:17:00Z
+                library_revision: 119
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '403':
+          $ref: '#/components/responses/DevModeRequired'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Another placement won, or placement is not available here.
+          content:
+            application/json:
+              schema:
+                $ref: 'errors.yaml#/components/schemas/ErrorResponse'
+              example:
+                error:
+                  code: placement_conflict
+                  message: Another device already placed an Entry at this position.
+                  details:
+                    current_entry_id: 9e8d7c6b-5a4f-3e2d-1c0b-9a8f7e6d5c4b
+                    current_ordinal: 99.5
+
+  /download-requests:
+    post:
+      operationId: createDownloadRequest
+      tags: [download]
+      summary: Create a Download-to-Mobile intent
+      description: >-
+        Records the intent "a device with a capture engine should download
+        this Entry". The backend stores the intent and NOTHING more — it
+        never fetches the content, and this record is not offline-copy state:
+        the server still does not know what any device holds.
+
+
+        Idempotent by construction: at most one non-terminal request exists
+        per (library, entry). Creating while one is open returns the existing
+        request with HTTP 200 rather than an error or a second row, so
+        pressing the button twice never queues two saves. A genuinely new
+        intent returns 201.
+      parameters:
+        - $ref: '#/components/parameters/DevLibraryHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [entry_id, idempotency_key]
+              properties:
+                entry_id:
+                  type: string
+                  format: uuid
+                  description: The Entry to download.
+                location_id:
+                  type: string
+                  format: uuid
+                  description: >-
+                    Optional Location preference. Absent means "the preferred
+                    Source".
+                idempotency_key:
+                  type: string
+                  description: Supplied by the requesting client for its own retry safety.
+                created_by:
+                  type: string
+                  description: A client label, for the requester's own UI.
+            example:
+              entry_id: 7d9b2e4f-6a1c-4d8e-b3f5-2c4d6e8f0a1b
+              idempotency_key: ext-2026-08-21-0001
+              created_by: extension
+      responses:
+        '201':
+          description: A new intent was recorded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DownloadRequest'
+              example:
+                id: 6b8d0f2a-4c6e-8a0c-2e4a-6c8e0a2c4e6a
+                entry_id: 7d9b2e4f-6a1c-4d8e-b3f5-2c4d6e8f0a1b
+                location_id: null
+                state: pending
+                idempotency_key: ext-2026-08-21-0001
+                created_by: extension
+                created_at: 2026-08-21T10:18:00Z
+                claimed_by_device: ''
+                claimed_at: null
+                resolved_at: null
+                failure_reason: ''
+                revision: 120
+        '200':
+          description: An open request already exists for this Entry; returned unchanged.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DownloadRequest'
+              example:
+                id: 6b8d0f2a-4c6e-8a0c-2e4a-6c8e0a2c4e6a
+                entry_id: 7d9b2e4f-6a1c-4d8e-b3f5-2c4d6e8f0a1b
+                location_id: null
+                state: pending
+                idempotency_key: ext-2026-08-21-0001
+                created_by: extension
+                created_at: 2026-08-21T10:18:00Z
+                claimed_by_device: ''
+                claimed_at: null
+                resolved_at: null
+                failure_reason: ''
+                revision: 120
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '403':
+          $ref: '#/components/responses/DevModeRequired'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /download-requests/{request_id}/claim:
+    post:
+      operationId: claimDownloadRequest
+      tags: [download]
+      summary: Claim a pending request for exactly one device
+      description: >-
+        The single-winner conditional transition `pending → claimed`. Exactly
+        one caller wins; a losing claim receives 409
+        `download_request_already_claimed` and must not proceed. The winning
+        device converts the request into an ordinary local save task, where
+        its own capture policy, bounds and stop conditions apply unchanged —
+        the device still decides, and a refusal there is reported through
+        resolve as a terminal state.
+      parameters:
+        - $ref: '#/components/parameters/DevLibraryHeader'
+        - $ref: '#/components/parameters/DownloadRequestId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [device]
+              properties:
+                device:
+                  type: string
+                  description: >-
+                    The claiming device's label, recorded as
+                    `claimed_by_device`. Minimal targeting only — any device
+                    may claim.
+            example:
+              device: phone-dev-a
+      responses:
+        '200':
+          description: This caller won the claim.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DownloadRequest'
+              example:
+                id: 6b8d0f2a-4c6e-8a0c-2e4a-6c8e0a2c4e6a
+                entry_id: 7d9b2e4f-6a1c-4d8e-b3f5-2c4d6e8f0a1b
+                location_id: null
+                state: claimed
+                idempotency_key: ext-2026-08-21-0001
+                created_by: extension
+                created_at: 2026-08-21T10:18:00Z
+                claimed_by_device: phone-dev-a
+                claimed_at: 2026-08-21T10:19:00Z
+                resolved_at: null
+                failure_reason: ''
+                revision: 121
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '403':
+          $ref: '#/components/responses/DevModeRequired'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: The claim was lost, or the request is already terminal.
+          content:
+            application/json:
+              schema:
+                $ref: 'errors.yaml#/components/schemas/ErrorResponse'
+              example:
+                error:
+                  code: download_request_already_claimed
+                  message: Another device already claimed this request.
+                  details:
+                    claimed_by_device: tablet-dev-b
+
+  /download-requests/{request_id}/resolve:
+    post:
+      operationId: resolveDownloadRequest
+      tags: [download]
+      summary: Report the terminal outcome of a claimed request
+      description: >-
+        The claiming device reports how its local save ended. Only terminal
+        states are accepted. A failure never changes library membership
+        (invariant I17): the Entry is exactly as it was, and `failure_reason`
+        is the device's named stop condition, recorded for the requester's
+        UI.
+      parameters:
+        - $ref: '#/components/parameters/DevLibraryHeader'
+        - $ref: '#/components/parameters/DownloadRequestId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [state]
+              properties:
+                state:
+                  type: string
+                  description: The terminal state the device reached.
+                  enum: [completed, failed, cancelled]
+                failure_reason:
+                  type: string
+                  description: >-
+                    The named stop condition when `state` is `failed`.
+                    Empty otherwise.
+            example:
+              state: completed
+      responses:
+        '200':
+          description: Terminal state recorded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DownloadRequest'
+              example:
+                id: 6b8d0f2a-4c6e-8a0c-2e4a-6c8e0a2c4e6a
+                entry_id: 7d9b2e4f-6a1c-4d8e-b3f5-2c4d6e8f0a1b
+                location_id: null
+                state: completed
+                idempotency_key: ext-2026-08-21-0001
+                created_by: extension
+                created_at: 2026-08-21T10:18:00Z
+                claimed_by_device: phone-dev-a
+                claimed_at: 2026-08-21T10:19:00Z
+                resolved_at: 2026-08-21T10:24:00Z
+                failure_reason: ''
+                revision: 122
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '403':
+          $ref: '#/components/responses/DevModeRequired'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: The request is already terminal.
+          content:
+            application/json:
+              schema:
+                $ref: 'errors.yaml#/components/schemas/ErrorResponse'
+              example:
+                error:
+                  code: download_request_terminal
+                  message: This request already reached a terminal state.
+
+components:
+  parameters:
+    DevLibraryHeader:
+      name: X-Scrollary-Library
+      in: header
+      required: false
+      description: >-
+        DEVELOPMENT-ONLY library namespace (DECISIONS.md V2-D28). Names the
+        library a request addresses; the server creates it on first use. It
+        AUTHENTICATES NOTHING and is documented as authenticating nothing —
+        the server refuses to start with it enabled unless
+        `SCROLLARY_DEV_MODE` is set, and sending it to a server without
+        development mode is `dev_mode_required`. Production authentication
+        replaces this header without changing any payload: `library_id` is a
+        real column the account model will populate.
+      schema:
+        type: string
+    DownloadRequestId:
+      name: request_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+
+  responses:
+    BadRequest:
+      description: The request could not be parsed or failed validation.
+      content:
+        application/json:
+          schema:
+            $ref: 'errors.yaml#/components/schemas/ErrorResponse'
+          example:
+            error:
+              code: validation_failed
+              message: ordinal requires ordering_basis explicitNumericIndex.
+    DevModeRequired:
+      description: The development library namespace is not available.
+      content:
+        application/json:
+          schema:
+            $ref: 'errors.yaml#/components/schemas/ErrorResponse'
+          example:
+            error:
+              code: dev_mode_required
+              message: This server was not started with SCROLLARY_DEV_MODE.
+    NotFound:
+      description: A referenced entity does not exist in this library.
+      content:
+        application/json:
+          schema:
+            $ref: 'errors.yaml#/components/schemas/ErrorResponse'
+          example:
+            error:
+              code: unknown_entity
+              message: No such entry in this library.
+
+  schemas:
+    MutationEnvelope:
+      type: object
+      description: >-
+        One intent from a client's append-only outbox. `mutation_id` is
+        client-minted and unique forever; the server ledger keys on it, so
+        retrying after an ambiguous failure is safe by construction.
+
+
+        `op` is `upsert` (create or sparse update — `fields` carries only
+        what changed, full row on create) or `delete` (a deliberate user
+        removal, producing a tombstone; `fields` is absent).
+
+
+        Field vocabulary inside `fields` is exactly the entity resource
+        schema of the same `entity_type` (Folder, Collection, Source, Entry,
+        Location, ReadingState, Measurement), minus `id`, `revision` and
+        `updated_at`, which the server owns.
+
+
+        Measurement convention: a Measurement is keyed `(entry_id,
+        source_id)`, so `entity_id` carries the `entry_id` and `fields` (or a
+        delete's tombstone) must name `source_id`.
+      required: [mutation_id, entity_type, entity_id, op, client_time]
+      properties:
+        mutation_id:
+          type: string
+          format: uuid
+          description: Client-minted, unique forever, never reused.
+        entity_type:
+          type: string
+          description: Spellings shared with the tombstone `kind` vocabulary.
+          enum:
+            - folder
+            - collection
+            - source
+            - entry
+            - location
+            - readingState
+            - measurement
+        entity_id:
+          type: string
+          format: uuid
+          description: >-
+            The client's id for the entity — provisional until arbitration
+            maps it. For `readingState` this is the entry id; for
+            `measurement` see the keying convention above.
+        op:
+          type: string
+          enum: [upsert, delete]
+        fields:
+          type: object
+          description: Present for `upsert`; sparse; vocabulary per entity schema.
+          additionalProperties: true
+        client_time:
+          type: string
+          format: date-time
+          description: >-
+            The row clock at the moment of the local transaction. Last write
+            wins per row (or per key) on this clock.
+
+    MutationResult:
+      type: object
+      description: >-
+        `applied` — accepted and merged under the library's merge rules.
+        `duplicate` — this `mutation_id` was seen before; one effect
+        happened, and `revision` is the originally assigned one.
+        `rejected` — not applied; `error` names the reason.
+      required: [mutation_id, outcome]
+      properties:
+        mutation_id:
+          type: string
+          format: uuid
+        outcome:
+          type: string
+          enum: [applied, duplicate, rejected]
+        revision:
+          type: integer
+          format: int64
+          description: The revision assigned to this mutation's effect.
+        error:
+          $ref: 'errors.yaml#/components/schemas/Error'
+
+    Change:
+      type: object
+      description: One item of the pull feed, in revision order.
+      required: [type, revision]
+      properties:
+        type:
+          type: string
+          enum: [entity, tombstone]
+        revision:
+          type: integer
+          format: int64
+        entity_type:
+          type: string
+          description: Present when `type` is `entity`.
+          enum:
+            - folder
+            - collection
+            - source
+            - entry
+            - location
+            - readingState
+            - measurement
+            - downloadRequest
+        entity:
+          description: Present when `type` is `entity`. The full current row.
+          oneOf:
+            - $ref: '#/components/schemas/Folder'
+            - $ref: '#/components/schemas/Collection'
+            - $ref: '#/components/schemas/Source'
+            - $ref: '#/components/schemas/Entry'
+            - $ref: '#/components/schemas/Location'
+            - $ref: '#/components/schemas/ReadingState'
+            - $ref: '#/components/schemas/Measurement'
+            - $ref: '#/components/schemas/DownloadRequest'
+        tombstone:
+          $ref: '#/components/schemas/Tombstone'
+
+    Folder:
+      type: object
+      description: >-
+        User organisation. Exactly one root per library; `parent_id` is null
+        if and only if `kind` is `root` (I1). Deleting a folder reparents its
+        children; it never destroys content.
+      required: [id, parent_id, kind, name, sort_key, revision, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        parent_id:
+          type: [string, 'null']
+          format: uuid
+        kind:
+          type: string
+          enum: [root, user]
+        name: { type: string }
+        sort_key: { type: integer, format: int64 }
+        revision: { type: integer, format: int64 }
+        updated_at: { type: string, format: date-time }
+
+    Collection:
+      type: object
+      description: >-
+        A logical work. No URL and no host — those belong to Sources.
+        `lifecycle` `active` means the user follows it.
+      required:
+        [id, folder_id, name, detected_title, ordering_basis, lifecycle,
+         preferred_source_id, sort_key, revision, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        folder_id: { type: string, format: uuid }
+        name: { type: string }
+        detected_title: { type: string }
+        ordering_basis:
+          type: string
+          enum:
+            - explicitNumericIndex
+            - publicationDate
+            - detectedNextLink
+            - discoveryOrder
+            - userDefinedManualOrder
+        lifecycle:
+          type: string
+          enum: [active, archived]
+        preferred_source_id:
+          type: [string, 'null']
+          format: uuid
+        sort_key: { type: integer, format: int64 }
+        revision: { type: integer, format: int64 }
+        updated_at: { type: string, format: date-time }
+
+    Source:
+      type: object
+      description: >-
+        One Collection as published on one site. `(host, path_key)` is its
+        identity; language lives here because a translation is a Source of
+        the same work. Lifecycle spellings are the schema's CHECK vocabulary.
+      required:
+        [id, collection_id, host, path_key, language, lifecycle,
+         resolved_into_source_id, first_seen_at, last_seen_at, revision,
+         updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        collection_id: { type: string, format: uuid }
+        host: { type: string }
+        path_key: { type: string }
+        language: { type: string }
+        lifecycle:
+          type: string
+          enum: [active, dormant, dead, resolvedInto]
+        resolved_into_source_id:
+          type: [string, 'null']
+          format: uuid
+        first_seen_at: { type: string, format: date-time }
+        last_seen_at: { type: string, format: date-time }
+        revision: { type: integer, format: int64 }
+        updated_at: { type: string, format: date-time }
+
+    Entry:
+      type: object
+      description: >-
+        One logical unit of reading. NOT a URL. Has a `folder_id` if and only
+        if it has no `collection_id` (I3) — a standalone Entry is first-class
+        and never wrapped in a Collection of one. `ordinal` null with
+        placement `unplaced` is a real, visible state.
+      required:
+        [id, collection_id, folder_id, ordinal, placement, title, sort_key,
+         revision, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        collection_id:
+          type: [string, 'null']
+          format: uuid
+        folder_id:
+          type: [string, 'null']
+          format: uuid
+        ordinal:
+          type: [number, 'null']
+        placement:
+          type: string
+          enum: [placed, unplaced, userPlaced]
+        title: { type: string }
+        sort_key: { type: integer, format: int64 }
+        revision: { type: integer, format: int64 }
+        updated_at: { type: string, format: date-time }
+
+    Location:
+      type: object
+      description: >-
+        This Entry, at one URL, on one Source. `url_key` is unique per
+        library (I6) and is the recognition hot path. `source_label` and
+        `source_number` are what the site printed — evidence, never identity.
+      required:
+        [id, entry_id, source_id, url, url_key, source_label, source_number,
+         discovered_at, discovery_basis, lifecycle, revision, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        entry_id: { type: string, format: uuid }
+        source_id:
+          type: [string, 'null']
+          format: uuid
+        url: { type: string, format: uri }
+        url_key: { type: string }
+        source_label: { type: string }
+        source_number:
+          type: [number, 'null']
+        discovered_at: { type: string, format: date-time }
+        discovery_basis: { type: string }
+        lifecycle:
+          type: string
+          enum: [active, retracted]
+        revision: { type: integer, format: int64 }
+        updated_at: { type: string, format: date-time }
+
+    ReadingState:
+      type: object
+      description: >-
+        The portable, language-agnostic fact about an Entry, on its own row
+        and its own clock so the most frequent mutation does not bump Entry
+        metadata revisions. Completion is a value, not a floor. There is
+        deliberately no anchor field — anchors are device state and never
+        cross the network.
+      required: [entry_id, status, revision, updated_at]
+      properties:
+        entry_id: { type: string, format: uuid }
+        status:
+          type: string
+          enum: [unread, reading, completed]
+        first_opened_at:
+          type: [string, 'null']
+          format: date-time
+        last_read_at:
+          type: [string, 'null']
+          format: date-time
+        completed_at:
+          type: [string, 'null']
+          format: date-time
+        revision: { type: integer, format: int64 }
+        updated_at: { type: string, format: date-time }
+
+    Measurement:
+      type: object
+      description: >-
+        Progress scoped to the rendering it was measured against, keyed
+        `(entry_id, source_id)` (I12) so a reading taken on one Source is
+        never silently read as a claim about another.
+      required: [entry_id, source_id, fraction, observed_at, revision]
+      properties:
+        entry_id: { type: string, format: uuid }
+        source_id: { type: string, format: uuid }
+        fraction:
+          type: number
+          minimum: 0
+          maximum: 1
+        observed_at: { type: string, format: date-time }
+        revision: { type: integer, format: int64 }
+
+    DownloadRequest:
+      type: object
+      description: >-
+        An intent, never content, and never offline-copy state. State
+        spellings are the schema's CHECK vocabulary.
+      required:
+        [id, entry_id, location_id, state, idempotency_key, created_by,
+         created_at, claimed_by_device, claimed_at, resolved_at,
+         failure_reason, revision]
+      properties:
+        id: { type: string, format: uuid }
+        entry_id: { type: string, format: uuid }
+        location_id:
+          type: [string, 'null']
+          format: uuid
+        state:
+          type: string
+          enum: [pending, claimed, completed, failed, cancelled]
+        idempotency_key: { type: string }
+        created_by: { type: string }
+        created_at: { type: string, format: date-time }
+        claimed_by_device: { type: string }
+        claimed_at:
+          type: [string, 'null']
+          format: date-time
+        resolved_at:
+          type: [string, 'null']
+          format: date-time
+        failure_reason: { type: string }
+        revision: { type: integer, format: int64 }
+
+    Tombstone:
+      type: object
+      description: >-
+        A deliberate user removal. Never destroys bytes on any device (I14).
+        For `kind` `measurement`, `entity_id` carries the entry id and
+        `source_id` names the scoped key.
+      required: [kind, entity_id, revision, deleted_at]
+      properties:
+        kind:
+          type: string
+          enum:
+            - folder
+            - collection
+            - source
+            - entry
+            - location
+            - readingState
+            - measurement
+            - downloadRequest
+        entity_id: { type: string, format: uuid }
+        source_id:
+          type: [string, 'null']
+          format: uuid
+          description: Present only for `kind` `measurement`.
+        revision: { type: integer, format: int64 }
+        deleted_at: { type: string, format: date-time }
