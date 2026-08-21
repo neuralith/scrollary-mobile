@@ -7,6 +7,10 @@
 /// * *Remove offline copy* frees bytes **on this device**.
 /// * *Remove from library* is your library, everywhere — and it still does not
 ///   destroy bytes a device is holding (I14).
+/// * *Download for offline* is **this device**, and it waits: asking for one
+///   writes a queued row and nothing else. The controls that act on that row
+///   live in `entry_offline.dart`, which is where the queue's own rules are
+///   used.
 ///
 /// The two removals are never offered as substitutes for each other, and no
 /// wording in this file may suggest that archiving is a way to delete.
@@ -16,10 +20,14 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../domain/reading_state.dart';
+import '../save/queue_task.dart';
+import '../ui/palette.dart';
 import '../ui/status_style.dart';
 import 'collection_models.dart';
+import 'entry_offline.dart';
 import 'folder_picker.dart';
 import 'library_widgets.dart';
+import 'placement_actions.dart';
 import 'providers.dart';
 
 // ─── collection ─────────────────────────────────────────────────────────────
@@ -119,16 +127,35 @@ Future<void> showCollectionMenu(
 
 // ─── entry ──────────────────────────────────────────────────────────────────
 
-enum _EntryAction { markRead, markUnread, openAtSource, removeCopy, remove }
+enum _EntryAction {
+  markRead,
+  markUnread,
+  openAtSource,
+  place,
+  download,
+  startDownload,
+  removeWaiting,
+  stopRunning,
+  removeFromActivity,
+  removeCopy,
+  remove,
+}
 
 /// The Entry menu. Which items appear is decided by facts about the Entry —
-/// whether it has been read, whether this device holds a copy — and never by
-/// what the app would prefer the user to do.
+/// whether it has been read, whether this device holds a copy, whether the
+/// queue is already carrying a row for it — and never by what the app would
+/// prefer the user to do.
+///
+/// The queue row is read once, as the sheet opens. Acting on a snapshot is
+/// safe here and nowhere near a race: every transition goes through one
+/// conditional `UPDATE`, so a row that moved underneath this sheet makes the
+/// action lose cleanly and say so.
 Future<void> showEntryMenu(
   BuildContext context,
   WidgetRef ref,
   EntryRowView view,
 ) async {
+  final task = ref.read(entrySaveTaskProvider(view.id));
   final action = await showModalBottomSheet<_EntryAction>(
     context: context,
     builder: (sheetContext) => SafeArea(
@@ -136,7 +163,7 @@ Future<void> showEntryMenu(
         mainAxisSize: MainAxisSize.min,
         children: [
           Padding(
-            padding: const EdgeInsets.fromLTRB(20, 14, 20, 8),
+            padding: EdgeInsets.fromLTRB(20, 14, 20, task == null ? 8 : 2),
             child: Text(
               view.label,
               maxLines: 2,
@@ -144,6 +171,20 @@ Future<void> showEntryMenu(
               style: serifStyle(size: 20),
             ),
           ),
+          // What the queue is doing about this Entry, in the queue's own
+          // recorded outcome where it has one.
+          if (task != null)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 0, 20, 10),
+              child: Text(
+                saveTaskSentence(task),
+                style: TextStyle(
+                  fontSize: 12,
+                  height: 1.5,
+                  color: AppPalette.of(sheetContext).inkMuted,
+                ),
+              ),
+            ),
           if (view.status == ReadStatus.completed)
             ListTile(
               key: const ValueKey('entryMarkUnread'),
@@ -173,16 +214,78 @@ Future<void> showEntryMenu(
             onTap: () =>
                 Navigator.of(sheetContext).pop(_EntryAction.openAtSource),
           ),
-          // Not wired, and therefore not offered as though it were: the
-          // capture lane owns downloading, and a control that appears to start
-          // one would be a button that lies.
-          const ListTile(
-            key: ValueKey('entryDownload'),
-            enabled: false,
-            leading: Icon(Icons.download_for_offline_outlined),
-            title: Text('Download for offline'),
-            subtitle: Text('Not available yet.'),
-          ),
+          // A position the app could not establish is the user's to give, and
+          // only theirs (V2-D16).
+          if (view.needsPlacement)
+            ListTile(
+              key: const ValueKey('entryPlace'),
+              leading: const Icon(Icons.numbers),
+              title: const Text('Set its position'),
+              subtitle: const Text(
+                'Where this sits in the collection\'s sequence. Nothing is '
+                'guessed for you.',
+              ),
+              onTap: () => Navigator.of(sheetContext).pop(_EntryAction.place),
+            ),
+          // Downloading is one Entry, onto one device, and it waits. A row
+          // already in the queue offers what can be done to *that row*
+          // instead — a second request would only ever be a second candidate
+          // for one copy (I13).
+          if (task == null || task.isTerminal)
+            ListTile(
+              key: const ValueKey('entryDownload'),
+              leading: const Icon(Icons.download_for_offline_outlined),
+              title: const Text('Download for offline'),
+              subtitle: const Text(
+                'Puts a copy on this device. It waits in the queue until you '
+                'start it.',
+              ),
+              onTap: () =>
+                  Navigator.of(sheetContext).pop(_EntryAction.download),
+            ),
+          if (task != null && task.state == SaveTaskState.queued) ...[
+            ListTile(
+              key: const ValueKey('entryStartDownload'),
+              leading: const Icon(Icons.play_arrow),
+              title: const Text('Start downloading'),
+              subtitle: const Text(
+                'Nothing has run on its own. Start it when you are ready.',
+              ),
+              onTap: () =>
+                  Navigator.of(sheetContext).pop(_EntryAction.startDownload),
+            ),
+            ListTile(
+              key: const ValueKey('entryRemoveWaiting'),
+              leading: const Icon(Icons.playlist_remove),
+              title: const Text('Remove from the download queue'),
+              subtitle: const Text(
+                'It has not run, so nothing is lost — and you can undo it.',
+              ),
+              onTap: () =>
+                  Navigator.of(sheetContext).pop(_EntryAction.removeWaiting),
+            ),
+          ],
+          if (task != null && task.state == SaveTaskState.running)
+            ListTile(
+              key: const ValueKey('entryStopDownload'),
+              leading: const Icon(Icons.stop_circle_outlined),
+              title: const Text('Stop this download'),
+              subtitle: const Text('It stops at the next safe point.'),
+              onTap: () =>
+                  Navigator.of(sheetContext).pop(_EntryAction.stopRunning),
+            ),
+          if (task != null && task.isTerminal)
+            ListTile(
+              key: const ValueKey('entryRemoveActivity'),
+              leading: const Icon(Icons.delete_outline),
+              title: const Text('Remove from activity'),
+              subtitle: const Text(
+                'Clears this record. Nothing on this device is deleted.',
+              ),
+              onTap: () => Navigator.of(
+                sheetContext,
+              ).pop(_EntryAction.removeFromActivity),
+            ),
           if (view.availableOffline)
             ListTile(
               key: const ValueKey('entryRemoveCopy'),
@@ -216,8 +319,20 @@ Future<void> showEntryMenu(
       await ref.read(readingRepoProvider).markUnread(view.id);
     case _EntryAction.openAtSource:
       await _openAtSource(context, ref, view);
+    case _EntryAction.place:
+      await placeEntryInSequence(context, ref, view);
+    case _EntryAction.download:
+      await downloadForOffline(context, ref, view);
+    case _EntryAction.startDownload:
+      await startQueuedDownloads(context, ref, firstTaskId: task?.id);
+    case _EntryAction.removeWaiting:
+      if (task != null) await removeWaitingDownload(context, ref, task);
+    case _EntryAction.stopRunning:
+      if (task != null) await stopRunningDownload(context, ref, task);
+    case _EntryAction.removeFromActivity:
+      if (task != null) await removeDownloadFromActivity(context, ref, task);
     case _EntryAction.removeCopy:
-      await _removeOfflineCopy(context, ref, view);
+      await removeOfflineCopyOf(context, ref, view);
     case _EntryAction.remove:
       await _removeFromLibrary(context, ref, view);
   }
@@ -248,39 +363,6 @@ Future<void> _openAtSource(
   }
   await opener(url);
   await ref.read(readingRepoProvider).recordSourceAccess(view.id);
-}
-
-/// Device-local, and said so. This removes **this device's record** of the
-/// bytes; the package itself is deleted through the FileStore, whose V2 call
-/// site belongs to the capture lane.
-Future<void> _removeOfflineCopy(
-  BuildContext context,
-  WidgetRef ref,
-  EntryRowView view,
-) async {
-  final confirmed = await showDialog<bool>(
-    context: context,
-    builder: (dialogContext) => AlertDialog(
-      title: const Text('Remove the offline copy?'),
-      content: Text(
-        'Frees the bytes this device is holding for “${view.label}”. It stays '
-        'in your library, your reading state is untouched, and no other '
-        'device is affected.',
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.of(dialogContext).pop(false),
-          child: const Text('Cancel'),
-        ),
-        TextButton(
-          onPressed: () => Navigator.of(dialogContext).pop(true),
-          child: const Text('Remove copy'),
-        ),
-      ],
-    ),
-  );
-  if (confirmed != true) return;
-  await ref.read(offlineCopyRepoProvider).removeCopies(view.id);
 }
 
 Future<void> _removeFromLibrary(
