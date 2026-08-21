@@ -35,7 +35,11 @@ the *dedicated* suites are the ones whose subject the component is.
   `surfaceHoldReason` before reading anything — is what Lane F's checker must
   reproduce, with `browser_surface_policy.dart` remaining the single authority
   for the rule.
-- **Intentional internal changes:** none.
+- **Intentional internal changes:** none to the guards. Their host file
+  `lib/save/save_engine.dart` carries the reviewed result seam (§17.1,
+  2026-08-21), which sits entirely in the phase *after* everything this section
+  covers: `_waitForRenderedSurface`, the zero-viewport re-probe and every call
+  site of either are byte-for-byte what they were.
 - **Tests carried:** dedicated — `test/foreground_multitasking_test.dart`
   (policy truth table, `kPageHiddenGrace` bounding, the born-hidden regression
   from PLAN §7 A7), `test/hidden_webview_test.dart` (an offstage surface's
@@ -64,7 +68,11 @@ the *dedicated* suites are the ones whose subject the component is.
   slice-reassembly loop `SaveEngine._enumerateImages` in
   `lib/save/save_engine.dart`.
 - **New location:** unchanged.
-- **Intentional internal changes:** none.
+- **Intentional internal changes:** none to enumeration. Its host file
+  `lib/save/save_engine.dart` carries the reviewed result seam (§17.1,
+  2026-08-21); `_enumerateImages`, the slice loop, the deadline, the
+  `isComplete` rule and the truncation reason are untouched, and an incomplete
+  enumeration still decides `partial` where it always did.
 - **Tests carried:** dedicated — `test/image_candidates_test.dart` (per-image
   rules, width cluster, and the asserted superset property: everything final
   selection accepts, traversal already treated as relevant),
@@ -86,7 +94,11 @@ the *dedicated* suites are the ones whose subject the component is.
   `lib/save/save_engine.dart` (the paced scroll passes, lookahead,
   `_waitForPendingAssets`, quiet-period stop).
 - **New location:** unchanged.
-- **Intentional internal changes:** none.
+- **Intentional internal changes:** none to settling. Its host file
+  `lib/save/save_engine.dart` carries the reviewed result seam (§17.1,
+  2026-08-21); every settle window, scroll pass, lookahead, quiet period and
+  relevance test above it is unchanged, and the seam introduces no wait of its
+  own.
 - **Tests carried:** dedicated — `test/lazy_image_state_test.dart` (an element
   with no source has not asked the network for anything: `complete` is true
   for loaded, failed *and* never-tried images, so "broken" must not swallow
@@ -299,7 +311,12 @@ the *dedicated* suites are the ones whose subject the component is.
 - **New location:** unchanged for E1. E5 changes their *call sites* (opening
   through OfflineCopy); the §10 cleanup that deletes neighbouring V1 screens
   does not touch these two.
-- **Intentional internal changes:** none.
+- **Intentional internal changes:** one, reviewed — the reader data injection
+  point (§17.2, 2026-08-21). `ReaderScreen` gained an optional `offline`
+  parameter; given one it renders provided package data instead of loading V1
+  rows, and given nothing it is the screen it was. `document_reader.dart` is
+  untouched, and so is every rule about how either reader restores a
+  position.
 - **Tests carried:** dedicated — `test/reader_lifecycle_test.dart`,
   `test/reader_navigation_test.dart`, `test/reader_bottom_controls_test.dart`,
   `test/reader_chrome_test.dart`, `test/finished_transition_test.dart`,
@@ -396,6 +413,94 @@ the *dedicated* suites are the ones whose subject the component is.
   fragments keep a "next" link away from account and sign-in flows.
 - **Integration dependency:** Lane F (F1 — the recognition fast path is built
   on this identity), Lane E (E2 — `url_key` writes), Lane C (C9 index keys).
+
+---
+
+## 17. Reviewed internal changes
+
+The rule this list exists to enforce: *if a ported component needs an internal
+change, that is a task with its own review, not a side effect of a call-site
+edit.* Two such changes have now been reviewed and made. Both are seams — a
+place where the **caller** changes — and neither moves a measurement, a
+threshold, a wait, an ordering or a stopping condition.
+
+### 17.1 The save engine's result seam — 2026-08-21
+
+- **File:** `lib/save/save_engine.dart` (the host of §1's guard call sites,
+  §2's `_enumerateImages` and §3's paced scrolling).
+- **Why.** V2 could not capture at all without it. `saveCurrentPage` and
+  `_saveDocument` both ended their last phase by opening staging under the
+  store, committing the package themselves, and writing four V1 library rows —
+  `findEntryByUrlKeyAnywhere`, `upsertEntry`, `clearOfflineRemovedMark`,
+  `markCollectionSaved`. A V2 host has no V1 database and must not acquire one,
+  and the commit belongs to `entry_capture.dart`, where the restricted-site
+  policy's last gate sits: the manifest's own `sourceUrl` is judged *before*
+  anything leaves `tmp/`. The blocked state was recorded in the header of
+  `lib/save/page_capture_source.dart`, and this is the task it named.
+- **What changed.** Those five calls — staging, the lookup, the commit, and the
+  three writes as one — go through an injected `SaveResultSink`
+  (`lib/save/save_result_sink.dart`). The constructor takes `AppDatabase? db`
+  **or** a `sink`; passing `db:`, which is what every existing caller does,
+  builds `LibrarySaveResultSink`, whose implementation is those calls in that
+  order. A sink may answer null to `commitEntry`, meaning *the package stays
+  staged and the caller owns it* — that is the whole of "the engine can end at
+  staged". 45 lines added, 30 removed, all of them in the constructor and the
+  two final phases.
+- **What did not change.** Every measurement, settle window, decode decision,
+  probe, enumeration, extraction, collapse guard, stop condition, retry posture
+  and emitted progress state, and the order of all of them. Both
+  restricted-site checks still run before a staging directory exists, so
+  `AssetFetcher` still never meets the policy. The reading carried across a
+  re-save, the truncation rules and the refusal to replace a fuller copy with a
+  shorter one are untouched.
+- **Proof.** `test/save_v2/save_result_sink_test.dart`: the default sink asks
+  for exactly the four library calls in exactly that order; a save built with
+  `db:` writes a row equal field-for-field to one built over an explicitly
+  constructed `LibrarySaveResultSink`; and a capture over `StagedPackageSink`
+  reaches the database **not once** — a recording `AppDatabase` handed to the
+  engine *alongside* the sink counts zero calls — commits nothing, and leaves
+  the package in the staging directory the caller opened. Every pre-existing
+  suite that drives the engine (`document_save_test`, `asset_host_policy_test`,
+  `hidden_webview_test`, `adaptive_scroll_test`, `image_enumeration_test`,
+  `foreground_multitasking_test`, `direct_save_test`) passes unedited.
+- **Consumed by.** `SaveEnginePageCaptureSource` in
+  `lib/save/page_capture_source.dart` — the production `PageCaptureSource`
+  Lane E's device-bound validation was waiting on.
+
+### 17.2 The reader data injection point — 2026-08-21
+
+- **File:** `lib/features/reader_screen.dart` (§13).
+- **Why.** `resolveOfflineRead` already assembles everything a reader needs
+  from an OfflineCopy — content path, artifact, manifest, files, anchor — but
+  `ReaderScreen` took an `entryId` and loaded all of it again from V1 rows
+  inside its own state (`db.entryById`, `reading.markOpened`,
+  `db.touchCollection`, siblings from `db.entriesForCollection`). Opening a
+  copy therefore required a V1 library to exist. The blocked state was recorded
+  in the header of `lib/reading_v2/offline_read.dart`.
+- **What changed.** One optional constructor parameter, `ReaderScreen.offline`,
+  carrying `OfflineReaderData`: the resolved package, and the session its
+  reading goes back through. Null — every existing caller — is the V1 route,
+  unchanged. Given one, `_load` returns `_loadProvided` instead, the V1
+  repositories are never resolved from providers at all, the open is recorded
+  through the session, progress and read/unread go to the session, and the
+  siblings list stays empty because neighbours are a fact about a Collection
+  and not about a package on this device. Three label sites gained a manifest
+  fallback *after* the existing row lookups, which no V1 render can reach.
+  136 lines added, 16 removed.
+- **What did not change.** Position restore, in either direction: the image
+  reader still opens *at* its position from manifest geometry, and the document
+  reader still restores *to* its position on the first measurement. The
+  completion rule and its dwell, the flush schedule, the transient notice, the
+  cleanup lock, entry navigation and the unavailable states are all as they
+  were on the V1 route.
+- **Proof.** `test/save_v2/engine_capture_source_test.dart` opens the real
+  reader over a package captured in the same test, inside a `ProviderScope`
+  with **no overrides at all** — any V1 provider it touched would throw
+  `UnimplementedError` — and asserts the document renders, the restore lands
+  past the top, and the open was recorded in the V2 reading state. Every
+  pre-existing reader suite (`reader_lifecycle`, `reader_navigation`,
+  `reader_bottom_controls`, `reader_chrome`, `finished_transition`,
+  `document_reader`) passes unedited.
 
 ---
 

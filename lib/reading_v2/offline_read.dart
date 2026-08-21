@@ -25,20 +25,22 @@
 /// rendering it was taken against, and reading an offline copy is not reading
 /// a Source.
 ///
-/// ## What the UX lane can wire today, and what it cannot
+/// ## What the UX lane wires
 ///
 /// [OfflineDocumentRead] carries exactly what `DocumentBody` takes — document,
 /// manifest, entry directory — so the document body is constructible from here
 /// as it stands. [OfflineImageRead] carries the same page list and geometry
 /// V1's own loader builds, through [OfflineImageRead.geometryFor].
 ///
-/// `ReaderScreen` itself is **not** constructible from this: it takes an
-/// `entryId` and loads everything else from V1 rows inside its own state
-/// (`db.entryById`, `reading.markOpened`, `db.touchCollection`, siblings from
-/// `db.entriesForCollection`). Opening it through an OfflineCopy means it must
-/// accept its data instead of fetching it — an internal change to a frozen
-/// component, and so a reviewed task of its own rather than a side effect of
-/// this one (docs/V2_PORT_CHECKLIST.md §13).
+/// `ReaderScreen` takes [OfflineReaderData]: the resolved package and the
+/// session its reading goes back through. Given one it skips its V1 loader
+/// entirely — no `db.entryById`, no `reading.markOpened`, no
+/// `db.touchCollection`, no siblings from `db.entriesForCollection` — so an
+/// OfflineCopy opens the real reader on a device with no V1 library behind it.
+/// That injection point was cut as a reviewed internal change to a frozen
+/// component (docs/V2_PORT_CHECKLIST.md §13); handing the screen an `entryId`
+/// alone still loads from V1 rows exactly as before. [openOfflineRead] is the
+/// one call that assembles what it takes.
 library;
 
 import 'dart:io';
@@ -267,6 +269,73 @@ OfflinePage _pageFor(FileStore store, String relative, EntryAsset asset) {
     height: asset.dimensionsVerified ? asset.height : null,
   );
 }
+
+/// Everything one open reader needs: the package on this device, and where its
+/// reading goes.
+///
+/// The two halves travel together deliberately. A reader handed a package with
+/// nowhere to write would render perfectly and quietly lose where somebody got
+/// to; a session with no package has nothing to be a position *in*.
+class OfflineReaderData {
+  const OfflineReaderData({required this.read, required this.session});
+
+  /// What the reader opens, or why it cannot.
+  final OfflineRead read;
+
+  /// Where the anchor and the reading state go. Two destinations, and the
+  /// session is the thing that knows they are not interchangeable.
+  final OfflineReadSession session;
+
+  /// Record the open, and answer whether the Entry is already finished.
+  ///
+  /// Opening is not finishing — [OfflineReadSession.recordOpen] records access
+  /// and never completion — and a completed Entry that is reopened stays
+  /// completed, which is exactly what this answer has to carry into the
+  /// reader's own completion state.
+  Future<bool> recordOpen() async =>
+      (await session.recordOpen()).status == ReadStatus.completed;
+
+  /// Persist where the reader is.
+  ///
+  /// [completed] is the reader's verdict that the threshold was crossed *and*
+  /// held for its dwell. A fling to the bottom passes the threshold without
+  /// ever satisfying the dwell, and must not finish anything.
+  Future<void> saveProgress(
+    ReadingPosition position, {
+    required bool completed,
+  }) => session.saveProgress(position, reachedEnd: completed);
+
+  /// Explicit "I have read this", wherever the scroll happens to be.
+  Future<void> markRead() => session.markRead();
+
+  /// Explicit "I have not read this". The anchor is kept.
+  Future<void> markUnread() => session.markUnread();
+}
+
+/// Resolve [entryId] into what the reader takes: the package this device
+/// holds, and the session that writes back to it.
+///
+/// One call, because the two are answered from the same row: the copy that
+/// names the bytes is the copy the anchor is stored on.
+Future<OfflineReaderData> openOfflineRead({
+  required String entryId,
+  required OfflineCopyRepository offlineCopies,
+  required ReadingStateRepository reading,
+  required FileStore fileStore,
+  CompletionPolicy policy = kDefaultCompletionPolicy,
+}) async => OfflineReaderData(
+  read: await resolveOfflineRead(
+    entryId: entryId,
+    offlineCopies: offlineCopies,
+    fileStore: fileStore,
+  ),
+  session: OfflineReadSession(
+    entryId: entryId,
+    offlineCopies: offlineCopies,
+    reading: reading,
+    policy: policy,
+  ),
+);
 
 /// The write-back half: one open reader, one Entry.
 ///

@@ -19,6 +19,7 @@ import '../core/config.dart';
 import '../providers.dart';
 import '../reading/reading_position.dart';
 import '../reading/reading_repository.dart';
+import '../reading_v2/offline_read.dart';
 import '../storage/cleanup.dart';
 import '../storage/database.dart';
 import '../storage/document.dart';
@@ -121,9 +122,25 @@ class _ForwardPlan {
 /// the reader says so. Falling back to the source would make "offline" a lie
 /// that only surfaces once the network is gone.
 class ReaderScreen extends ConsumerStatefulWidget {
-  const ReaderScreen({super.key, required this.entryId});
+  const ReaderScreen({super.key, required this.entryId, this.offline});
 
   final String entryId;
+
+  /// The Entry's package, resolved by the caller, and the session its reading
+  /// goes back through (`lib/reading_v2/offline_read.dart`).
+  ///
+  /// Null is the default and the V1 route: the screen loads the row, the
+  /// manifest, the files and the anchor itself, exactly as it always has.
+  /// Given one, it touches no V1 row at all — not to load, not to record the
+  /// open, not to save progress — which is what lets an OfflineCopy open this
+  /// reader on a device with no V1 library behind it.
+  ///
+  /// **Position restore is unchanged either way.** The image reader still
+  /// opens *at* its position, because panel geometry comes from the manifest;
+  /// the document reader still restores *to* its position on the first
+  /// measurement, because a paragraph has no offset until it has been laid
+  /// out. The anchor simply arrives from the copy instead of from a column.
+  final OfflineReaderData? offline;
 
   @override
   ConsumerState<ReaderScreen> createState() => _ReaderScreenState();
@@ -227,28 +244,37 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    _reading = ref.read(readingRepositoryProvider);
-    _cleanup = ref.read(cleanupProvider);
+    // Both of these reach the V1 library, and building them builds one. A
+    // reader that was handed its data has no V1 library to reach, so they are
+    // resolved only on the route that uses them — and every use of either is
+    // on that route.
+    if (widget.offline == null) {
+      _reading = ref.read(readingRepositoryProvider);
+      _cleanup = ref.read(cleanupProvider);
+    }
     _entryId = widget.entryId;
     _chromeVisibility = ref.read(readerChromeVisibleProvider);
-    // The open entry is locked against offline-file removal for as long
-    // as this screen exists.
-    _cleanup.openReaderEntryId.value = widget.entryId;
-    _cleanup.removals.addListener(_onRemovals);
+    if (widget.offline == null) {
+      // The open entry is locked against offline-file removal for as long
+      // as this screen exists.
+      _cleanup.openReaderEntryId.value = widget.entryId;
+      _cleanup.removals.addListener(_onRemovals);
+    }
     _future = _load(widget.entryId);
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
-    _cleanup.removals.removeListener(_onRemovals);
+    if (widget.offline == null) _cleanup.removals.removeListener(_onRemovals);
     _saveTimer?.cancel();
     // Fire-and-forget: dispose cannot await, but the write is a single row.
     unawaited(_flush());
     _scrollController?.dispose();
     _livePosition.dispose();
     _siblings.dispose();
-    if (_cleanup.openReaderEntryId.value == _entryId) {
+    if (widget.offline == null &&
+        _cleanup.openReaderEntryId.value == _entryId) {
       _cleanup.openReaderEntryId.value = null;
     }
     // Whatever this reader hid, it stops hiding on the way out — otherwise the
@@ -368,7 +394,83 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
 
   void _onRemovals() => unawaited(_refreshSiblings());
 
+  /// The provided route: the package was resolved from an OfflineCopy, so
+  /// there is nothing to look up and nothing to re-derive.
+  ///
+  /// What still happens is what an *open* means: the access is recorded
+  /// through the session, and the reader starts from the copy's own anchor.
+  /// Siblings stay empty — neighbours are a fact about a Collection's entries,
+  /// which is a question for a library and not for a package on this device —
+  /// so no entry-navigation control is offered and none can be taken.
+  Future<_ReaderData> _loadProvided(OfflineReaderData offline) async {
+    switch (offline.read) {
+      case OfflineReadUnavailable(:final refusal):
+        return _ReaderData.unavailable(
+          _refusalMessage(refusal),
+          // Only a copy whose bytes have vanished is "gone". An Entry this
+          // device never held a copy of has lost nothing — it is simply not
+          // downloaded here, which is an ordinary state of a first-class
+          // library item and not a failure of one.
+          filesGone: refusal == OfflineReadRefusal.filesMissing,
+        );
+      case OfflineImageRead(:final manifest, :final pages, :final restored):
+        _completed = await offline.recordOpen();
+        _position = restored;
+        return _ReaderData(
+          entry: null,
+          manifest: manifest,
+          pages: [
+            for (final page in pages)
+              _ReaderPage(
+                file: page.file,
+                exists: page.exists,
+                width: page.width,
+                height: page.height,
+              ),
+          ],
+        );
+      case OfflineDocumentRead(
+        :final manifest,
+        :final entryDir,
+        :final document,
+        :final restored,
+      ):
+        _completed = await offline.recordOpen();
+        _position = restored;
+        return _ReaderData(
+          entry: null,
+          manifest: manifest,
+          pages: const [],
+          document: document,
+          entryDir: entryDir,
+        );
+    }
+  }
+
+  /// Why the copy cannot be opened, in the reader's own words. Each is a
+  /// state, not a failure: nothing is demoted and the Entry stays listed with
+  /// its reading history.
+  static String _refusalMessage(
+    OfflineReadRefusal refusal,
+  ) => switch (refusal) {
+    OfflineReadRefusal.noCopy =>
+      'This entry is not downloaded on this device. It is still in your '
+          'library with your reading history — save it again to read it here.',
+    OfflineReadRefusal.filesMissing =>
+      'The local files for this entry are gone. The entry is still listed, '
+          'but it is not available offline.',
+    OfflineReadRefusal.manifestUnreadable =>
+      'The entry package is unreadable (missing manifest).',
+    OfflineReadRefusal.unknownArtifact =>
+      'This entry was saved in a format this version of the app cannot open. '
+          'Updating the app should fix it; the files are untouched.',
+    OfflineReadRefusal.documentUnreadable =>
+      'The saved text for this entry is unreadable.',
+  };
+
   Future<_ReaderData> _load(String entryId) async {
+    final offline = widget.offline;
+    if (offline != null) return _loadProvided(offline);
     final db = ref.read(databaseProvider);
     final store = ref.read(fileStoreProvider);
     final reading = _reading;
@@ -812,7 +914,12 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
     _saveTimer?.cancel();
     _saveTimer = null;
     try {
-      await _reading.saveProgress(id, _position, completed: _completed);
+      final offline = widget.offline;
+      if (offline != null) {
+        await offline.saveProgress(_position, completed: _completed);
+      } else {
+        await _reading.saveProgress(id, _position, completed: _completed);
+      }
     } catch (_) {
       // The dispose-time flush is fire-and-forget; if the database is
       // already shutting down there is nowhere left to save to, and an
@@ -825,18 +932,18 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
   Future<void> _toggleRead() async {
     final id = _entryId;
     if (id == null) return;
-    final reading = _reading;
+    final offline = widget.offline;
     // A debounced save queued before the tap would land after it and write
     // the status straight back. The user's explicit choice is the newer
     // fact, so the pending write is dropped rather than allowed to race.
     _saveTimer?.cancel();
     _saveTimer = null;
     if (_completed) {
-      await reading.markUnread(id);
+      await (offline == null ? _reading.markUnread(id) : offline.markUnread());
       _completed = false;
       _pastThresholdSince = null;
     } else {
-      await reading.markRead(id);
+      await (offline == null ? _reading.markRead(id) : offline.markRead());
       _completed = true;
     }
     if (mounted) setState(() {});
@@ -1465,7 +1572,15 @@ class _ReaderChrome extends StatelessWidget {
                         mainAxisSize: MainAxisSize.min,
                         children: [
                           Text(
-                            entry?.sourceMarker ?? entry?.title ?? 'Reader',
+                            entry?.sourceMarker ??
+                                entry?.title ??
+                                // No V1 row on the provided route: the
+                                // manifest is what names the package, and it
+                                // carries the same two facts in the same
+                                // order.
+                                data.manifest?.sourceMarker ??
+                                data.manifest?.title ??
+                                'Reader',
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: const TextStyle(
@@ -1475,7 +1590,7 @@ class _ReaderChrome extends StatelessWidget {
                             ),
                           ),
                           Text(
-                            entry?.title ?? '',
+                            entry?.title ?? data.manifest?.title ?? '',
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: const TextStyle(
@@ -1818,7 +1933,12 @@ class _EndOfEntry extends StatelessWidget {
         .where((c) => c.readStatus != ReadStatus.completed.name)
         .firstOrNull;
     final target = nextUnread ?? next;
-    final label = data.entry?.sourceMarker ?? data.entry?.title ?? '';
+    final label =
+        data.entry?.sourceMarker ??
+        data.entry?.title ??
+        data.manifest?.sourceMarker ??
+        data.manifest?.title ??
+        '';
 
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 26, 20, 110),
