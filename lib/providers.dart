@@ -13,7 +13,10 @@ import 'browser/history_repository.dart';
 import 'browser/saved_sites_repository.dart';
 import 'save/save_run.dart';
 import 'save/page_hint_repository.dart';
+import 'features/check_controller.dart';
 import 'features/resume_point.dart';
+import 'features/v2_composition.dart';
+import 'save/queue_runner.dart';
 import 'features/library_check_flow.dart';
 import 'features/library_screen.dart' show LibraryCollection;
 import 'library/library_sort.dart';
@@ -576,4 +579,20 @@ final visitedHostsProvider = Provider<AsyncValue<List<VisitedHost>>>(
   (ref) => ref
       .watch(browsingHistoryProvider)
       .whenData(HistoryRepository.groupByHost),
+);
+
+// --- V2 composition --------------------------------------------------------
+
+/// The V2 stack, built once at startup beside [AppServices]. Overridden in
+/// `main()`; widget tests that never touch V2 surfaces simply do not read it.
+final v2ServicesProvider = Provider<V2Services>(
+  (ref) => throw UnimplementedError('overridden in main()'),
+);
+
+final queueRunnerProvider = Provider<QueueRunner>(
+  (ref) => ref.watch(v2ServicesProvider).runner,
+);
+
+final checkControllerProvider = Provider<CheckController>(
+  (ref) => ref.watch(v2ServicesProvider).check,
 );

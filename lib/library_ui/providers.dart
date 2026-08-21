@@ -514,3 +514,58 @@ Future<LocationRow?> primaryLocation(LibraryDatabase db, String entryId) async {
 /// The address of [primaryLocation].
 Future<String?> primaryLocationUrl(LibraryDatabase db, String entryId) async =>
     (await primaryLocation(db, entryId))?.url;
+
+/// Opens an Entry for reading — the composition supplies the navigation.
+/// Null (the default) means no reader is wired, and read affordances that
+/// depend on it simply do nothing rather than crash a test.
+typedef EntryOpener = Future<void> Function(String entryId);
+
+final entryOpenerProvider = Provider<EntryOpener?>((ref) => null);
+
+/// One resumable read: an Entry someone is partway through, newest first.
+class ContinueReadItem {
+  const ContinueReadItem({
+    required this.entryId,
+    required this.title,
+    this.collectionName,
+    required this.lastReadAt,
+  });
+
+  final String entryId;
+  final String title;
+  final String? collectionName;
+  final DateTime lastReadAt;
+}
+
+/// Continue Reading, derived from the logical Entries' reading state — not
+/// from downloads. Bounded: a strip, not a screen.
+final continueReadingProvider = StreamProvider<List<ContinueReadItem>>((ref) {
+  final services = ref.watch(libraryUiServicesProvider);
+  final db = services.db;
+  final query = db.select(db.readingStates)
+    ..where((r) => r.status.equals('reading') & r.lastReadAt.isNotNull())
+    ..orderBy([(r) => OrderingTerm.desc(r.lastReadAt)])
+    ..limit(8);
+  return query.watch().asyncMap((states) async {
+    final items = <ContinueReadItem>[];
+    for (final state in states) {
+      final entry = await services.entries.byId(state.entryId);
+      if (entry == null) continue;
+      String? collectionName;
+      final collectionId = entry.collectionId;
+      if (collectionId != null) {
+        collectionName = (await services.collections.byId(collectionId))?.name;
+      }
+      final title = entry.title.trim();
+      items.add(
+        ContinueReadItem(
+          entryId: entry.id,
+          title: title.isEmpty ? (collectionName ?? 'Item') : title,
+          collectionName: collectionName,
+          lastReadAt: state.lastReadAt!,
+        ),
+      );
+    }
+    return items;
+  });
+});

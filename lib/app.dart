@@ -16,11 +16,14 @@ import 'core/local_reset.dart';
 import 'features/browser_history_screen.dart';
 import 'features/browser_screen.dart';
 import 'features/developer_screen.dart';
-import 'features/library_screen.dart';
+
 import 'features/open_in_browser.dart';
-import 'features/reader_screen.dart';
 import 'features/page_hints_screen.dart';
-import 'features/collection_detail_screen.dart';
+import 'features/check_controller.dart';
+import 'features/v2_reader_route.dart';
+import 'library_ui/collection_screen.dart';
+import 'library_ui/shelf_screen.dart';
+import 'save/queue_runner.dart';
 import 'capability/foreground_gate.dart';
 import 'features/foreground_gate_sheet.dart';
 import 'features/settings_screen.dart';
@@ -79,17 +82,14 @@ class _WebReaderAppState extends ConsumerState<WebReaderApp>
         path: '/reader/:entryId',
         pageBuilder: (context, state) => _page(
           state,
-          ReaderScreen(entryId: state.pathParameters['entryId']!),
+          V2ReaderRoute(entryId: state.pathParameters['entryId']!),
         ),
       ),
       GoRoute(
         path: '/collection/:collectionId',
         pageBuilder: (context, state) => _page(
           state,
-          CollectionDetailScreen(
-            collectionId: state.pathParameters['collectionId']!,
-            startInSelectionMode: state.uri.queryParameters['select'] == '1',
-          ),
+          CollectionScreen(collectionId: state.pathParameters['collectionId']!),
         ),
       ),
       GoRoute(
@@ -134,6 +134,8 @@ class _WebReaderAppState extends ConsumerState<WebReaderApp>
   late final BrowserController _browser;
   late final SaveRunController _run;
   late final UpdateChecker _checker;
+  late final QueueRunner _queueRunner;
+  late final CheckController _sourceCheck;
   late final ForegroundMultitasking _capability;
   late final ValueNotifier<bool> _pendingSurfaceClaim;
 
@@ -146,10 +148,27 @@ class _WebReaderAppState extends ConsumerState<WebReaderApp>
     _browser = ref.read(browserProvider);
     _run = ref.read(saveRunProvider);
     _checker = ref.read(updateCheckerProvider);
+    _queueRunner = ref.read(queueRunnerProvider);
+    _sourceCheck = ref.read(checkControllerProvider);
+    final v2 = ref.read(v2ServicesProvider);
+    v2.openEntry = (id) async {
+      _router.push('/reader/$id');
+    };
+    v2.openSource = (url) async {
+      ref.read(browserNavigatorProvider).request(url);
+      ref.read(shellTabRequestProvider).value = 1;
+    };
     _capability = ref.read(foregroundMultitaskingProvider);
     _pendingSurfaceClaim = ref.read(pendingSurfaceClaimProvider);
     _pendingSurfaceClaim.addListener(_recomputeSurface);
-    for (final source in [_run, _checker, _capability, _browser]) {
+    for (final source in [
+      _run,
+      _checker,
+      _queueRunner,
+      _sourceCheck,
+      _capability,
+      _browser,
+    ]) {
       source.addListener(_recomputeSurface);
     }
     _tab.addListener(_recomputeSurface);
@@ -172,7 +191,14 @@ class _WebReaderAppState extends ConsumerState<WebReaderApp>
 
   @override
   void dispose() {
-    for (final source in [_run, _checker, _capability, _browser]) {
+    for (final source in [
+      _run,
+      _checker,
+      _queueRunner,
+      _sourceCheck,
+      _capability,
+      _browser,
+    ]) {
       source.removeListener(_recomputeSurface);
     }
     _pendingSurfaceClaim.removeListener(_recomputeSurface);
@@ -201,6 +227,8 @@ class _WebReaderAppState extends ConsumerState<WebReaderApp>
     final owns =
         _run.isRunning ||
         _checker.isRunning ||
+        _queueRunner.isRunning ||
+        _sourceCheck.isRunning ||
         _browser.isAutomating ||
         _pendingSurfaceClaim.value;
     // Latched for the lifetime of this operation's ownership: a setting the
@@ -289,6 +317,8 @@ class _ShellState extends ConsumerState<_Shell> {
   // forbids `ref`.
   late final SaveRunController _run;
   late final UpdateChecker _checker;
+  late final QueueRunner _queueRunner;
+  late final CheckController _sourceCheck;
   bool _wasBusy = false;
 
   late final ValueNotifier<int?> _tabRequest;
@@ -322,6 +352,15 @@ class _ShellState extends ConsumerState<_Shell> {
     super.initState();
     _run = ref.read(saveRunProvider);
     _checker = ref.read(updateCheckerProvider);
+    _queueRunner = ref.read(queueRunnerProvider);
+    _sourceCheck = ref.read(checkControllerProvider);
+    _queueRunner.addListener(_onAutomationChanged);
+    _sourceCheck.addListener(_onAutomationChanged);
+    ref.read(v2ServicesProvider).startQueue = () async {
+      if (await _ensureBrowserVisible()) {
+        await ref.read(queueRunnerProvider).start();
+      }
+    };
     _tabRequest = ref.read(shellTabRequestProvider);
     _tab = ref.read(shellTabProvider);
     _tab.value = _index;
@@ -422,6 +461,8 @@ class _ShellState extends ConsumerState<_Shell> {
     _keepPainted.removeListener(_onKeepPaintedChanged);
     _run.removeListener(_onAutomationChanged);
     _checker.removeListener(_onAutomationChanged);
+    _queueRunner.removeListener(_onAutomationChanged);
+    _sourceCheck.removeListener(_onAutomationChanged);
     _tabRequest.removeListener(_onTabRequested);
     _cleanup.removals.removeListener(_onStorageChanged);
     _queue.ensureBrowserVisible = null;
@@ -436,7 +477,11 @@ class _ShellState extends ConsumerState<_Shell> {
   /// safe away from the Browser before any of this existed and stay safe for
   /// everyone — and so is an already-paused run. The modal must not cry wolf.
   bool get _phaseNeedsBrowser =>
-      _index == 1 && (_run.needsRenderedBrowser || _checker.isRunning);
+      _index == 1 &&
+      (_run.needsRenderedBrowser ||
+          _checker.isRunning ||
+          _queueRunner.needsRenderedBrowser ||
+          _sourceCheck.isRunning);
 
   /// Who decides, and it is never this widget: what the user has, what they
   /// asked for and what the running task started with all resolve in
@@ -492,7 +537,11 @@ class _ShellState extends ConsumerState<_Shell> {
   /// Transition-edge only: once the user has seen the switch they are free to
   /// go back to the Library without the shell fighting them.
   void _onAutomationChanged() {
-    final busy = _run.isRunning || _checker.isRunning;
+    final busy =
+        _run.isRunning ||
+        _checker.isRunning ||
+        _queueRunner.isRunning ||
+        _sourceCheck.isRunning;
     // A real owner has appeared: the start claim has done its job.
     if (busy) _releaseSurfaceClaim();
     // With the capability on, an operation starting is not a reason to move
@@ -571,7 +620,7 @@ class _ShellState extends ConsumerState<_Shell> {
                   ),
                 ),
               ),
-              Offstage(offstage: _index != 0, child: const LibraryScreen()),
+              Offstage(offstage: _index != 0, child: const ShelfScreen()),
             ],
           ),
           bottomNavigationBar: _BottomNav(index: _index, onSelect: _select),

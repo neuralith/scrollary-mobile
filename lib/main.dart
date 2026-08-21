@@ -15,6 +15,18 @@ import 'features/splash_screen.dart';
 import 'providers.dart';
 import 'storage/database.dart';
 import 'storage/file_store.dart';
+import 'data/recognition_index.dart';
+import 'data/schema.dart' show LibraryDatabase;
+import 'features/check_controller.dart';
+import 'features/source_observation_browser.dart';
+import 'features/v2_composition.dart';
+import 'library_ui/providers.dart' as libui;
+import 'save/asset_fetcher.dart';
+import 'save/entry_capture.dart';
+import 'save/page_capture_source.dart';
+import 'save/queue_runner.dart';
+import 'save/save_engine.dart';
+import 'core/config.dart';
 import 'storage/recovery.dart';
 import 'ui/palette.dart';
 
@@ -132,7 +144,28 @@ class _AppBootState extends State<AppBoot> with WidgetsBindingObserver {
         children: [
           if (services != null)
             ProviderScope(
-              overrides: [appServicesProvider.overrideWithValue(services)],
+              overrides: [
+                appServicesProvider.overrideWithValue(services),
+                v2ServicesProvider.overrideWithValue(_startup.v2),
+                libui.libraryUiServicesProvider.overrideWithValue(
+                  _startup.v2.ui,
+                ),
+                libui.fileStoreProvider.overrideWithValue(
+                  _startup.v2.ui.fileStore,
+                ),
+                libui.entryOpenerProvider.overrideWithValue(
+                  (id) async => _startup.v2.openEntry?.call(id),
+                ),
+                libui.sourceOpenerProvider.overrideWithValue(
+                  (url) async => _startup.v2.openSource?.call(url),
+                ),
+                libui.saveQueueStarterProvider.overrideWithValue(
+                  () async => _startup.v2.startQueue?.call(),
+                ),
+                libui.placementSubmitProvider.overrideWithValue(
+                  placementSubmitOver(_startup.v2),
+                ),
+              ],
               child: const WebReaderApp(),
             ),
           if (_splashVisible)
@@ -171,9 +204,11 @@ class AppStartup {
   AppDatabase? _db;
   FileStore? _fileStore;
   AppServices? _services;
+  V2Services? _v2;
 
   /// Available once the sequence has completed without a critical failure.
   AppServices get services => _services!;
+  V2Services get v2 => _v2!;
 
   late final List<StartupStep> steps = [
     StartupStep(label: 'Opening your library', critical: true, run: _open),
@@ -240,6 +275,48 @@ class AppStartup {
       browser: browser,
       saveRun: saveRun,
       foregroundMultitasking: multitasking,
+    );
+
+    // The V2 stack, beside the V1 services it is replacing piecewise. One
+    // LibraryDatabase, the repositories over it, the queue worker and the
+    // check controller — all sharing the one Browser and FileStore.
+    final library = LibraryDatabase();
+    final ui = libui.LibraryUiServices(library, fileStore: fileStore);
+    final runner = QueueRunner(
+      queue: ui.queue,
+      captureServiceFor: () => EntryCaptureService(
+        entries: ui.entries,
+        collections: ui.collections,
+        offlineCopies: ui.offline,
+        fileStore: fileStore,
+        source: SaveEnginePageCaptureSource(
+          browser: browser,
+          engineFor: (sink) => SaveEngine(
+            browser: browser,
+            fileStore: fileStore,
+            downloader: AssetFetcher(
+              browser: browser,
+              config: kDefaultSaveConfig,
+            ),
+            sink: sink,
+          ),
+        ),
+      ),
+    );
+    final check = CheckController(
+      browser: browser,
+      collections: ui.collections,
+      entries: ui.entries,
+      index: RecognitionIndex(library),
+      observations: BrowserSourceObservationSource(browser),
+    );
+    _v2 = V2Services(
+      library: library,
+      ui: ui,
+      runner: runner,
+      check: check,
+      syncBaseUrl: await db.setting(kSyncBaseUrlSettingKey),
+      syncLibrary: await db.setting(kSyncLibrarySettingKey),
     );
 
     // Entry assets are re-downloadable; a multi-GB library must not ride
