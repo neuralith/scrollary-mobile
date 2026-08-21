@@ -6,8 +6,9 @@
 /// grow a second transport.
 ///
 /// Metadata sync is the one automatic network activity (V2-D20). It calls the
-/// four operations below and nothing else — it fetches no page and drives no
-/// browser.
+/// five operations below and nothing else — it fetches no page and drives no
+/// browser. The two download-request operations are no exception: a claim and
+/// a resolve exchange a state, never content.
 library;
 
 import 'dart:convert';
@@ -49,6 +50,14 @@ abstract class SyncTransport {
 
   Future<TransportReply> arbitrate(Map<String, Object?> body);
 
+  /// The single-winner claim. **Synchronous by necessity**: exactly one device
+  /// may win, so it cannot be replayed from an outbox and never rides
+  /// `/mutations`. A loser is told with 409.
+  Future<TransportReply> claimDownloadRequest(
+    String requestId,
+    Map<String, Object?> body,
+  );
+
   Future<TransportReply> resolveDownloadRequest(
     String requestId,
     Map<String, Object?> body,
@@ -82,6 +91,12 @@ class HttpSyncTransport implements SyncTransport {
   @override
   Future<TransportReply> arbitrate(Map<String, Object?> body) =>
       _send('POST', '/identity/arbitrate', body: body);
+
+  @override
+  Future<TransportReply> claimDownloadRequest(
+    String requestId,
+    Map<String, Object?> body,
+  ) => _send('POST', '/download-requests/$requestId/claim', body: body);
 
   @override
   Future<TransportReply> resolveDownloadRequest(
