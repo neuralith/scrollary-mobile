@@ -5807,6 +5807,889 @@ class OfflineCopiesCompanion extends UpdateCompanion<OfflineCopyRow> {
   }
 }
 
+class $SaveQueueTable extends SaveQueue
+    with TableInfo<$SaveQueueTable, SaveTaskRow> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $SaveQueueTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _idMeta = const VerificationMeta('id');
+  @override
+  late final GeneratedColumn<String> id = GeneratedColumn<String>(
+    'id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _entryIdMeta = const VerificationMeta(
+    'entryId',
+  );
+  @override
+  late final GeneratedColumn<String> entryId = GeneratedColumn<String>(
+    'entry_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _locationIdMeta = const VerificationMeta(
+    'locationId',
+  );
+  @override
+  late final GeneratedColumn<String> locationId = GeneratedColumn<String>(
+    'location_id',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _locationUrlMeta = const VerificationMeta(
+    'locationUrl',
+  );
+  @override
+  late final GeneratedColumn<String> locationUrl = GeneratedColumn<String>(
+    'location_url',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _captureModeMeta = const VerificationMeta(
+    'captureMode',
+  );
+  @override
+  late final GeneratedColumn<String> captureMode = GeneratedColumn<String>(
+    'capture_mode',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _captureModeIsUserSetMeta =
+      const VerificationMeta('captureModeIsUserSet');
+  @override
+  late final GeneratedColumn<bool> captureModeIsUserSet = GeneratedColumn<bool>(
+    'capture_mode_is_user_set',
+    aliasedName,
+    false,
+    type: DriftSqlType.bool,
+    requiredDuringInsert: false,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'CHECK ("capture_mode_is_user_set" IN (0, 1))',
+    ),
+    defaultValue: const Constant(false),
+  );
+  static const VerificationMeta _stateMeta = const VerificationMeta('state');
+  @override
+  late final GeneratedColumn<String> state = GeneratedColumn<String>(
+    'state',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+    defaultValue: const Constant('queued'),
+  );
+  static const VerificationMeta _originMeta = const VerificationMeta('origin');
+  @override
+  late final GeneratedColumn<String> origin = GeneratedColumn<String>(
+    'origin',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+    defaultValue: const Constant('queue'),
+  );
+  static const VerificationMeta _outcomeMeta = const VerificationMeta(
+    'outcome',
+  );
+  @override
+  late final GeneratedColumn<String> outcome = GeneratedColumn<String>(
+    'outcome',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _lastErrorMeta = const VerificationMeta(
+    'lastError',
+  );
+  @override
+  late final GeneratedColumn<String> lastError = GeneratedColumn<String>(
+    'last_error',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _stopReasonMeta = const VerificationMeta(
+    'stopReason',
+  );
+  @override
+  late final GeneratedColumn<String> stopReason = GeneratedColumn<String>(
+    'stop_reason',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _orderIndexMeta = const VerificationMeta(
+    'orderIndex',
+  );
+  @override
+  late final GeneratedColumn<int> orderIndex = GeneratedColumn<int>(
+    'order_index',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+    defaultValue: const Constant(0),
+  );
+  static const VerificationMeta _queuedAtMeta = const VerificationMeta(
+    'queuedAt',
+  );
+  @override
+  late final GeneratedColumn<DateTime> queuedAt = GeneratedColumn<DateTime>(
+    'queued_at',
+    aliasedName,
+    false,
+    type: DriftSqlType.dateTime,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _startedAtMeta = const VerificationMeta(
+    'startedAt',
+  );
+  @override
+  late final GeneratedColumn<DateTime> startedAt = GeneratedColumn<DateTime>(
+    'started_at',
+    aliasedName,
+    true,
+    type: DriftSqlType.dateTime,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _finishedAtMeta = const VerificationMeta(
+    'finishedAt',
+  );
+  @override
+  late final GeneratedColumn<DateTime> finishedAt = GeneratedColumn<DateTime>(
+    'finished_at',
+    aliasedName,
+    true,
+    type: DriftSqlType.dateTime,
+    requiredDuringInsert: false,
+  );
+  @override
+  List<GeneratedColumn> get $columns => [
+    id,
+    entryId,
+    locationId,
+    locationUrl,
+    captureMode,
+    captureModeIsUserSet,
+    state,
+    origin,
+    outcome,
+    lastError,
+    stopReason,
+    orderIndex,
+    queuedAt,
+    startedAt,
+    finishedAt,
+  ];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'save_queue';
+  @override
+  VerificationContext validateIntegrity(
+    Insertable<SaveTaskRow> instance, {
+    bool isInserting = false,
+  }) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('id')) {
+      context.handle(_idMeta, id.isAcceptableOrUnknown(data['id']!, _idMeta));
+    } else if (isInserting) {
+      context.missing(_idMeta);
+    }
+    if (data.containsKey('entry_id')) {
+      context.handle(
+        _entryIdMeta,
+        entryId.isAcceptableOrUnknown(data['entry_id']!, _entryIdMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_entryIdMeta);
+    }
+    if (data.containsKey('location_id')) {
+      context.handle(
+        _locationIdMeta,
+        locationId.isAcceptableOrUnknown(data['location_id']!, _locationIdMeta),
+      );
+    }
+    if (data.containsKey('location_url')) {
+      context.handle(
+        _locationUrlMeta,
+        locationUrl.isAcceptableOrUnknown(
+          data['location_url']!,
+          _locationUrlMeta,
+        ),
+      );
+    } else if (isInserting) {
+      context.missing(_locationUrlMeta);
+    }
+    if (data.containsKey('capture_mode')) {
+      context.handle(
+        _captureModeMeta,
+        captureMode.isAcceptableOrUnknown(
+          data['capture_mode']!,
+          _captureModeMeta,
+        ),
+      );
+    }
+    if (data.containsKey('capture_mode_is_user_set')) {
+      context.handle(
+        _captureModeIsUserSetMeta,
+        captureModeIsUserSet.isAcceptableOrUnknown(
+          data['capture_mode_is_user_set']!,
+          _captureModeIsUserSetMeta,
+        ),
+      );
+    }
+    if (data.containsKey('state')) {
+      context.handle(
+        _stateMeta,
+        state.isAcceptableOrUnknown(data['state']!, _stateMeta),
+      );
+    }
+    if (data.containsKey('origin')) {
+      context.handle(
+        _originMeta,
+        origin.isAcceptableOrUnknown(data['origin']!, _originMeta),
+      );
+    }
+    if (data.containsKey('outcome')) {
+      context.handle(
+        _outcomeMeta,
+        outcome.isAcceptableOrUnknown(data['outcome']!, _outcomeMeta),
+      );
+    }
+    if (data.containsKey('last_error')) {
+      context.handle(
+        _lastErrorMeta,
+        lastError.isAcceptableOrUnknown(data['last_error']!, _lastErrorMeta),
+      );
+    }
+    if (data.containsKey('stop_reason')) {
+      context.handle(
+        _stopReasonMeta,
+        stopReason.isAcceptableOrUnknown(data['stop_reason']!, _stopReasonMeta),
+      );
+    }
+    if (data.containsKey('order_index')) {
+      context.handle(
+        _orderIndexMeta,
+        orderIndex.isAcceptableOrUnknown(data['order_index']!, _orderIndexMeta),
+      );
+    }
+    if (data.containsKey('queued_at')) {
+      context.handle(
+        _queuedAtMeta,
+        queuedAt.isAcceptableOrUnknown(data['queued_at']!, _queuedAtMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_queuedAtMeta);
+    }
+    if (data.containsKey('started_at')) {
+      context.handle(
+        _startedAtMeta,
+        startedAt.isAcceptableOrUnknown(data['started_at']!, _startedAtMeta),
+      );
+    }
+    if (data.containsKey('finished_at')) {
+      context.handle(
+        _finishedAtMeta,
+        finishedAt.isAcceptableOrUnknown(data['finished_at']!, _finishedAtMeta),
+      );
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {id};
+  @override
+  SaveTaskRow map(Map<String, dynamic> data, {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return SaveTaskRow(
+      id: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}id'],
+      )!,
+      entryId: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}entry_id'],
+      )!,
+      locationId: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}location_id'],
+      ),
+      locationUrl: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}location_url'],
+      )!,
+      captureMode: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}capture_mode'],
+      ),
+      captureModeIsUserSet: attachedDatabase.typeMapping.read(
+        DriftSqlType.bool,
+        data['${effectivePrefix}capture_mode_is_user_set'],
+      )!,
+      state: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}state'],
+      )!,
+      origin: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}origin'],
+      )!,
+      outcome: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}outcome'],
+      ),
+      lastError: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}last_error'],
+      ),
+      stopReason: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}stop_reason'],
+      ),
+      orderIndex: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}order_index'],
+      )!,
+      queuedAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.dateTime,
+        data['${effectivePrefix}queued_at'],
+      )!,
+      startedAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.dateTime,
+        data['${effectivePrefix}started_at'],
+      ),
+      finishedAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.dateTime,
+        data['${effectivePrefix}finished_at'],
+      ),
+    );
+  }
+
+  @override
+  $SaveQueueTable createAlias(String alias) {
+    return $SaveQueueTable(attachedDatabase, alias);
+  }
+}
+
+class SaveTaskRow extends DataClass implements Insertable<SaveTaskRow> {
+  final String id;
+  final String entryId;
+  final String? locationId;
+  final String locationUrl;
+
+  /// `CaptureMode.name`, or null for a task queued before a mode was chosen —
+  /// which means "decide from the settled page", not "assume one".
+  final String? captureMode;
+  final bool captureModeIsUserSet;
+
+  /// queued | running | completed | failed | cancelled
+  final String state;
+
+  /// `queue` | `direct` — queued work, or the record of a save started
+  /// straight from the Browser. A `direct` row is only ever terminal.
+  final String origin;
+  final String? outcome;
+  final String? lastError;
+
+  /// `StopReason.name`, when a named condition ended it.
+  final String? stopReason;
+  final int orderIndex;
+  final DateTime queuedAt;
+  final DateTime? startedAt;
+  final DateTime? finishedAt;
+  const SaveTaskRow({
+    required this.id,
+    required this.entryId,
+    this.locationId,
+    required this.locationUrl,
+    this.captureMode,
+    required this.captureModeIsUserSet,
+    required this.state,
+    required this.origin,
+    this.outcome,
+    this.lastError,
+    this.stopReason,
+    required this.orderIndex,
+    required this.queuedAt,
+    this.startedAt,
+    this.finishedAt,
+  });
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['id'] = Variable<String>(id);
+    map['entry_id'] = Variable<String>(entryId);
+    if (!nullToAbsent || locationId != null) {
+      map['location_id'] = Variable<String>(locationId);
+    }
+    map['location_url'] = Variable<String>(locationUrl);
+    if (!nullToAbsent || captureMode != null) {
+      map['capture_mode'] = Variable<String>(captureMode);
+    }
+    map['capture_mode_is_user_set'] = Variable<bool>(captureModeIsUserSet);
+    map['state'] = Variable<String>(state);
+    map['origin'] = Variable<String>(origin);
+    if (!nullToAbsent || outcome != null) {
+      map['outcome'] = Variable<String>(outcome);
+    }
+    if (!nullToAbsent || lastError != null) {
+      map['last_error'] = Variable<String>(lastError);
+    }
+    if (!nullToAbsent || stopReason != null) {
+      map['stop_reason'] = Variable<String>(stopReason);
+    }
+    map['order_index'] = Variable<int>(orderIndex);
+    map['queued_at'] = Variable<DateTime>(queuedAt);
+    if (!nullToAbsent || startedAt != null) {
+      map['started_at'] = Variable<DateTime>(startedAt);
+    }
+    if (!nullToAbsent || finishedAt != null) {
+      map['finished_at'] = Variable<DateTime>(finishedAt);
+    }
+    return map;
+  }
+
+  SaveQueueCompanion toCompanion(bool nullToAbsent) {
+    return SaveQueueCompanion(
+      id: Value(id),
+      entryId: Value(entryId),
+      locationId: locationId == null && nullToAbsent
+          ? const Value.absent()
+          : Value(locationId),
+      locationUrl: Value(locationUrl),
+      captureMode: captureMode == null && nullToAbsent
+          ? const Value.absent()
+          : Value(captureMode),
+      captureModeIsUserSet: Value(captureModeIsUserSet),
+      state: Value(state),
+      origin: Value(origin),
+      outcome: outcome == null && nullToAbsent
+          ? const Value.absent()
+          : Value(outcome),
+      lastError: lastError == null && nullToAbsent
+          ? const Value.absent()
+          : Value(lastError),
+      stopReason: stopReason == null && nullToAbsent
+          ? const Value.absent()
+          : Value(stopReason),
+      orderIndex: Value(orderIndex),
+      queuedAt: Value(queuedAt),
+      startedAt: startedAt == null && nullToAbsent
+          ? const Value.absent()
+          : Value(startedAt),
+      finishedAt: finishedAt == null && nullToAbsent
+          ? const Value.absent()
+          : Value(finishedAt),
+    );
+  }
+
+  factory SaveTaskRow.fromJson(
+    Map<String, dynamic> json, {
+    ValueSerializer? serializer,
+  }) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return SaveTaskRow(
+      id: serializer.fromJson<String>(json['id']),
+      entryId: serializer.fromJson<String>(json['entryId']),
+      locationId: serializer.fromJson<String?>(json['locationId']),
+      locationUrl: serializer.fromJson<String>(json['locationUrl']),
+      captureMode: serializer.fromJson<String?>(json['captureMode']),
+      captureModeIsUserSet: serializer.fromJson<bool>(
+        json['captureModeIsUserSet'],
+      ),
+      state: serializer.fromJson<String>(json['state']),
+      origin: serializer.fromJson<String>(json['origin']),
+      outcome: serializer.fromJson<String?>(json['outcome']),
+      lastError: serializer.fromJson<String?>(json['lastError']),
+      stopReason: serializer.fromJson<String?>(json['stopReason']),
+      orderIndex: serializer.fromJson<int>(json['orderIndex']),
+      queuedAt: serializer.fromJson<DateTime>(json['queuedAt']),
+      startedAt: serializer.fromJson<DateTime?>(json['startedAt']),
+      finishedAt: serializer.fromJson<DateTime?>(json['finishedAt']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'id': serializer.toJson<String>(id),
+      'entryId': serializer.toJson<String>(entryId),
+      'locationId': serializer.toJson<String?>(locationId),
+      'locationUrl': serializer.toJson<String>(locationUrl),
+      'captureMode': serializer.toJson<String?>(captureMode),
+      'captureModeIsUserSet': serializer.toJson<bool>(captureModeIsUserSet),
+      'state': serializer.toJson<String>(state),
+      'origin': serializer.toJson<String>(origin),
+      'outcome': serializer.toJson<String?>(outcome),
+      'lastError': serializer.toJson<String?>(lastError),
+      'stopReason': serializer.toJson<String?>(stopReason),
+      'orderIndex': serializer.toJson<int>(orderIndex),
+      'queuedAt': serializer.toJson<DateTime>(queuedAt),
+      'startedAt': serializer.toJson<DateTime?>(startedAt),
+      'finishedAt': serializer.toJson<DateTime?>(finishedAt),
+    };
+  }
+
+  SaveTaskRow copyWith({
+    String? id,
+    String? entryId,
+    Value<String?> locationId = const Value.absent(),
+    String? locationUrl,
+    Value<String?> captureMode = const Value.absent(),
+    bool? captureModeIsUserSet,
+    String? state,
+    String? origin,
+    Value<String?> outcome = const Value.absent(),
+    Value<String?> lastError = const Value.absent(),
+    Value<String?> stopReason = const Value.absent(),
+    int? orderIndex,
+    DateTime? queuedAt,
+    Value<DateTime?> startedAt = const Value.absent(),
+    Value<DateTime?> finishedAt = const Value.absent(),
+  }) => SaveTaskRow(
+    id: id ?? this.id,
+    entryId: entryId ?? this.entryId,
+    locationId: locationId.present ? locationId.value : this.locationId,
+    locationUrl: locationUrl ?? this.locationUrl,
+    captureMode: captureMode.present ? captureMode.value : this.captureMode,
+    captureModeIsUserSet: captureModeIsUserSet ?? this.captureModeIsUserSet,
+    state: state ?? this.state,
+    origin: origin ?? this.origin,
+    outcome: outcome.present ? outcome.value : this.outcome,
+    lastError: lastError.present ? lastError.value : this.lastError,
+    stopReason: stopReason.present ? stopReason.value : this.stopReason,
+    orderIndex: orderIndex ?? this.orderIndex,
+    queuedAt: queuedAt ?? this.queuedAt,
+    startedAt: startedAt.present ? startedAt.value : this.startedAt,
+    finishedAt: finishedAt.present ? finishedAt.value : this.finishedAt,
+  );
+  SaveTaskRow copyWithCompanion(SaveQueueCompanion data) {
+    return SaveTaskRow(
+      id: data.id.present ? data.id.value : this.id,
+      entryId: data.entryId.present ? data.entryId.value : this.entryId,
+      locationId: data.locationId.present
+          ? data.locationId.value
+          : this.locationId,
+      locationUrl: data.locationUrl.present
+          ? data.locationUrl.value
+          : this.locationUrl,
+      captureMode: data.captureMode.present
+          ? data.captureMode.value
+          : this.captureMode,
+      captureModeIsUserSet: data.captureModeIsUserSet.present
+          ? data.captureModeIsUserSet.value
+          : this.captureModeIsUserSet,
+      state: data.state.present ? data.state.value : this.state,
+      origin: data.origin.present ? data.origin.value : this.origin,
+      outcome: data.outcome.present ? data.outcome.value : this.outcome,
+      lastError: data.lastError.present ? data.lastError.value : this.lastError,
+      stopReason: data.stopReason.present
+          ? data.stopReason.value
+          : this.stopReason,
+      orderIndex: data.orderIndex.present
+          ? data.orderIndex.value
+          : this.orderIndex,
+      queuedAt: data.queuedAt.present ? data.queuedAt.value : this.queuedAt,
+      startedAt: data.startedAt.present ? data.startedAt.value : this.startedAt,
+      finishedAt: data.finishedAt.present
+          ? data.finishedAt.value
+          : this.finishedAt,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('SaveTaskRow(')
+          ..write('id: $id, ')
+          ..write('entryId: $entryId, ')
+          ..write('locationId: $locationId, ')
+          ..write('locationUrl: $locationUrl, ')
+          ..write('captureMode: $captureMode, ')
+          ..write('captureModeIsUserSet: $captureModeIsUserSet, ')
+          ..write('state: $state, ')
+          ..write('origin: $origin, ')
+          ..write('outcome: $outcome, ')
+          ..write('lastError: $lastError, ')
+          ..write('stopReason: $stopReason, ')
+          ..write('orderIndex: $orderIndex, ')
+          ..write('queuedAt: $queuedAt, ')
+          ..write('startedAt: $startedAt, ')
+          ..write('finishedAt: $finishedAt')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode => Object.hash(
+    id,
+    entryId,
+    locationId,
+    locationUrl,
+    captureMode,
+    captureModeIsUserSet,
+    state,
+    origin,
+    outcome,
+    lastError,
+    stopReason,
+    orderIndex,
+    queuedAt,
+    startedAt,
+    finishedAt,
+  );
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is SaveTaskRow &&
+          other.id == this.id &&
+          other.entryId == this.entryId &&
+          other.locationId == this.locationId &&
+          other.locationUrl == this.locationUrl &&
+          other.captureMode == this.captureMode &&
+          other.captureModeIsUserSet == this.captureModeIsUserSet &&
+          other.state == this.state &&
+          other.origin == this.origin &&
+          other.outcome == this.outcome &&
+          other.lastError == this.lastError &&
+          other.stopReason == this.stopReason &&
+          other.orderIndex == this.orderIndex &&
+          other.queuedAt == this.queuedAt &&
+          other.startedAt == this.startedAt &&
+          other.finishedAt == this.finishedAt);
+}
+
+class SaveQueueCompanion extends UpdateCompanion<SaveTaskRow> {
+  final Value<String> id;
+  final Value<String> entryId;
+  final Value<String?> locationId;
+  final Value<String> locationUrl;
+  final Value<String?> captureMode;
+  final Value<bool> captureModeIsUserSet;
+  final Value<String> state;
+  final Value<String> origin;
+  final Value<String?> outcome;
+  final Value<String?> lastError;
+  final Value<String?> stopReason;
+  final Value<int> orderIndex;
+  final Value<DateTime> queuedAt;
+  final Value<DateTime?> startedAt;
+  final Value<DateTime?> finishedAt;
+  final Value<int> rowid;
+  const SaveQueueCompanion({
+    this.id = const Value.absent(),
+    this.entryId = const Value.absent(),
+    this.locationId = const Value.absent(),
+    this.locationUrl = const Value.absent(),
+    this.captureMode = const Value.absent(),
+    this.captureModeIsUserSet = const Value.absent(),
+    this.state = const Value.absent(),
+    this.origin = const Value.absent(),
+    this.outcome = const Value.absent(),
+    this.lastError = const Value.absent(),
+    this.stopReason = const Value.absent(),
+    this.orderIndex = const Value.absent(),
+    this.queuedAt = const Value.absent(),
+    this.startedAt = const Value.absent(),
+    this.finishedAt = const Value.absent(),
+    this.rowid = const Value.absent(),
+  });
+  SaveQueueCompanion.insert({
+    required String id,
+    required String entryId,
+    this.locationId = const Value.absent(),
+    required String locationUrl,
+    this.captureMode = const Value.absent(),
+    this.captureModeIsUserSet = const Value.absent(),
+    this.state = const Value.absent(),
+    this.origin = const Value.absent(),
+    this.outcome = const Value.absent(),
+    this.lastError = const Value.absent(),
+    this.stopReason = const Value.absent(),
+    this.orderIndex = const Value.absent(),
+    required DateTime queuedAt,
+    this.startedAt = const Value.absent(),
+    this.finishedAt = const Value.absent(),
+    this.rowid = const Value.absent(),
+  }) : id = Value(id),
+       entryId = Value(entryId),
+       locationUrl = Value(locationUrl),
+       queuedAt = Value(queuedAt);
+  static Insertable<SaveTaskRow> custom({
+    Expression<String>? id,
+    Expression<String>? entryId,
+    Expression<String>? locationId,
+    Expression<String>? locationUrl,
+    Expression<String>? captureMode,
+    Expression<bool>? captureModeIsUserSet,
+    Expression<String>? state,
+    Expression<String>? origin,
+    Expression<String>? outcome,
+    Expression<String>? lastError,
+    Expression<String>? stopReason,
+    Expression<int>? orderIndex,
+    Expression<DateTime>? queuedAt,
+    Expression<DateTime>? startedAt,
+    Expression<DateTime>? finishedAt,
+    Expression<int>? rowid,
+  }) {
+    return RawValuesInsertable({
+      if (id != null) 'id': id,
+      if (entryId != null) 'entry_id': entryId,
+      if (locationId != null) 'location_id': locationId,
+      if (locationUrl != null) 'location_url': locationUrl,
+      if (captureMode != null) 'capture_mode': captureMode,
+      if (captureModeIsUserSet != null)
+        'capture_mode_is_user_set': captureModeIsUserSet,
+      if (state != null) 'state': state,
+      if (origin != null) 'origin': origin,
+      if (outcome != null) 'outcome': outcome,
+      if (lastError != null) 'last_error': lastError,
+      if (stopReason != null) 'stop_reason': stopReason,
+      if (orderIndex != null) 'order_index': orderIndex,
+      if (queuedAt != null) 'queued_at': queuedAt,
+      if (startedAt != null) 'started_at': startedAt,
+      if (finishedAt != null) 'finished_at': finishedAt,
+      if (rowid != null) 'rowid': rowid,
+    });
+  }
+
+  SaveQueueCompanion copyWith({
+    Value<String>? id,
+    Value<String>? entryId,
+    Value<String?>? locationId,
+    Value<String>? locationUrl,
+    Value<String?>? captureMode,
+    Value<bool>? captureModeIsUserSet,
+    Value<String>? state,
+    Value<String>? origin,
+    Value<String?>? outcome,
+    Value<String?>? lastError,
+    Value<String?>? stopReason,
+    Value<int>? orderIndex,
+    Value<DateTime>? queuedAt,
+    Value<DateTime?>? startedAt,
+    Value<DateTime?>? finishedAt,
+    Value<int>? rowid,
+  }) {
+    return SaveQueueCompanion(
+      id: id ?? this.id,
+      entryId: entryId ?? this.entryId,
+      locationId: locationId ?? this.locationId,
+      locationUrl: locationUrl ?? this.locationUrl,
+      captureMode: captureMode ?? this.captureMode,
+      captureModeIsUserSet: captureModeIsUserSet ?? this.captureModeIsUserSet,
+      state: state ?? this.state,
+      origin: origin ?? this.origin,
+      outcome: outcome ?? this.outcome,
+      lastError: lastError ?? this.lastError,
+      stopReason: stopReason ?? this.stopReason,
+      orderIndex: orderIndex ?? this.orderIndex,
+      queuedAt: queuedAt ?? this.queuedAt,
+      startedAt: startedAt ?? this.startedAt,
+      finishedAt: finishedAt ?? this.finishedAt,
+      rowid: rowid ?? this.rowid,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (id.present) {
+      map['id'] = Variable<String>(id.value);
+    }
+    if (entryId.present) {
+      map['entry_id'] = Variable<String>(entryId.value);
+    }
+    if (locationId.present) {
+      map['location_id'] = Variable<String>(locationId.value);
+    }
+    if (locationUrl.present) {
+      map['location_url'] = Variable<String>(locationUrl.value);
+    }
+    if (captureMode.present) {
+      map['capture_mode'] = Variable<String>(captureMode.value);
+    }
+    if (captureModeIsUserSet.present) {
+      map['capture_mode_is_user_set'] = Variable<bool>(
+        captureModeIsUserSet.value,
+      );
+    }
+    if (state.present) {
+      map['state'] = Variable<String>(state.value);
+    }
+    if (origin.present) {
+      map['origin'] = Variable<String>(origin.value);
+    }
+    if (outcome.present) {
+      map['outcome'] = Variable<String>(outcome.value);
+    }
+    if (lastError.present) {
+      map['last_error'] = Variable<String>(lastError.value);
+    }
+    if (stopReason.present) {
+      map['stop_reason'] = Variable<String>(stopReason.value);
+    }
+    if (orderIndex.present) {
+      map['order_index'] = Variable<int>(orderIndex.value);
+    }
+    if (queuedAt.present) {
+      map['queued_at'] = Variable<DateTime>(queuedAt.value);
+    }
+    if (startedAt.present) {
+      map['started_at'] = Variable<DateTime>(startedAt.value);
+    }
+    if (finishedAt.present) {
+      map['finished_at'] = Variable<DateTime>(finishedAt.value);
+    }
+    if (rowid.present) {
+      map['rowid'] = Variable<int>(rowid.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('SaveQueueCompanion(')
+          ..write('id: $id, ')
+          ..write('entryId: $entryId, ')
+          ..write('locationId: $locationId, ')
+          ..write('locationUrl: $locationUrl, ')
+          ..write('captureMode: $captureMode, ')
+          ..write('captureModeIsUserSet: $captureModeIsUserSet, ')
+          ..write('state: $state, ')
+          ..write('origin: $origin, ')
+          ..write('outcome: $outcome, ')
+          ..write('lastError: $lastError, ')
+          ..write('stopReason: $stopReason, ')
+          ..write('orderIndex: $orderIndex, ')
+          ..write('queuedAt: $queuedAt, ')
+          ..write('startedAt: $startedAt, ')
+          ..write('finishedAt: $finishedAt, ')
+          ..write('rowid: $rowid')
+          ..write(')'))
+        .toString();
+  }
+}
+
 class $HistoryTable extends History with TableInfo<$HistoryTable, HistoryRow> {
   @override
   final GeneratedDatabase attachedDatabase;
@@ -9201,6 +10084,7 @@ abstract class _$LibraryDatabase extends GeneratedDatabase {
     this,
   );
   late final $OfflineCopiesTable offlineCopies = $OfflineCopiesTable(this);
+  late final $SaveQueueTable saveQueue = $SaveQueueTable(this);
   late final $HistoryTable history = $HistoryTable(this);
   late final $OutboxTable outbox = $OutboxTable(this);
   late final $SyncStateTable syncState = $SyncStateTable(this);
@@ -9222,6 +10106,7 @@ abstract class _$LibraryDatabase extends GeneratedDatabase {
     measurements,
     downloadRequests,
     offlineCopies,
+    saveQueue,
     history,
     outbox,
     syncState,
@@ -12044,6 +12929,410 @@ typedef $$OfflineCopiesTableProcessedTableManager =
       OfflineCopyRow,
       PrefetchHooks Function()
     >;
+typedef $$SaveQueueTableCreateCompanionBuilder =
+    SaveQueueCompanion Function({
+      required String id,
+      required String entryId,
+      Value<String?> locationId,
+      required String locationUrl,
+      Value<String?> captureMode,
+      Value<bool> captureModeIsUserSet,
+      Value<String> state,
+      Value<String> origin,
+      Value<String?> outcome,
+      Value<String?> lastError,
+      Value<String?> stopReason,
+      Value<int> orderIndex,
+      required DateTime queuedAt,
+      Value<DateTime?> startedAt,
+      Value<DateTime?> finishedAt,
+      Value<int> rowid,
+    });
+typedef $$SaveQueueTableUpdateCompanionBuilder =
+    SaveQueueCompanion Function({
+      Value<String> id,
+      Value<String> entryId,
+      Value<String?> locationId,
+      Value<String> locationUrl,
+      Value<String?> captureMode,
+      Value<bool> captureModeIsUserSet,
+      Value<String> state,
+      Value<String> origin,
+      Value<String?> outcome,
+      Value<String?> lastError,
+      Value<String?> stopReason,
+      Value<int> orderIndex,
+      Value<DateTime> queuedAt,
+      Value<DateTime?> startedAt,
+      Value<DateTime?> finishedAt,
+      Value<int> rowid,
+    });
+
+class $$SaveQueueTableFilterComposer
+    extends Composer<_$LibraryDatabase, $SaveQueueTable> {
+  $$SaveQueueTableFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnFilters<String> get id => $composableBuilder(
+    column: $table.id,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get entryId => $composableBuilder(
+    column: $table.entryId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get locationId => $composableBuilder(
+    column: $table.locationId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get locationUrl => $composableBuilder(
+    column: $table.locationUrl,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get captureMode => $composableBuilder(
+    column: $table.captureMode,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<bool> get captureModeIsUserSet => $composableBuilder(
+    column: $table.captureModeIsUserSet,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get state => $composableBuilder(
+    column: $table.state,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get origin => $composableBuilder(
+    column: $table.origin,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get outcome => $composableBuilder(
+    column: $table.outcome,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get lastError => $composableBuilder(
+    column: $table.lastError,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get stopReason => $composableBuilder(
+    column: $table.stopReason,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get orderIndex => $composableBuilder(
+    column: $table.orderIndex,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<DateTime> get queuedAt => $composableBuilder(
+    column: $table.queuedAt,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<DateTime> get startedAt => $composableBuilder(
+    column: $table.startedAt,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<DateTime> get finishedAt => $composableBuilder(
+    column: $table.finishedAt,
+    builder: (column) => ColumnFilters(column),
+  );
+}
+
+class $$SaveQueueTableOrderingComposer
+    extends Composer<_$LibraryDatabase, $SaveQueueTable> {
+  $$SaveQueueTableOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnOrderings<String> get id => $composableBuilder(
+    column: $table.id,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get entryId => $composableBuilder(
+    column: $table.entryId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get locationId => $composableBuilder(
+    column: $table.locationId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get locationUrl => $composableBuilder(
+    column: $table.locationUrl,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get captureMode => $composableBuilder(
+    column: $table.captureMode,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<bool> get captureModeIsUserSet => $composableBuilder(
+    column: $table.captureModeIsUserSet,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get state => $composableBuilder(
+    column: $table.state,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get origin => $composableBuilder(
+    column: $table.origin,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get outcome => $composableBuilder(
+    column: $table.outcome,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get lastError => $composableBuilder(
+    column: $table.lastError,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get stopReason => $composableBuilder(
+    column: $table.stopReason,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get orderIndex => $composableBuilder(
+    column: $table.orderIndex,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<DateTime> get queuedAt => $composableBuilder(
+    column: $table.queuedAt,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<DateTime> get startedAt => $composableBuilder(
+    column: $table.startedAt,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<DateTime> get finishedAt => $composableBuilder(
+    column: $table.finishedAt,
+    builder: (column) => ColumnOrderings(column),
+  );
+}
+
+class $$SaveQueueTableAnnotationComposer
+    extends Composer<_$LibraryDatabase, $SaveQueueTable> {
+  $$SaveQueueTableAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  GeneratedColumn<String> get id =>
+      $composableBuilder(column: $table.id, builder: (column) => column);
+
+  GeneratedColumn<String> get entryId =>
+      $composableBuilder(column: $table.entryId, builder: (column) => column);
+
+  GeneratedColumn<String> get locationId => $composableBuilder(
+    column: $table.locationId,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get locationUrl => $composableBuilder(
+    column: $table.locationUrl,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get captureMode => $composableBuilder(
+    column: $table.captureMode,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<bool> get captureModeIsUserSet => $composableBuilder(
+    column: $table.captureModeIsUserSet,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get state =>
+      $composableBuilder(column: $table.state, builder: (column) => column);
+
+  GeneratedColumn<String> get origin =>
+      $composableBuilder(column: $table.origin, builder: (column) => column);
+
+  GeneratedColumn<String> get outcome =>
+      $composableBuilder(column: $table.outcome, builder: (column) => column);
+
+  GeneratedColumn<String> get lastError =>
+      $composableBuilder(column: $table.lastError, builder: (column) => column);
+
+  GeneratedColumn<String> get stopReason => $composableBuilder(
+    column: $table.stopReason,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<int> get orderIndex => $composableBuilder(
+    column: $table.orderIndex,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<DateTime> get queuedAt =>
+      $composableBuilder(column: $table.queuedAt, builder: (column) => column);
+
+  GeneratedColumn<DateTime> get startedAt =>
+      $composableBuilder(column: $table.startedAt, builder: (column) => column);
+
+  GeneratedColumn<DateTime> get finishedAt => $composableBuilder(
+    column: $table.finishedAt,
+    builder: (column) => column,
+  );
+}
+
+class $$SaveQueueTableTableManager
+    extends
+        RootTableManager<
+          _$LibraryDatabase,
+          $SaveQueueTable,
+          SaveTaskRow,
+          $$SaveQueueTableFilterComposer,
+          $$SaveQueueTableOrderingComposer,
+          $$SaveQueueTableAnnotationComposer,
+          $$SaveQueueTableCreateCompanionBuilder,
+          $$SaveQueueTableUpdateCompanionBuilder,
+          (
+            SaveTaskRow,
+            BaseReferences<_$LibraryDatabase, $SaveQueueTable, SaveTaskRow>,
+          ),
+          SaveTaskRow,
+          PrefetchHooks Function()
+        > {
+  $$SaveQueueTableTableManager(_$LibraryDatabase db, $SaveQueueTable table)
+    : super(
+        TableManagerState(
+          db: db,
+          table: table,
+          createFilteringComposer: () =>
+              $$SaveQueueTableFilterComposer($db: db, $table: table),
+          createOrderingComposer: () =>
+              $$SaveQueueTableOrderingComposer($db: db, $table: table),
+          createComputedFieldComposer: () =>
+              $$SaveQueueTableAnnotationComposer($db: db, $table: table),
+          updateCompanionCallback:
+              ({
+                Value<String> id = const Value.absent(),
+                Value<String> entryId = const Value.absent(),
+                Value<String?> locationId = const Value.absent(),
+                Value<String> locationUrl = const Value.absent(),
+                Value<String?> captureMode = const Value.absent(),
+                Value<bool> captureModeIsUserSet = const Value.absent(),
+                Value<String> state = const Value.absent(),
+                Value<String> origin = const Value.absent(),
+                Value<String?> outcome = const Value.absent(),
+                Value<String?> lastError = const Value.absent(),
+                Value<String?> stopReason = const Value.absent(),
+                Value<int> orderIndex = const Value.absent(),
+                Value<DateTime> queuedAt = const Value.absent(),
+                Value<DateTime?> startedAt = const Value.absent(),
+                Value<DateTime?> finishedAt = const Value.absent(),
+                Value<int> rowid = const Value.absent(),
+              }) => SaveQueueCompanion(
+                id: id,
+                entryId: entryId,
+                locationId: locationId,
+                locationUrl: locationUrl,
+                captureMode: captureMode,
+                captureModeIsUserSet: captureModeIsUserSet,
+                state: state,
+                origin: origin,
+                outcome: outcome,
+                lastError: lastError,
+                stopReason: stopReason,
+                orderIndex: orderIndex,
+                queuedAt: queuedAt,
+                startedAt: startedAt,
+                finishedAt: finishedAt,
+                rowid: rowid,
+              ),
+          createCompanionCallback:
+              ({
+                required String id,
+                required String entryId,
+                Value<String?> locationId = const Value.absent(),
+                required String locationUrl,
+                Value<String?> captureMode = const Value.absent(),
+                Value<bool> captureModeIsUserSet = const Value.absent(),
+                Value<String> state = const Value.absent(),
+                Value<String> origin = const Value.absent(),
+                Value<String?> outcome = const Value.absent(),
+                Value<String?> lastError = const Value.absent(),
+                Value<String?> stopReason = const Value.absent(),
+                Value<int> orderIndex = const Value.absent(),
+                required DateTime queuedAt,
+                Value<DateTime?> startedAt = const Value.absent(),
+                Value<DateTime?> finishedAt = const Value.absent(),
+                Value<int> rowid = const Value.absent(),
+              }) => SaveQueueCompanion.insert(
+                id: id,
+                entryId: entryId,
+                locationId: locationId,
+                locationUrl: locationUrl,
+                captureMode: captureMode,
+                captureModeIsUserSet: captureModeIsUserSet,
+                state: state,
+                origin: origin,
+                outcome: outcome,
+                lastError: lastError,
+                stopReason: stopReason,
+                orderIndex: orderIndex,
+                queuedAt: queuedAt,
+                startedAt: startedAt,
+                finishedAt: finishedAt,
+                rowid: rowid,
+              ),
+          withReferenceMapper: (p0) => p0
+              .map((e) => (e.readTable(table), BaseReferences(db, table, e)))
+              .toList(),
+          prefetchHooksCallback: null,
+        ),
+      );
+}
+
+typedef $$SaveQueueTableProcessedTableManager =
+    ProcessedTableManager<
+      _$LibraryDatabase,
+      $SaveQueueTable,
+      SaveTaskRow,
+      $$SaveQueueTableFilterComposer,
+      $$SaveQueueTableOrderingComposer,
+      $$SaveQueueTableAnnotationComposer,
+      $$SaveQueueTableCreateCompanionBuilder,
+      $$SaveQueueTableUpdateCompanionBuilder,
+      (
+        SaveTaskRow,
+        BaseReferences<_$LibraryDatabase, $SaveQueueTable, SaveTaskRow>,
+      ),
+      SaveTaskRow,
+      PrefetchHooks Function()
+    >;
 typedef $$HistoryTableCreateCompanionBuilder =
     HistoryCompanion Function({
       required String id,
@@ -13799,6 +15088,8 @@ class $LibraryDatabaseManager {
       $$DownloadRequestsTableTableManager(_db, _db.downloadRequests);
   $$OfflineCopiesTableTableManager get offlineCopies =>
       $$OfflineCopiesTableTableManager(_db, _db.offlineCopies);
+  $$SaveQueueTableTableManager get saveQueue =>
+      $$SaveQueueTableTableManager(_db, _db.saveQueue);
   $$HistoryTableTableManager get history =>
       $$HistoryTableTableManager(_db, _db.history);
   $$OutboxTableTableManager get outbox =>

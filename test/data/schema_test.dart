@@ -101,6 +101,7 @@ void main() {
           'measurements',
           'download_requests',
           'offline_copies',
+          'save_queue',
           'history',
           'outbox',
           'sync_state',
@@ -139,6 +140,8 @@ void main() {
       expect(names, contains('idx_folders_one_root'));
       expect(names, contains('idx_offline_copies_active'));
       expect(names, contains('idx_download_requests_open'));
+      expect(names, contains('idx_save_queue_open'));
+      expect(names, contains('idx_save_queue_pending'));
     });
   });
 
@@ -415,6 +418,118 @@ void main() {
             ),
         throwsA(anything),
       );
+    });
+  });
+
+  group('the save queue at the SQL layer (E3)', () {
+    Future<void> seed() async {
+      await insertRoot();
+      await insertCollection('c1', 'root');
+      await insertEntry('e1', collectionId: 'c1', ordinal: 1);
+      await insertEntry('e2', collectionId: 'c1', ordinal: 2);
+      await db
+          .into(db.sources)
+          .insert(
+            SourcesCompanion.insert(
+              id: 's1',
+              collectionId: 'c1',
+              host: 'reading.example.com',
+              pathKey: 'serial-alpha',
+              firstSeenAt: DateTime.utc(2026),
+              lastSeenAt: DateTime.utc(2026),
+              updatedAt: DateTime.utc(2026),
+            ),
+          );
+      await db
+          .into(db.locations)
+          .insert(
+            LocationsCompanion.insert(
+              id: 'l1',
+              entryId: 'e1',
+              sourceId: const Value('s1'),
+              url: 'https://reading.example.com/a',
+              urlKey: 'https://reading.example.com/a',
+              discoveredAt: DateTime.utc(2026),
+              updatedAt: DateTime.utc(2026),
+            ),
+          );
+    }
+
+    Future<void> insertTask(
+      String id, {
+      String entryId = 'e1',
+      String? locationId = 'l1',
+      String state = 'queued',
+      String origin = 'queue',
+    }) => db
+        .into(db.saveQueue)
+        .insert(
+          SaveQueueCompanion.insert(
+            id: id,
+            entryId: entryId,
+            locationId: Value(locationId),
+            locationUrl: 'https://reading.example.com/a',
+            state: Value(state),
+            origin: Value(origin),
+            queuedAt: DateTime.utc(2026),
+          ),
+        );
+
+    test('the queue is device state: no server id, no revision', () async {
+      final rows = await db.customSelect('PRAGMA table_info(save_queue)').get();
+      final columns = rows.map((r) => r.read<String>('name')).toSet();
+      expect(columns.contains('server_id'), isFalse);
+      expect(columns.contains('revision'), isFalse);
+      expect(columns, containsAll(['entry_id', 'location_id', 'order_index']));
+    });
+
+    test('the five states are the only ones a row may hold', () async {
+      await seed();
+      for (final state in [
+        'queued',
+        'running',
+        'completed',
+        'failed',
+        'cancelled',
+      ]) {
+        await (db.delete(db.saveQueue)).go();
+        await insertTask('t-$state', state: state);
+      }
+      await (db.delete(db.saveQueue)).go();
+      expect(() => insertTask('t6', state: 'dismissed'), throwsA(anything));
+    });
+
+    test('a direct row can never be waiting or running', () async {
+      await seed();
+      await insertTask('t1', state: 'completed', origin: 'direct');
+      expect(
+        () => insertTask('t2', state: 'queued', origin: 'direct'),
+        throwsA(anything),
+      );
+      expect(() => insertTask('t3', origin: 'sideways'), throwsA(anything));
+    });
+
+    test('a second open task for one Entry is refused', () async {
+      await seed();
+      await insertTask('t1');
+      expect(() => insertTask('t2'), throwsA(anything));
+      // A terminal row for the same Entry is history and may coexist.
+      await insertTask('t3', state: 'failed');
+      // Another Entry queues freely.
+      await insertTask('t4', entryId: 'e2', locationId: null);
+    });
+
+    test('deleting an Entry takes its queue rows; a Location only clears the '
+        'pointer', () async {
+      await seed();
+      await insertTask('t1');
+      await (db.delete(db.locations)..where((l) => l.id.equals('l1'))).go();
+      final afterLocation = await db.select(db.saveQueue).getSingle();
+      expect(afterLocation.locationId, isNull);
+      expect(afterLocation.locationUrl, 'https://reading.example.com/a');
+
+      await (db.delete(db.entries)..where((t) => t.id.equals('e1'))).go();
+      expect(await db.select(db.saveQueue).get(), isEmpty);
     });
   });
 }
