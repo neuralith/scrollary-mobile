@@ -9,7 +9,6 @@ import 'package:web_reader/save/save_engine.dart';
 import 'package:web_reader/save/save_state.dart';
 import 'package:web_reader/storage/manifest.dart';
 import 'package:web_reader/core/config.dart';
-import 'package:web_reader/library/update_checker.dart';
 import 'package:web_reader/storage/database.dart';
 import 'package:web_reader/storage/file_store.dart';
 
@@ -193,67 +192,9 @@ void main() {
     },
   );
 
-  test('the update checker holds on a hidden surface too', () async {
-    await db.upsertCollection(
-      Collection(
-        contentKind: 'unknownWebContent',
-        sequenceKind: 'none',
-        orderingBasis: 'discoveryOrder',
-        shapeConfidence: 'low',
-        lifecycle: 'active',
-        id: 's1',
-        title: 'Foo',
-        sourceUrl: 'https://x.example/guide/foo',
-        host: 'x.example',
-        collectionKey: '/guide/foo',
-        createdAt: DateTime(2026, 7, 1),
-      ),
-    );
-    await db.upsertEntry(
-      Entry(
-        host: '',
-        contentKind: 'unknownWebContent',
-        contentKindConfidence: 'low',
-        contentKindIsUserSet: false,
-        id: 'c1',
-        collectionId: 's1',
-        title: 'Foo Entry 1',
-        sourceUrl: 'https://x.example/guide/foo/1',
-        urlKey: 'https://x.example/guide/foo/1',
-        artifactFormat: 'imageSequence',
-        saveStatus: 'complete',
-        contentPath: 'library/s1/entries/c1',
-        savedAt: DateTime(2026, 7, 20),
-        detectedAssetCount: 3,
-        storedAssetCount: 3,
-        entryOrder: 1,
-        byteSize: 1024,
-        entryNumber: 1,
-        sourceMarker: 'Entry 1',
-        readStatus: 'unread',
-        progressFraction: 0,
-        progressPageIndex: 0,
-        progressOffsetInPage: 0,
-      ),
-    );
-
-    final browser = ScriptedBrowser(probeBuilder: (y, _) => hiddenSurface(y))
-      ..setUrl('https://x.example/guide/foo/1');
-    final checker = UpdateChecker(browser: browser, db: db);
-
-    final outcome = checker.check('s1');
-    await Future<void>.delayed(const Duration(seconds: 1));
-    expect(
-      checker.log.join('\n'),
-      contains('open the Browser'),
-      reason: 'the hold is reported, not silent',
-    );
-    checker.cancel();
-    final result = await outcome;
-    expect(
-      result.state,
-      anyOf(UpdateCheckState.cancelled, UpdateCheckState.failed),
-      reason: 'a cancelled hold never fabricates a result',
-    );
-  });
+  // 'the update checker holds on a hidden surface too' retired with
+  // lib/library/update_checker.dart (roadmap §10, after F3 + F4). The V2
+  // check awaits the painted surface before its first navigation
+  // (lib/features/check_controller.dart); the engine holds above pin the
+  // shared signal.
 }

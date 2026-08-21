@@ -16,12 +16,10 @@ import 'features/check_controller.dart';
 import 'features/resume_point.dart';
 import 'features/v2_composition.dart';
 import 'save/queue_runner.dart';
-import 'features/library_check_flow.dart';
 import 'features/library_formats.dart';
 import 'library/library_sort.dart';
 import 'library/collection_deletion.dart';
 import 'library/collection_repository.dart';
-import 'library/update_checker.dart';
 import 'reading/reading_repository.dart';
 import 'save/page_hint.dart';
 import 'storage/cleanup.dart';
@@ -35,18 +33,15 @@ class AppServices {
     required this.db,
     required this.fileStore,
     required this.browser,
-    UpdateChecker? updateChecker,
     CleanupService? cleanup,
     ForegroundMultitasking? foregroundMultitasking,
   }) : foregroundMultitasking =
            foregroundMultitasking ?? ForegroundMultitasking(),
-       updateChecker = updateChecker ?? UpdateChecker(browser: browser, db: db),
        cleanup = cleanup ?? CleanupService(db: db, fileStore: fileStore);
 
   final AppDatabase db;
   final FileStore fileStore;
   final BrowserController browser;
-  final UpdateChecker updateChecker;
   final CleanupService cleanup;
 
   /// The one place that answers whether an operation may keep running while
@@ -68,10 +63,6 @@ final fileStoreProvider = Provider<FileStore>(
 
 final browserProvider = Provider<BrowserController>(
   (ref) => ref.watch(appServicesProvider).browser,
-);
-
-final updateCheckerProvider = Provider<UpdateChecker>(
-  (ref) => ref.watch(appServicesProvider).updateChecker,
 );
 
 final foregroundMultitaskingProvider = Provider<ForegroundMultitasking>((ref) {
@@ -462,20 +453,6 @@ final readerChromeVisibleProvider = Provider<ReaderChromeVisibility>((ref) {
 
 /// The Library-wide check the user started, and what its presentation owns.
 ///
-/// In memory on purpose. Everything the run *reports* is read back from
-/// durable rows — the queue's task states, each collection's `last_check_*`
-/// columns, and `discovered_at` — so the only thing a restart loses is the
-/// framing of "these collections were one operation", and a schema column to
-/// carry a heading is not a trade worth making. The foreground half is even
-/// more clearly transient: "this run moved the user into the Browser and owes
-/// them the way back" must not survive a relaunch. Nothing here authorises
-/// work: the queue rows do that, and they are already visible in Activity.
-final libraryCheckFlowProvider = Provider<LibraryCheckFlow>((ref) {
-  final flow = LibraryCheckFlow();
-  ref.onDispose(flow.dispose);
-  return flow;
-});
-
 // --- browser (M18) ---------------------------------------------------------
 
 final historyRepositoryProvider = Provider<HistoryRepository>(
