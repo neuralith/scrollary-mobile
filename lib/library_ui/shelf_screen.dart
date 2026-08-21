@@ -23,6 +23,7 @@ import '../ui/theme.dart';
 import 'collection_actions.dart';
 import 'collection_models.dart';
 import 'collection_screen.dart';
+import 'entry_offline.dart';
 import 'folder_actions.dart';
 import 'library_widgets.dart';
 import 'providers.dart';
@@ -176,6 +177,14 @@ class _ShelfBody extends ConsumerWidget {
                       // a downloaded copy, and that lane is not built yet.
                       onTap: () => showEntryMenu(context, ref, entry),
                       onMenu: () => showEntryMenu(context, ref, entry),
+                      // A standalone Entry is downloaded the same way any
+                      // other is, so it says so in the same place.
+                      badges: [
+                        ?entryQueueChip(
+                          context,
+                          ref.watch(entrySaveTaskProvider(entry.id)),
+                        ),
+                      ],
                     ),
                     const Divider(height: 1),
                   ],

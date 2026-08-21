@@ -23,8 +23,11 @@ import '../ui/palette.dart';
 import '../ui/status_style.dart';
 import 'collection_actions.dart';
 import 'collection_models.dart';
+import 'entry_offline.dart';
 import 'library_widgets.dart';
+import 'placement_actions.dart';
 import 'providers.dart';
+import 'source_section.dart';
 
 class CollectionScreen extends ConsumerWidget {
   const CollectionScreen({super.key, required this.collectionId});
@@ -124,6 +127,9 @@ class _CollectionDetail extends ConsumerWidget {
                     ),
                   ),
                 ),
+              // Where this collection is published, every site of it,
+              // whatever state each one is in (D4).
+              CollectionSourcesSection(collectionId: view.collection.id),
               if (view.total == 0)
                 const LibraryEmptyState(
                   icon: Icons.article_outlined,
@@ -179,11 +185,24 @@ class _CollectionDetail extends ConsumerWidget {
 /// a downloaded copy, and that lane is not built yet — so the row offers what
 /// can honestly be done with an Entry today rather than a tap that goes
 /// nowhere.
+///
+/// The badges are the two things that can be *pending* about a row: a download
+/// this device has been asked for, and a position the collection is still
+/// missing. Both are the same shape in both halves of the list, because both
+/// halves are the same rows.
 Widget _entryRow(BuildContext context, WidgetRef ref, EntryRowView entry) =>
     EntryRowTile(
       view: entry,
       onTap: () => showEntryMenu(context, ref, entry),
       onMenu: () => showEntryMenu(context, ref, entry),
+      badges: [
+        ?entryQueueChip(context, ref.watch(entrySaveTaskProvider(entry.id))),
+        if (entry.needsPlacement)
+          PlacementChip(
+            entryId: entry.id,
+            onTap: () => placeEntryInSequence(context, ref, entry),
+          ),
+      ],
     );
 
 VoidCallback? _backOf(BuildContext context) =>

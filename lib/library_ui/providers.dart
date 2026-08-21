@@ -1,4 +1,4 @@
-/// Composition for the V2 library UX (roadmap D1–D3).
+/// Composition for the V2 library UX (roadmap D1–D6).
 ///
 /// Deliberately **local**. Wiring V2 into the app's routes and its one
 /// provider graph is a scheduled task of its own, so nothing here touches
@@ -24,19 +24,30 @@ import '../data/offline_copy_repository.dart';
 import '../data/reading_state_repository.dart';
 import '../data/schema.dart';
 import '../domain/reading_state.dart';
+import '../save/queue_repository.dart';
+import '../save/queue_task.dart';
+import '../storage/file_store.dart';
 import 'collection_models.dart';
 import 'folder_models.dart';
+import 'placement_models.dart';
 import 'shelf_models.dart';
+import 'source_models.dart';
 
 /// The database and the repositories over it, in one object so a test
 /// overrides one provider rather than six.
+///
+/// [fileStore] is required rather than optional. Freeing a downloaded copy is
+/// bytes first and rows second, and a services object that could be built
+/// without a store would make "the row is gone" available as a way to imply
+/// the bytes went with it.
 class LibraryUiServices {
-  LibraryUiServices(this.db)
+  LibraryUiServices(this.db, {required this.fileStore})
     : folders = FolderRepository(db),
       collections = CollectionRepository(db),
       entries = EntryRepository(db),
       reading = ReadingStateRepository(db),
-      offline = OfflineCopyRepository(db);
+      offline = OfflineCopyRepository(db),
+      queue = SaveQueueRepository(db);
 
   final LibraryDatabase db;
   final FolderRepository folders;
@@ -44,6 +55,13 @@ class LibraryUiServices {
   final EntryRepository entries;
   final ReadingStateRepository reading;
   final OfflineCopyRepository offline;
+
+  /// The save queue. This layer enqueues, cancels and reads it; it never
+  /// claims a row or drives a page.
+  final SaveQueueRepository queue;
+
+  /// Where this device's bytes live.
+  final FileStore fileStore;
 }
 
 final libraryUiServicesProvider = Provider<LibraryUiServices>(
@@ -76,6 +94,14 @@ final offlineCopyRepoProvider = Provider<OfflineCopyRepository>(
   (ref) => ref.watch(libraryUiServicesProvider).offline,
 );
 
+final saveQueueRepoProvider = Provider<SaveQueueRepository>(
+  (ref) => ref.watch(libraryUiServicesProvider).queue,
+);
+
+final fileStoreProvider = Provider<FileStore>(
+  (ref) => ref.watch(libraryUiServicesProvider).fileStore,
+);
+
 /// How this UI hands a Location to whatever will open it.
 ///
 /// Null by default, and that is not a placeholder for missing behaviour: the
@@ -85,6 +111,28 @@ final offlineCopyRepoProvider = Provider<OfflineCopyRepository>(
 typedef SourceOpener = Future<void> Function(String url);
 
 final sourceOpenerProvider = Provider<SourceOpener?>((ref) => null);
+
+/// How this UI hands an authorised queue to whatever will work through it.
+///
+/// The two halves of a Start are deliberately separate. **Authorising is this
+/// lane's** — `SaveQueueRepository.authoriseStart` is the user's explicit
+/// permission, held in memory and never persisted — and **running is not**:
+/// a save drives the Browser, and nothing in `lib/library_ui/` may. Null means
+/// no runner is attached, and the user is told that rather than being handed a
+/// Start that authorises work nothing will pick up.
+typedef SaveQueueStarter = Future<void> Function();
+
+final saveQueueStarterProvider = Provider<SaveQueueStarter?>((ref) => null);
+
+/// How a placement leaves this device (roadmap D6).
+///
+/// Unimplemented by default, in the same spirit as [libraryUiServicesProvider]:
+/// the transport is a lane of its own, and this one consumes the interface.
+final placementSubmitProvider = Provider<PlacementSubmit>(
+  (ref) => throw UnimplementedError(
+    'placement submission is not wired yet — override this provider',
+  ),
+);
 
 /// The root Folder, created on first use. "At the library root" means "in the
 /// root Folder" (V2-D21), so the shelf always has a folder to stand on.
@@ -114,6 +162,36 @@ final collectionViewProvider = StreamProvider.family<CollectionView?, String>((
   final db = ref.watch(libraryDatabaseProvider);
   return _libraryTicks(db).asyncMap((_) => _loadCollection(db, collectionId));
 });
+
+/// One Collection's Sources, in the order they were first seen.
+///
+/// Its own stream rather than a field on [collectionViewProvider]: the Sources
+/// section redraws when a site's lifecycle changes or the preference pointer
+/// moves, and neither of those touches an Entry. Every lifecycle is carried —
+/// a dead Source is a row this query returns like any other (V2-D14).
+final collectionSourcesProvider =
+    StreamProvider.family<List<SourceView>, String>((ref, collectionId) {
+      final db = ref.watch(libraryDatabaseProvider);
+      return _mergeTicks([
+        db.select(db.sources).watch(),
+        db.select(db.collections).watch(),
+      ]).asyncMap((_) => _loadSources(db, collectionId));
+    });
+
+/// This device's save queue, keyed by Entry.
+///
+/// One open row per Entry at most, because [SaveQueueRepository.enqueue] is
+/// idempotent per Entry; where an Entry has only history, the newest terminal
+/// row stands, so "it failed" survives on the row that failed rather than
+/// vanishing the moment the run ended.
+final saveTasksByEntryProvider = StreamProvider<Map<String, SaveTask>>((ref) {
+  return ref.watch(saveQueueRepoProvider).watch().map(_latestTaskByEntry);
+});
+
+/// The one save-queue row that speaks for [entryId] right now, or null.
+final entrySaveTaskProvider = Provider.family<SaveTask?, String>(
+  (ref, entryId) => ref.watch(saveTasksByEntryProvider).value?[entryId],
+);
 
 /// The whole Folder tree, flattened with a depth for indentation — what the
 /// move picker offers. The schema is hierarchical from day one; the shelf
@@ -346,11 +424,82 @@ Future<Map<String, String>> _sourceLabels(
   return labels;
 }
 
-/// The address this Entry is read at: its earliest active Location.
+/// Every Source of one Collection, with the Collection's preference resolved
+/// against it and a `resolvedInto` pointer followed one step.
+///
+/// One step, not the whole chain: the row says where *this* site went, and a
+/// section that silently reported the end of a chain would hide a move the
+/// user can see in the list beside it.
+Future<List<SourceView>> _loadSources(
+  LibraryDatabase db,
+  String collectionId,
+) async {
+  final collection = await (db.select(
+    db.collections,
+  )..where((c) => c.id.equals(collectionId))).getSingleOrNull();
+  if (collection == null) return const [];
+
+  final rows =
+      await (db.select(db.sources)
+            ..where((s) => s.collectionId.equals(collectionId))
+            ..orderBy([
+              (s) => OrderingTerm.asc(s.firstSeenAt),
+              (s) => OrderingTerm.asc(s.host),
+            ]))
+          .get();
+  final byId = {for (final row in rows) row.id: row};
+  return [
+    for (final row in rows)
+      SourceView(
+        row: row,
+        preferred: collection.preferredSourceId == row.id,
+        resolvedInto: byId[row.resolvedIntoSourceId],
+      ),
+  ];
+}
+
+/// The open task for an Entry, or its newest terminal row when it has none.
+Map<String, SaveTask> _latestTaskByEntry(List<SaveTask> tasks) {
+  final byEntry = <String, SaveTask>{};
+  for (final task in tasks) {
+    final held = byEntry[task.entryId];
+    if (held == null || (!task.isTerminal && held.isTerminal)) {
+      byEntry[task.entryId] = task;
+      continue;
+    }
+    if (held.isTerminal && task.isTerminal) {
+      final a = held.finishedAt ?? held.queuedAt;
+      final b = task.finishedAt ?? task.queuedAt;
+      if (!b.isBefore(a)) byEntry[task.entryId] = task;
+    }
+  }
+  return byEntry;
+}
+
+/// The Entry already holding [ordinal] in [collectionId], if there is one.
+///
+/// Read at the moment a position is typed and again is never assumed: this is
+/// what the user is shown *before* they commit, and I8 is enforced by the
+/// schema regardless of what this returns.
+Future<EntryRow?> entryAtOrdinal(
+  LibraryDatabase db,
+  String collectionId,
+  double ordinal,
+) {
+  return (db.select(db.entries)
+        ..where(
+          (e) =>
+              e.collectionId.equals(collectionId) & e.ordinal.equals(ordinal),
+        )
+        ..limit(1))
+      .getSingleOrNull();
+}
+
+/// The Location this Entry is read at: its earliest active one.
 ///
 /// An Entry is not a URL — it may have several Locations, or none at all, and
 /// "none" is a real answer rather than an error.
-Future<String?> primaryLocationUrl(LibraryDatabase db, String entryId) async {
+Future<LocationRow?> primaryLocation(LibraryDatabase db, String entryId) async {
   final rows =
       await (db.select(db.locations)
             ..where(
@@ -359,5 +508,9 @@ Future<String?> primaryLocationUrl(LibraryDatabase db, String entryId) async {
             ..orderBy([(l) => OrderingTerm.asc(l.discoveredAt)])
             ..limit(1))
           .get();
-  return rows.firstOrNull?.url;
+  return rows.firstOrNull;
 }
+
+/// The address of [primaryLocation].
+Future<String?> primaryLocationUrl(LibraryDatabase db, String entryId) async =>
+    (await primaryLocation(db, entryId))?.url;

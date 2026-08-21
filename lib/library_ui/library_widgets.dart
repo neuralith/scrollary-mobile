@@ -128,11 +128,21 @@ class EntryRowTile extends StatelessWidget {
     required this.view,
     required this.onTap,
     required this.onMenu,
+    this.badges = const <Widget>[],
   });
 
   final EntryRowView view;
   final VoidCallback onTap;
   final VoidCallback onMenu;
+
+  /// Anything else true of this row *right now* — a queued download, a
+  /// position it is waiting for — on a line of its own.
+  ///
+  /// A second line rather than more items on the metadata line: three signals
+  /// beside each other overflow a narrow screen, and the first thing to be
+  /// clipped would be whichever one arrived last. Empty by default, and an
+  /// empty list draws nothing at all.
+  final List<Widget> badges;
 
   @override
   Widget build(BuildContext context) {
@@ -192,6 +202,15 @@ class EntryRowTile extends StatelessWidget {
                       ],
                     ],
                   ),
+                  if (badges.isNotEmpty) ...[
+                    const SizedBox(height: 6),
+                    Wrap(
+                      spacing: 6,
+                      runSpacing: 4,
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      children: badges,
+                    ),
+                  ],
                 ],
               ),
             ),

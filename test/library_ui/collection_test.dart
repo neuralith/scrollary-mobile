@@ -170,6 +170,7 @@ void main() {
     await openEntryMenu(tester, s.held.id);
     await tapAndPump(tester, find.text('Remove offline copy'));
     await tapAndPump(tester, find.widgetWithText(TextButton, 'Remove copy'));
+    await letFilesSettle(tester);
     await pumpUntilGone(tester, find.text('On this device'));
 
     expect(await h.entries.byId(s.held.id), isNotNull);
@@ -224,7 +225,10 @@ void main() {
     expect(state.completedAt, isNull);
   });
 
-  screenTest('downloading is not faked while the capture lane is absent', (
+  /// Was "downloading is not faked while the capture lane is absent" — the
+  /// same subject, now that the queue is wired (D5). The control is real, and
+  /// what it says it does is exactly what it does: it queues, and waits.
+  screenTest('downloading is offered, and it says that it waits', (
     tester,
   ) async {
     final s = await seed();
@@ -238,8 +242,11 @@ void main() {
     final tile = tester.widget<ListTile>(
       find.byKey(const ValueKey('entryDownload')),
     );
-    expect(tile.enabled, isFalse);
-    expect(find.text('Not available yet.'), findsOneWidget);
+    expect(tile.enabled, isTrue);
+    expect(
+      find.textContaining('It waits in the queue until you start it'),
+      findsOneWidget,
+    );
   });
 
   screenTest('archiving stops following and never says it deleted anything', (
