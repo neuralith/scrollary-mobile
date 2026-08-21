@@ -21,7 +21,7 @@
 /// another, quieter one.
 library;
 
-import 'collection_identity.dart';
+import '../library/collection_identity.dart';
 
 /// The sentence a refusal carries. Says what the app could not do, not what
 /// the user was trying to do, and names no internals.

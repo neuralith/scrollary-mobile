@@ -19,9 +19,9 @@ import '../storage/database.dart';
 import '../storage/manifest.dart';
 import 'collection_identity.dart';
 import 'content_shape.dart';
-import 'entry_identity.dart';
+import '../recognition/entry_identity.dart';
 
-export 'entry_identity.dart'
+export '../recognition/entry_identity.dart'
     show
         EntryIdentityConcern,
         EntryIdentityDoubt,
