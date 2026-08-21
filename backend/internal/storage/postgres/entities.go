@@ -66,7 +66,7 @@ func (c *collections) Upsert(ctx context.Context, col *domain.Collection) error 
 	_, err := (*Store)(c).pool.Exec(ctx, `
 		INSERT INTO collections (id, library_id, folder_id, name, detected_title, ordering_basis,
 			lifecycle, preferred_source_id, sort_key, revision, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, now())
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, coalesce($11, now()))
 		ON CONFLICT (id) DO UPDATE SET
 			folder_id = EXCLUDED.folder_id,
 			name = EXCLUDED.name,
@@ -76,10 +76,11 @@ func (c *collections) Upsert(ctx context.Context, col *domain.Collection) error 
 			preferred_source_id = EXCLUDED.preferred_source_id,
 			sort_key = EXCLUDED.sort_key,
 			revision = EXCLUDED.revision,
-			updated_at = now()`,
+			updated_at = EXCLUDED.updated_at
+		WHERE collections.updated_at <= EXCLUDED.updated_at`,
 		col.ID, col.LibraryID, col.FolderID, col.Name, col.DetectedTitle,
 		string(col.OrderingBasis), string(col.Lifecycle), col.PreferredSourceID,
-		col.SortKey, int64(col.Revision))
+		col.SortKey, int64(col.Revision), nullableTime(col.UpdatedAt))
 	return translate(err)
 }
 
@@ -191,7 +192,7 @@ func (x *sources) Upsert(ctx context.Context, src *domain.Source) error {
 	_, err := s.pool.Exec(ctx, `
 		INSERT INTO sources (id, library_id, collection_id, host, path_key, language, lifecycle,
 			resolved_into_source_id, first_seen_at, last_seen_at, revision, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, coalesce($9, now()), coalesce($10, now()), $11, now())
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, coalesce($9, now()), coalesce($10, now()), $11, coalesce($12, now()))
 		ON CONFLICT (id) DO UPDATE SET
 			collection_id = EXCLUDED.collection_id,
 			host = EXCLUDED.host,
@@ -201,10 +202,12 @@ func (x *sources) Upsert(ctx context.Context, src *domain.Source) error {
 			resolved_into_source_id = EXCLUDED.resolved_into_source_id,
 			last_seen_at = EXCLUDED.last_seen_at,
 			revision = EXCLUDED.revision,
-			updated_at = now()`,
+			updated_at = EXCLUDED.updated_at
+		WHERE sources.updated_at <= EXCLUDED.updated_at`,
 		src.ID, src.LibraryID, src.CollectionID, src.Host, src.PathKey, src.Language,
 		string(src.Lifecycle), src.ResolvedIntoSourceID,
-		nullableTime(src.FirstSeenAt), nullableTime(src.LastSeenAt), int64(src.Revision))
+		nullableTime(src.FirstSeenAt), nullableTime(src.LastSeenAt), int64(src.Revision),
+		nullableTime(src.UpdatedAt))
 	return translate(err)
 }
 
@@ -279,7 +282,7 @@ func (x *entries) Upsert(ctx context.Context, e *domain.Entry) error {
 	_, err := (*Store)(x).pool.Exec(ctx, `
 		INSERT INTO entries (id, library_id, collection_id, folder_id, ordinal, placement,
 			title, sort_key, revision, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, now())
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, coalesce($10, now()))
 		ON CONFLICT (id) DO UPDATE SET
 			collection_id = EXCLUDED.collection_id,
 			folder_id = EXCLUDED.folder_id,
@@ -288,9 +291,10 @@ func (x *entries) Upsert(ctx context.Context, e *domain.Entry) error {
 			title = EXCLUDED.title,
 			sort_key = EXCLUDED.sort_key,
 			revision = EXCLUDED.revision,
-			updated_at = now()`,
+			updated_at = EXCLUDED.updated_at
+		WHERE entries.updated_at <= EXCLUDED.updated_at`,
 		e.ID, e.LibraryID, e.CollectionID, e.FolderID, e.Ordinal, string(e.Placement),
-		e.Title, e.SortKey, int64(e.Revision))
+		e.Title, e.SortKey, int64(e.Revision), nullableTime(e.UpdatedAt))
 	return translate(err)
 }
 
@@ -366,7 +370,7 @@ func (x *locations) Upsert(ctx context.Context, l *domain.Location) error {
 	_, err = s.pool.Exec(ctx, `
 		INSERT INTO locations (id, library_id, entry_id, source_id, url, url_key, source_label,
 			source_number, discovered_at, discovery_basis, lifecycle, revision, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, coalesce($9, now()), $10, $11, $12, now())
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, coalesce($9, now()), $10, $11, $12, coalesce($13, now()))
 		ON CONFLICT (id) DO UPDATE SET
 			entry_id = EXCLUDED.entry_id,
 			source_id = EXCLUDED.source_id,
@@ -377,9 +381,10 @@ func (x *locations) Upsert(ctx context.Context, l *domain.Location) error {
 			discovery_basis = EXCLUDED.discovery_basis,
 			lifecycle = EXCLUDED.lifecycle,
 			revision = EXCLUDED.revision,
-			updated_at = now()`,
+			updated_at = EXCLUDED.updated_at
+		WHERE locations.updated_at <= EXCLUDED.updated_at`,
 		l.ID, l.LibraryID, l.EntryID, l.SourceID, l.URL, l.URLKey, l.SourceLabel,
 		l.SourceNumber, nullableTime(l.DiscoveredAt), l.DiscoveryBasis,
-		string(l.Lifecycle), int64(l.Revision))
+		string(l.Lifecycle), int64(l.Revision), nullableTime(l.UpdatedAt))
 	return translate(err)
 }

@@ -31,6 +31,7 @@ type Store struct {
 	measurements map[[2]domain.ID]*domain.Measurement
 	downloads    map[domain.ID]*domain.DownloadRequest
 	tombstones   []domain.Tombstone
+	mutations    map[domain.LibraryID]map[string]*storage.MutationRecord
 
 	now func() time.Time
 }
@@ -47,6 +48,7 @@ func New() *Store {
 		reading:      map[domain.ID]*domain.ReadingState{},
 		measurements: map[[2]domain.ID]*domain.Measurement{},
 		downloads:    map[domain.ID]*domain.DownloadRequest{},
+		mutations:    map[domain.LibraryID]map[string]*storage.MutationRecord{},
 		now:          time.Now,
 	}
 }
@@ -62,6 +64,8 @@ func (s *Store) ReadingStates() storage.ReadingStates       { return (*readingSt
 func (s *Store) Measurements() storage.Measurements         { return (*measurements)(s) }
 func (s *Store) DownloadRequests() storage.DownloadRequests { return (*downloadRequests)(s) }
 func (s *Store) Tombstones() storage.Tombstones             { return (*tombstones)(s) }
+func (s *Store) Mutations() storage.Mutations               { return (*mutationsLedger)(s) }
+func (s *Store) Changes() storage.ChangeFeed                { return (*changeFeed)(s) }
 
 // --- revisions --------------------------------------------------------------
 
@@ -188,6 +192,14 @@ func (f *folders) Create(_ context.Context, fd *domain.Folder) error {
 	if _, exists := s.folders[fd.ID]; exists {
 		return domain.ErrAlreadyExists
 	}
+	// The parent must exist in the same library, as the schema's foreign key
+	// enforces on Postgres.
+	if fd.ParentID != nil {
+		p, ok := s.folders[*fd.ParentID]
+		if !ok || p.LibraryID != fd.LibraryID {
+			return domain.ErrNotFound
+		}
+	}
 	s.folders[fd.ID] = fd
 	return nil
 }
@@ -217,7 +229,7 @@ func (f *folders) Move(_ context.Context, lib domain.LibraryID, id, newParent do
 	if fd.IsRoot() {
 		return domain.ErrRootMustNotHaveParent
 	}
-	if _, ok := s.folders[newParent]; !ok {
+	if p, ok := s.folders[newParent]; !ok || p.LibraryID != lib {
 		return domain.ErrNotFound
 	}
 	// I2: walk up from the proposed parent; meeting this folder is a cycle.

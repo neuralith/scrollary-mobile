@@ -47,6 +47,10 @@ func (c *collections) Upsert(_ context.Context, col *domain.Collection) error {
 	if _, ok := s.folders[col.FolderID]; !ok {
 		return domain.ErrNotFound
 	}
+	stampClock(&col.UpdatedAt, s.now)
+	if existing, ok := s.collections[col.ID]; ok && existing.UpdatedAt.After(col.UpdatedAt) {
+		return nil // last write wins on the row clock; an older write is dropped
+	}
 	s.collections[col.ID] = col
 	return nil
 }
@@ -120,6 +124,19 @@ func (x *sources) Upsert(_ context.Context, src *domain.Source) error {
 	defer s.mu.Unlock()
 	if _, ok := s.collections[src.CollectionID]; !ok {
 		return domain.ErrNotFound
+	}
+	// (collection, host, path_key) is the source's identity, unique as the
+	// schema's source_identity constraint enforces on Postgres.
+	h, pk := strings.ToLower(src.Host), strings.ToLower(src.PathKey)
+	for _, other := range s.sources {
+		if other.ID != src.ID && other.CollectionID == src.CollectionID &&
+			strings.ToLower(other.Host) == h && strings.ToLower(other.PathKey) == pk {
+			return domain.ErrAlreadyExists
+		}
+	}
+	stampClock(&src.UpdatedAt, s.now)
+	if existing, ok := s.sources[src.ID]; ok && existing.UpdatedAt.After(src.UpdatedAt) {
+		return nil
 	}
 	s.sources[src.ID] = src
 	return nil
@@ -202,6 +219,10 @@ func (x *entries) Upsert(_ context.Context, e *domain.Entry) error {
 			}
 		}
 	}
+	stampClock(&e.UpdatedAt, s.now)
+	if existing, ok := s.entries[e.ID]; ok && existing.UpdatedAt.After(e.UpdatedAt) {
+		return nil
+	}
 	s.entries[e.ID] = e
 	return nil
 }
@@ -255,6 +276,10 @@ func (x *locations) Upsert(_ context.Context, l *domain.Location) error {
 		if other.ID != l.ID && other.LibraryID == l.LibraryID && other.URLKey == l.URLKey {
 			return domain.ErrDuplicateURLKey
 		}
+	}
+	stampClock(&l.UpdatedAt, s.now)
+	if existing, ok := s.locations[l.ID]; ok && existing.UpdatedAt.After(l.UpdatedAt) {
+		return nil
 	}
 	s.locations[l.ID] = l
 	return nil
