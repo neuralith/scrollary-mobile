@@ -15,9 +15,6 @@ final localResetProvider = Provider<LocalResetService>((ref) {
     db: services.db,
     fileStore: services.fileStore,
     browser: services.browser,
-    saveRun: services.saveRun,
-    checker: services.updateChecker,
-    taskQueue: services.taskQueue,
     clearCookies: () => CookieManager.instance().deleteAllCookies(),
   );
 });

@@ -33,6 +33,14 @@ class QueueRunner extends ChangeNotifier {
   /// True while the loop is claiming or capturing.
   bool get isRunning => _running;
 
+  /// Test hook, mirroring the V1 controller's: the shell's surface and leave
+  /// gates are exercised without driving a real capture.
+  @visibleForTesting
+  void debugSetRunning(bool value) {
+    _running = value;
+    notifyListeners();
+  }
+
   /// The row being worked on, for surfaces that want to name it.
   String? get activeTaskId => _activeTaskId;
 

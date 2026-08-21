@@ -8,9 +8,6 @@ import 'package:web_reader/browser/browser_controller.dart';
 import 'package:web_reader/browser/favicon_service.dart';
 import 'package:web_reader/browser/history_repository.dart';
 import 'package:web_reader/browser/saved_sites_repository.dart';
-import 'package:web_reader/save/save_run.dart';
-import 'package:web_reader/library/update_checker.dart';
-import 'package:web_reader/queue/task_queue.dart';
 import 'package:web_reader/features/browser_data_dialogs.dart';
 import 'package:web_reader/features/browser_history_screen.dart';
 import 'package:web_reader/features/saved_site_sheets.dart';
@@ -19,6 +16,8 @@ import 'package:web_reader/providers.dart';
 import 'package:web_reader/storage/database.dart';
 import 'package:web_reader/storage/file_store.dart';
 import 'package:web_reader/ui/theme.dart';
+
+import 'helpers/v2_harness.dart';
 
 /// The History screen, the Add-site flow, and the two clearing dialogs.
 void browserWidgetTest(
@@ -54,25 +53,16 @@ void main() {
     final store = FileStore(root);
     final browser = BrowserController();
     addTearDown(browser.dispose);
-    final run = SaveRunController(browser: browser, db: db, fileStore: store);
+    // The clearing dialogs ask the V2 runner and check whether the Browser is
+    // busy before they wipe its session, so both get inert instances.
+    final v2 = V2Harness(browser: browser, fileStore: store);
+    addTearDown(v2.close);
     return ProviderScope(
       overrides: [
         databaseProvider.overrideWithValue(db),
         fileStoreProvider.overrideWithValue(store),
         browserProvider.overrideWithValue(browser),
-        saveRunProvider.overrideWithValue(run),
-        updateCheckerProvider.overrideWithValue(
-          UpdateChecker(browser: browser, db: db),
-        ),
-        // Settings quotes the queue's history limit, so it needs a real one.
-        taskQueueProvider.overrideWithValue(
-          TaskQueueController(
-            db: db,
-            browser: browser,
-            saveRun: run,
-            checker: UpdateChecker(browser: browser, db: db),
-          ),
-        ),
+        v2ServicesProvider.overrideWithValue(v2.services),
         faviconServiceProvider.overrideWithValue(
           FaviconService(db: db, allowNetwork: false),
         ),

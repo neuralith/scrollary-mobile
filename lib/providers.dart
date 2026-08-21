@@ -11,7 +11,6 @@ import 'browser/browser_presentation.dart';
 import 'browser/favicon_service.dart';
 import 'browser/history_repository.dart';
 import 'browser/saved_sites_repository.dart';
-import 'save/save_run.dart';
 import 'save/page_hint_repository.dart';
 import 'features/check_controller.dart';
 import 'features/resume_point.dart';
@@ -23,7 +22,6 @@ import 'library/library_sort.dart';
 import 'library/collection_deletion.dart';
 import 'library/collection_repository.dart';
 import 'library/update_checker.dart';
-import 'queue/task_queue.dart';
 import 'reading/reading_repository.dart';
 import 'save/page_hint.dart';
 import 'storage/cleanup.dart';
@@ -37,39 +35,23 @@ class AppServices {
     required this.db,
     required this.fileStore,
     required this.browser,
-    required this.saveRun,
     UpdateChecker? updateChecker,
-    TaskQueueController? taskQueue,
     CleanupService? cleanup,
     ForegroundMultitasking? foregroundMultitasking,
   }) : foregroundMultitasking =
            foregroundMultitasking ?? ForegroundMultitasking(),
        updateChecker = updateChecker ?? UpdateChecker(browser: browser, db: db),
-       cleanup =
-           cleanup ??
-           CleanupService(db: db, fileStore: fileStore, saveRun: saveRun) {
-    this.taskQueue =
-        taskQueue ??
-        TaskQueueController(
-          db: db,
-          browser: browser,
-          saveRun: saveRun,
-          checker: this.updateChecker,
-          cleanup: this.cleanup,
-        );
-  }
+       cleanup = cleanup ?? CleanupService(db: db, fileStore: fileStore);
 
   final AppDatabase db;
   final FileStore fileStore;
   final BrowserController browser;
-  final SaveRunController saveRun;
   final UpdateChecker updateChecker;
   final CleanupService cleanup;
 
   /// The one place that answers whether an operation may keep running while
   /// the user is elsewhere in the app.
   final ForegroundMultitasking foregroundMultitasking;
-  late final TaskQueueController taskQueue;
 }
 
 final appServicesProvider = Provider<AppServices>(
@@ -86,10 +68,6 @@ final fileStoreProvider = Provider<FileStore>(
 
 final browserProvider = Provider<BrowserController>(
   (ref) => ref.watch(appServicesProvider).browser,
-);
-
-final saveRunProvider = Provider<SaveRunController>(
-  (ref) => ref.watch(appServicesProvider).saveRun,
 );
 
 final updateCheckerProvider = Provider<UpdateChecker>(
@@ -126,29 +104,18 @@ final cleanupProvider = Provider<CleanupService>((ref) {
   }
 });
 
-final taskQueueProvider = Provider<TaskQueueController>(
-  (ref) => ref.watch(appServicesProvider).taskQueue,
-);
-
 /// Permanent collection deletion.
 ///
 /// Degrades the same way [cleanupProvider] does: a widget test that overrides
 /// the database and the file store only still gets a working service, and
 /// without a queue there is simply no pending work for it to cancel.
-final collectionDeletionProvider = Provider<CollectionDeletionService>((ref) {
-  TaskQueueController? queue;
-  try {
-    queue = ref.watch(appServicesProvider).taskQueue;
-  } catch (_) {
-    queue = null;
-  }
-  return CollectionDeletionService(
+final collectionDeletionProvider = Provider<CollectionDeletionService>(
+  (ref) => CollectionDeletionService(
     db: ref.watch(databaseProvider),
     fileStore: ref.watch(fileStoreProvider),
     cleanup: ref.watch(cleanupProvider),
-    queue: queue,
-  );
-});
+  ),
+);
 
 /// The persisted appearance preference (default: follow the system).
 final appearanceProvider = StreamProvider<AppearanceMode>(
@@ -160,11 +127,6 @@ final appearanceProvider = StreamProvider<AppearanceMode>(
 
 Future<void> setAppearance(WidgetRef ref, AppearanceMode mode) =>
     ref.read(databaseProvider).setSetting(kAppearanceSettingKey, mode.name);
-
-/// The queue as the UI sees it (activity strip + manager, M14 UI).
-final queueTasksProvider = StreamProvider<List<QueueTask>>(
-  (ref) => ref.watch(databaseProvider).watchQueueTasks(),
-);
 
 /// Reactive library: the list updates the moment an entry commits, with no
 /// manual invalidation.
@@ -497,10 +459,6 @@ final readerChromeVisibleProvider = Provider<ReaderChromeVisibility>((ref) {
   ref.onDispose(notifier.dispose);
   return notifier;
 });
-
-final resumableRunProvider = StreamProvider<SaveRun?>(
-  (ref) => ref.watch(databaseProvider).watchResumableRun(),
-);
 
 /// The Library-wide check the user started, and what its presentation owns.
 ///

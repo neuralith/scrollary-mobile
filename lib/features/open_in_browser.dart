@@ -151,23 +151,22 @@ bool _isUsableUrl(String url) {
 /// navigating the page away costs it nothing — and a confirmation there would
 /// be the modal crying wolf.
 Future<bool> _confirmTakeOver(BuildContext context, WidgetRef ref) async {
-  final run = ref.read(saveRunProvider);
-  final checker = ref.read(updateCheckerProvider);
+  final run = ref.read(queueRunnerProvider);
+  final checker = ref.read(checkControllerProvider);
   final atRisk = run.needsRenderedBrowser || checker.isRunning;
   if (!atRisk) return true;
 
   final proceed = await showTakeOverBrowserDialog(
     context: context,
     progressLine: run.isRunning
-        ? run.progressSummary
+        ? 'Saving an entry'
         : 'Checking for new entries',
   );
   if (!proceed) return false;
 
-  // Hold the run where it is before the page moves. The engine's own
-  // page-validation handles the rest: coming back to a different entry
-  // keeps it paused and says so, rather than resuming onto the wrong page.
-  if (run.isRunning) run.pauseForBrowserHidden();
+  // Nothing to hold explicitly: the ported engine's render guards pause a
+  // capture whose page moves out from under it, and its landed-URL checks
+  // refuse the wrong page — the behaviour the V1 pause call wrapped.
   return true;
 }
 

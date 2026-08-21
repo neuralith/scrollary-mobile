@@ -6,13 +6,10 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
 import 'package:path/path.dart' as p;
-import 'package:web_reader/browser/browser_controller.dart';
-import 'package:web_reader/save/save_run.dart';
 import 'package:web_reader/features/reader_screen.dart';
 import 'package:web_reader/providers.dart';
 import 'package:web_reader/storage/database.dart';
 import 'package:web_reader/storage/file_store.dart';
-import 'package:web_reader/library/update_checker.dart';
 import 'package:web_reader/storage/manifest.dart';
 
 import '../tool/fixture/fixture_site.dart';
@@ -145,20 +142,10 @@ void main() {
         ),
       ],
     );
-    // The entry list reaches the update checker and the save run for its
-    // own actions; both get inert instances over an unattached browser, so no
-    // WebView is stood up.
-    final browser = BrowserController();
     return ProviderScope(
       overrides: [
         databaseProvider.overrideWithValue(db),
         fileStoreProvider.overrideWithValue(store),
-        updateCheckerProvider.overrideWithValue(
-          UpdateChecker(browser: browser, db: db),
-        ),
-        saveRunProvider.overrideWithValue(
-          SaveRunController(browser: browser, db: db, fileStore: store),
-        ),
       ],
       child: MaterialApp.router(routerConfig: router),
     );

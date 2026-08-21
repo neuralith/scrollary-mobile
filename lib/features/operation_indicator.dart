@@ -1,12 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../library/update_checker.dart';
 import '../providers.dart';
-import '../queue/task_queue.dart';
-import '../save/save_run.dart';
-import '../save/save_state.dart';
-import '../storage/database.dart';
+import '../save/queue_runner.dart';
+import '../save/queue_task.dart';
+import 'check_controller.dart';
 import '../ui/palette.dart';
 import '../ui/status_style.dart';
 
@@ -38,19 +36,20 @@ class BackgroundActivity {
   });
 
   factory BackgroundActivity.resolve({
-    required List<QueueTask> tasks,
+    required List<SaveTask> tasks,
     required bool runningWithoutTask,
     required bool needsUser,
     required bool paused,
   }) {
-    final summary = QueueSummary.of(tasks);
+    final running = tasks.where((t) => t.state == SaveTaskState.running).length;
+    final queued = tasks.where((t) => t.state == SaveTaskState.queued).length;
     final live = runningWithoutTask ? 1 : 0;
     return BackgroundActivity(
       // One task runs at a time — the shared WebView makes it structural — so
       // these are the same job counted two ways whenever both are set. The
       // larger of the two is the honest count, never their sum.
-      active: summary.running > live ? summary.running : live,
-      waiting: summary.queued,
+      active: running > live ? running : live,
+      waiting: queued,
       failed: failuresAlongsideOutstanding(tasks),
       needsUser: needsUser,
       paused: paused,
@@ -78,11 +77,11 @@ class BackgroundActivity {
   /// A failed row with no `finishedAt` cannot be placed in time, so it does not
   /// count: silence is the safe answer for a marker whose whole job is to be
   /// believed.
-  static int failuresAlongsideOutstanding(List<QueueTask> tasks) {
+  static int failuresAlongsideOutstanding(List<SaveTask> tasks) {
     DateTime? oldestOutstanding;
     for (final task in tasks) {
-      switch (queueTaskStateFromName(task.state)) {
-        case QueueTaskState.queued || QueueTaskState.running:
+      switch (task.state) {
+        case SaveTaskState.queued || SaveTaskState.running:
           if (oldestOutstanding == null ||
               task.queuedAt.isBefore(oldestOutstanding)) {
             oldestOutstanding = task.queuedAt;
@@ -97,7 +96,7 @@ class BackgroundActivity {
 
     var failures = 0;
     for (final task in tasks) {
-      if (queueTaskStateFromName(task.state) != QueueTaskState.failed) continue;
+      if (task.state != SaveTaskState.failed) continue;
       final finished = task.finishedAt;
       if (finished == null) continue;
       if (finished.isAfter(oldestOutstanding)) failures++;
@@ -151,6 +150,11 @@ class BackgroundActivity {
   }
 }
 
+/// The V2 save queue, for the indicator's counts.
+final indicatorTasksProvider = StreamProvider<List<SaveTask>>(
+  (ref) => ref.watch(v2ServicesProvider).ui.queue.watch(),
+);
+
 /// What a running operation looks like from anywhere that is not the Browser.
 ///
 /// Hosted above the router, so it is reachable from the Reader, the Library,
@@ -198,16 +202,16 @@ class OperationIndicator extends ConsumerStatefulWidget {
 }
 
 class _OperationIndicatorState extends ConsumerState<OperationIndicator> {
-  late final SaveRunController _run;
-  late final UpdateChecker _checker;
+  late final QueueRunner _run;
+  late final CheckController _checker;
   late final ValueNotifier<bool> _browserOnScreen;
   late final ReaderChromeVisibility _readerChromeVisible;
 
   @override
   void initState() {
     super.initState();
-    _run = ref.read(saveRunProvider);
-    _checker = ref.read(updateCheckerProvider);
+    _run = ref.read(queueRunnerProvider);
+    _checker = ref.read(checkControllerProvider);
     _browserOnScreen = ref.read(browserOnScreenProvider);
     _readerChromeVisible = ref.read(readerChromeVisibleProvider);
     for (final source in [
@@ -239,26 +243,19 @@ class _OperationIndicatorState extends ConsumerState<OperationIndicator> {
 
   /// True when the operation will not move again until a person does
   /// something. Distinct from merely waiting, which resolves itself.
-  bool get _needsUser {
-    if (_checker.pendingSelection != null) return true;
-    if (!_run.hasActiveRun) return false;
-    // Held because the Browser was left while the run needed it: the way out
-    // is the user opening it again, which is exactly what Activity offers.
-    if (_run.pauseReason == kPauseBrowserHidden) return true;
-    return switch (_run.progress.state) {
-      SaveState.awaitingSelection || SaveState.waitingForBrowser => true,
-      _ => false,
-    };
-  }
+  /// The V2 flows hold nothing on the user mid-run: a save either moves or
+  /// ends in a named outcome, and a check is cancellable but never blocked on
+  /// an answer. Kept as a hook because the wiring above it is device-tested.
+  bool get _needsUser => false;
 
   @override
   Widget build(BuildContext context) {
-    final tasks = ref.watch(queueTasksProvider).value ?? const <QueueTask>[];
+    final tasks = ref.watch(indicatorTasksProvider).value ?? const <SaveTask>[];
     final activity = BackgroundActivity.resolve(
       tasks: tasks,
-      runningWithoutTask: _run.hasActiveRun || _checker.isRunning,
+      runningWithoutTask: _run.isRunning || _checker.isRunning,
       needsUser: _needsUser,
-      paused: _run.isPaused,
+      paused: false,
     );
 
     if (!activity.isPresent ||

@@ -39,6 +39,14 @@ class CheckController extends ChangeNotifier {
 
   bool get isRunning => _running;
   bool get needsRenderedBrowser => _running;
+
+  /// Test hook, mirroring the V1 checker's.
+  @visibleForTesting
+  void debugSetRunning(bool value) {
+    _running = value;
+    notifyListeners();
+  }
+
   String? get runningCollectionId => _collectionId;
   SourceCheckOutcome? get lastOutcome => _lastOutcome;
 

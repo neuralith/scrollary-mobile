@@ -254,8 +254,8 @@ Future<void> showClearWebsiteDataDialog(
   // site it is reading, and it would find out as a stopping condition several
   // pages later. Refusing is not a limitation the user has to work around —
   // the operation is theirs, it is on screen, and stopping it takes one tap.
-  final run = ref.read(saveRunProvider);
-  final checker = ref.read(updateCheckerProvider);
+  final run = ref.read(queueRunnerProvider);
+  final checker = ref.read(checkControllerProvider);
   if (run.isRunning ||
       checker.isRunning ||
       ref.read(browserProvider).isAutomating) {

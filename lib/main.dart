@@ -8,7 +8,6 @@ import 'browser/browser_controller.dart';
 import 'capability/entitlement.dart';
 import 'capability/foreground_multitasking.dart';
 import 'browser/history_repository.dart';
-import 'save/save_run.dart';
 import 'core/device_storage.dart';
 import 'core/startup.dart';
 import 'features/splash_screen.dart';
@@ -226,14 +225,6 @@ class AppStartup {
     final fileStore = _fileStore ??= await FileStore.open();
 
     final browser = BrowserController();
-    final saveRun = SaveRunController(
-      browser: browser,
-      db: db,
-      fileStore: fileStore,
-      // The Browser renders `CollectionNamePanel`, so this is the one place a
-      // run has somebody to ask before it names a group on their behalf.
-      asksForCollectionName: true,
-    );
 
     // Browsing history (M18). The controller emits every completed load; the
     // repository decides which of them was a page the *user* visited, so the
@@ -273,7 +264,6 @@ class AppStartup {
       db: db,
       fileStore: fileStore,
       browser: browser,
-      saveRun: saveRun,
       foregroundMultitasking: multitasking,
     );
 
@@ -390,7 +380,7 @@ class AppStartup {
     if (pruned > 0) debugPrint('[history] pruned $pruned old visit(s)');
   }
 
-  /// Turn any queue rows a kill left behind into a resume OFFER — nothing
-  /// autonomous starts at launch (Q24).
-  Future<void> _pendingTasks() => _services!.taskQueue.restore();
+  /// Demote any V2 save rows a kill left `running` back to `queued` — a
+  /// resume OFFER, exactly as before: nothing autonomous starts at launch.
+  Future<void> _pendingTasks() => _v2!.ui.queue.demoteInterruptedRuns();
 }

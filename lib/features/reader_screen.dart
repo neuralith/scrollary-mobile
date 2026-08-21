@@ -14,8 +14,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
-import '../save/save_preflight.dart';
-import '../core/config.dart';
 import '../providers.dart';
 import '../reading/reading_position.dart';
 import '../reading/reading_repository.dart';
@@ -28,7 +26,6 @@ import '../storage/manifest.dart';
 import '../reading/decode_budget.dart';
 import '../ui/palette.dart';
 import 'document_reader.dart';
-import 'save_queue_ui.dart';
 import 'cleanup_dialogs.dart';
 import 'library_formats.dart';
 
@@ -1254,35 +1251,19 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
   /// Bring an entry back that has no local files — the same queued save
   /// as anywhere else, so it shows up in Activity like any other run.
   Future<void> _saveAgain(Entry entry) async {
-    final result = await ref
-        .read(taskQueueProvider)
-        .enqueueSave(
-          startUrl: entry.sourceUrl,
-          entryLimit: 1,
-          collectionId: entry.collectionId,
-          policy: DuplicatePolicy.replaceAll,
-          range: SaveScope.currentPageOnly,
-        );
-    if (!mounted) return;
-    showQueuedConfirmation(context, result);
+    // Downloading lives in the library now: this V1 row has no V2 queue, and
+    // pretending otherwise would fake a save. Say where the action went.
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Downloading now starts from the library.')),
+    );
   }
 
   /// Re-save this entry to fill in the panels a partial save missed.
   /// The queue owns the work; the Browser is where it becomes visible.
   Future<void> _retryMissing(_ReaderData data) async {
-    final entry = data.entry;
-    if (entry == null) return;
-    final result = await ref
-        .read(taskQueueProvider)
-        .enqueueSave(
-          startUrl: entry.sourceUrl,
-          entryLimit: 1,
-          collectionId: entry.collectionId,
-          policy: DuplicatePolicy.retryPartial,
-          range: SaveScope.currentPageOnly,
-        );
-    if (!mounted) return;
-    showQueuedConfirmation(context, result, what: 'missing pages');
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Downloading now starts from the library.')),
+    );
   }
 
   @override

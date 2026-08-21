@@ -7,8 +7,6 @@ import 'package:go_router/go_router.dart';
 import 'browser/browser_controller.dart';
 import 'browser/browser_surface_policy.dart';
 import 'capability/foreground_multitasking.dart';
-import 'save/save_run.dart';
-import 'features/activity_screen.dart';
 import 'features/operation_indicator.dart';
 import 'ui/app_page.dart';
 
@@ -28,10 +26,8 @@ import 'capability/foreground_gate.dart';
 import 'features/foreground_gate_sheet.dart';
 import 'features/settings_screen.dart';
 import 'features/storage_screen.dart';
-import 'library/update_checker.dart';
 import 'core/device_capacity_provider.dart';
 import 'providers.dart';
-import 'queue/task_queue.dart';
 import 'storage/cleanup.dart';
 import 'ui/palette.dart';
 import 'ui/theme.dart';
@@ -102,10 +98,6 @@ class _WebReaderAppState extends ConsumerState<WebReaderApp>
             _page(state, const BrowserHistoryScreen()),
       ),
       GoRoute(
-        path: '/activity',
-        pageBuilder: (context, state) => _page(state, const ActivityScreen()),
-      ),
-      GoRoute(
         path: '/settings',
         pageBuilder: (context, state) => _page(state, const SettingsScreen()),
       ),
@@ -128,8 +120,6 @@ class _WebReaderAppState extends ConsumerState<WebReaderApp>
   late final ValueNotifier<bool> _browserOnScreen;
   late final ValueNotifier<int> _tab;
   late final BrowserController _browser;
-  late final SaveRunController _run;
-  late final UpdateChecker _checker;
   late final QueueRunner _queueRunner;
   late final CheckController _sourceCheck;
   late final ForegroundMultitasking _capability;
@@ -142,8 +132,6 @@ class _WebReaderAppState extends ConsumerState<WebReaderApp>
     _browserOnScreen = ref.read(browserOnScreenProvider);
     _tab = ref.read(shellTabProvider);
     _browser = ref.read(browserProvider);
-    _run = ref.read(saveRunProvider);
-    _checker = ref.read(updateCheckerProvider);
     _queueRunner = ref.read(queueRunnerProvider);
     _sourceCheck = ref.read(checkControllerProvider);
     final v2 = ref.read(v2ServicesProvider);
@@ -157,14 +145,7 @@ class _WebReaderAppState extends ConsumerState<WebReaderApp>
     _capability = ref.read(foregroundMultitaskingProvider);
     _pendingSurfaceClaim = ref.read(pendingSurfaceClaimProvider);
     _pendingSurfaceClaim.addListener(_recomputeSurface);
-    for (final source in [
-      _run,
-      _checker,
-      _queueRunner,
-      _sourceCheck,
-      _capability,
-      _browser,
-    ]) {
+    for (final source in [_queueRunner, _sourceCheck, _capability, _browser]) {
       source.addListener(_recomputeSurface);
     }
     _tab.addListener(_recomputeSurface);
@@ -187,14 +168,7 @@ class _WebReaderAppState extends ConsumerState<WebReaderApp>
 
   @override
   void dispose() {
-    for (final source in [
-      _run,
-      _checker,
-      _queueRunner,
-      _sourceCheck,
-      _capability,
-      _browser,
-    ]) {
+    for (final source in [_queueRunner, _sourceCheck, _capability, _browser]) {
       source.removeListener(_recomputeSurface);
     }
     _pendingSurfaceClaim.removeListener(_recomputeSurface);
@@ -221,8 +195,6 @@ class _WebReaderAppState extends ConsumerState<WebReaderApp>
   /// itself visible (docs/FOREGROUND_MULTITASKING.md §3.1).
   void _recomputeSurface() {
     final owns =
-        _run.isRunning ||
-        _checker.isRunning ||
         _queueRunner.isRunning ||
         _sourceCheck.isRunning ||
         _browser.isAutomating ||
@@ -257,11 +229,11 @@ class _WebReaderAppState extends ConsumerState<WebReaderApp>
   /// no-op when Activity is already on top is what stops a repeated tap from
   /// stacking the same screen on itself.
   void _openActivity() {
-    final matches = _router.routerDelegate.currentConfiguration.matches;
-    if (matches.isNotEmpty && matches.last.matchedLocation == '/activity') {
-      return;
+    // Queue rows live in the library now: pop to the shell and select it.
+    while (_router.canPop()) {
+      _router.pop();
     }
-    _router.push('/activity');
+    ref.read(shellTabRequestProvider).value = 0;
   }
 
   /// Where a "Needs you" goes: the Browser, on the page the held operation is
@@ -311,8 +283,6 @@ class _ShellState extends ConsumerState<_Shell> {
 
   // Held as fields: listeners must be removed in dispose, where Riverpod
   // forbids `ref`.
-  late final SaveRunController _run;
-  late final UpdateChecker _checker;
   late final QueueRunner _queueRunner;
   late final CheckController _sourceCheck;
   bool _wasBusy = false;
@@ -324,7 +294,6 @@ class _ShellState extends ConsumerState<_Shell> {
   /// Library-check foreground flow records it at the start of a run.
   late final ValueNotifier<int> _tab;
   late final CleanupService _cleanup;
-  late final TaskQueueController _queue;
 
   /// Set by [_WebReaderAppState]; read here to decide what the shell paints.
   late final ValueNotifier<bool> _keepPainted;
@@ -346,8 +315,6 @@ class _ShellState extends ConsumerState<_Shell> {
   @override
   void initState() {
     super.initState();
-    _run = ref.read(saveRunProvider);
-    _checker = ref.read(updateCheckerProvider);
     _queueRunner = ref.read(queueRunnerProvider);
     _sourceCheck = ref.read(checkControllerProvider);
     _queueRunner.addListener(_onAutomationChanged);
@@ -362,17 +329,10 @@ class _ShellState extends ConsumerState<_Shell> {
     _tab.value = _index;
     _keepPainted = ref.read(keepBrowserPaintedProvider);
     _keepPainted.addListener(_onKeepPaintedChanged);
-    _run.addListener(_onAutomationChanged);
-    _checker.addListener(_onAutomationChanged);
     _tabRequest.addListener(_onTabRequested);
     _cleanup = ref.read(cleanupProvider);
     _cleanup.removals.addListener(_onStorageChanged);
     _capability = ref.read(foregroundMultitaskingProvider);
-    // The queue asks the shell to bring the Browser forward before it drives
-    // the WebView. The shell is the only thing that can switch tabs, and the
-    // ordering — navigate, THEN automate — is the whole contract (D47).
-    _queue = ref.read(taskQueueProvider);
-    _queue.ensureBrowserVisible = _ensureBrowserVisible;
   }
 
   /// Show the Browser — on [url] when the caller named one — and wait for its
@@ -455,13 +415,10 @@ class _ShellState extends ConsumerState<_Shell> {
   @override
   void dispose() {
     _keepPainted.removeListener(_onKeepPaintedChanged);
-    _run.removeListener(_onAutomationChanged);
-    _checker.removeListener(_onAutomationChanged);
     _queueRunner.removeListener(_onAutomationChanged);
     _sourceCheck.removeListener(_onAutomationChanged);
     _tabRequest.removeListener(_onTabRequested);
     _cleanup.removals.removeListener(_onStorageChanged);
-    _queue.ensureBrowserVisible = null;
     _surfaceClaimTimer?.cancel();
     super.dispose();
   }
@@ -474,10 +431,7 @@ class _ShellState extends ConsumerState<_Shell> {
   /// everyone — and so is an already-paused run. The modal must not cry wolf.
   bool get _phaseNeedsBrowser =>
       _index == 1 &&
-      (_run.needsRenderedBrowser ||
-          _checker.isRunning ||
-          _queueRunner.needsRenderedBrowser ||
-          _sourceCheck.isRunning);
+      (_queueRunner.needsRenderedBrowser || _sourceCheck.isRunning);
 
   /// Who decides, and it is never this widget: what the user has, what they
   /// asked for and what the running task started with all resolve in
@@ -497,14 +451,14 @@ class _ShellState extends ConsumerState<_Shell> {
       context: context,
       ref: ref,
       gate: gate,
-      progressLine: _run.isRunning
-          ? _run.progressSummary
+      progressLine: _queueRunner.isRunning
+          ? 'Saving an entry'
           : 'Checking for new entries',
     );
     if (choice != LeaveChoice.pauseAndLeave) return false;
-    // Pause the WebView-dependent phase before anything moves. The task
-    // stays active and queued work is untouched: this is a hold, not a stop.
-    if (_run.isRunning) _run.pauseForBrowserHidden();
+    // Nothing to pause explicitly: the ported engine's own render guards hold
+    // a capture the moment its surface stops painting, and resume when it
+    // returns — the same hardware-validated behaviour the V1 pause wrapped.
     return true;
   }
 
@@ -533,11 +487,7 @@ class _ShellState extends ConsumerState<_Shell> {
   /// Transition-edge only: once the user has seen the switch they are free to
   /// go back to the Library without the shell fighting them.
   void _onAutomationChanged() {
-    final busy =
-        _run.isRunning ||
-        _checker.isRunning ||
-        _queueRunner.isRunning ||
-        _sourceCheck.isRunning;
+    final busy = _queueRunner.isRunning || _sourceCheck.isRunning;
     // A real owner has appeared: the start claim has done its job.
     if (busy) _releaseSurfaceClaim();
     // With the capability on, an operation starting is not a reason to move
@@ -561,9 +511,7 @@ class _ShellState extends ConsumerState<_Shell> {
   /// the leave-pause; if the page changed, the engine keeps holding and the
   /// Browser shows why.
   void _onEnteredBrowser() {
-    if (_run.pauseReason == kPauseBrowserHidden) {
-      _run.resumeAfterBrowserVisible();
-    }
+    // The engine resumes on its own once the surface paints again.
   }
 
   Future<void> _select(int i) async {

@@ -11,6 +11,7 @@ import '../providers.dart';
 import '../ui/palette.dart';
 import '../ui/status_style.dart';
 import '../ui/theme.dart';
+import '../storage/cleanup.dart';
 import 'cleanup_dialogs.dart';
 import 'library_formats.dart';
 import '../library/entry_labels.dart';
@@ -336,13 +337,15 @@ class _StorageScreenState extends ConsumerState<StorageScreen> {
       ),
     );
     if (!ok || !mounted) return;
-    await ref.read(taskQueueProvider).enqueueCleanup();
+    final cleanup = ref.read(cleanupProvider);
+    final ids = await cleanup.finishedOfflineEntryIds();
+    final result = await cleanup.removeOfflineNow(ids);
     if (!mounted) return;
     showCleanupToast(
       context,
       text:
-          'Removing ${s.finishedOfflineEntries} entries — progress in '
-          'Activity',
+          'Removed ${result.removed} '
+          'entr${result.removed == 1 ? 'y' : 'ies'}',
       icon: Icons.delete_sweep,
     );
   }

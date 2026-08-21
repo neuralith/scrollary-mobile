@@ -24,7 +24,6 @@ class SettingsScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final rules = ref.watch(pageHintsStreamProvider).value;
-    final tasks = ref.watch(queueTasksProvider).value;
     final entries = ref.watch(entriesStreamProvider).value;
     final storedBytes =
         entries?.fold<int>(0, (sum, c) => sum + c.byteSize) ?? 0;
@@ -141,15 +140,11 @@ class SettingsScreen extends ConsumerWidget {
           ),
           ListTile(
             leading: const Icon(Icons.list_alt),
-            title: const Text('Activity history'),
-            subtitle: Text(
-              tasks == null
-                  ? 'Loading…'
-                  : '${tasks.length} task${tasks.length == 1 ? '' : 's'} · '
-                        'bounded to ${ref.read(taskQueueProvider).historyLimit}',
+            title: const Text('Downloads'),
+            subtitle: const Text(
+              'Queued and finished downloads live with their entries, in the '
+              'library.',
             ),
-            trailing: const Icon(Icons.chevron_right),
-            onTap: () => LeaveBrowserGuard.push(context, '/activity'),
           ),
           if (developerToolsAvailable) ...[
             const SectionLabel('DEVELOPER'),

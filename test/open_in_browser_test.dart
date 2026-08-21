@@ -7,18 +7,16 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
 import 'package:web_reader/browser/browser_navigator.dart';
 import 'package:web_reader/browser/browser_presentation.dart';
-import 'package:web_reader/save/save_run.dart';
-import 'package:web_reader/core/config.dart';
 import 'package:web_reader/core/connectivity.dart';
 import 'package:web_reader/features/entry_source_state.dart';
 import 'package:web_reader/features/open_in_browser.dart';
-import 'package:web_reader/library/update_checker.dart';
 import 'package:web_reader/providers.dart';
 import 'package:web_reader/storage/database.dart';
 import 'package:web_reader/storage/file_store.dart';
 import 'package:web_reader/ui/theme.dart';
 
 import 'helpers/fake_browser.dart';
+import 'helpers/v2_harness.dart';
 
 /// "Open in Browser", end to end.
 ///
@@ -40,8 +38,7 @@ void main() {
   late AppDatabase db;
   late Directory root;
   late FakeBrowser browser;
-  late SaveRunController run;
-  late UpdateChecker checker;
+  late V2Harness v2;
   late BrowserNavigator navigator;
   late ValueNotifier<int?> tabRequest;
 
@@ -49,13 +46,7 @@ void main() {
     db = AppDatabase.forTesting(NativeDatabase.memory());
     root = Directory.systemTemp.createTempSync('webread_open_in_browser');
     browser = FakeBrowser();
-    run = SaveRunController(
-      browser: browser,
-      db: db,
-      fileStore: FileStore(root),
-      config: const SaveConfig(),
-    );
-    checker = UpdateChecker(browser: browser, db: db);
+    v2 = V2Harness(browser: browser, fileStore: FileStore(root));
     navigator = BrowserNavigator();
     tabRequest = ValueNotifier<int?>(null);
   });
@@ -63,6 +54,7 @@ void main() {
   tearDown(() async {
     navigator.dispose();
     tabRequest.dispose();
+    await v2.close();
     await db.close();
     if (root.existsSync()) root.deleteSync(recursive: true);
   });
@@ -113,8 +105,7 @@ void main() {
         databaseProvider.overrideWithValue(db),
         fileStoreProvider.overrideWithValue(FileStore(root)),
         browserProvider.overrideWithValue(browser),
-        saveRunProvider.overrideWithValue(run),
-        updateCheckerProvider.overrideWithValue(checker),
+        v2ServicesProvider.overrideWithValue(v2.services),
         browserNavigatorProvider.overrideWithValue(navigator),
         shellTabRequestProvider.overrideWithValue(tabRequest),
         connectivityProvider.overrideWithValue(const _AlwaysOnline()),

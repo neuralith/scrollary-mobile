@@ -4,10 +4,7 @@ import 'package:drift/native.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
-import 'package:web_reader/save/save_run.dart';
 import 'package:web_reader/core/local_reset.dart';
-import 'package:web_reader/library/update_checker.dart';
-import 'package:web_reader/queue/task_queue.dart';
 import 'package:web_reader/storage/database.dart';
 import 'package:web_reader/storage/file_store.dart';
 
@@ -21,8 +18,6 @@ void main() {
   late FakeBrowser browser;
   late Directory root;
   late FileStore store;
-  late TaskQueueController queue;
-  late SaveRunController run;
   var cookiesCleared = 0;
 
   setUp(() {
@@ -31,15 +26,6 @@ void main() {
     root = Directory.systemTemp.createTempSync('webread_reset');
     store = FileStore(root);
     cookiesCleared = 0;
-    run = SaveRunController(browser: browser, db: db, fileStore: store);
-    queue = TaskQueueController(
-      db: db,
-      browser: browser,
-      saveRun: run,
-      checker: UpdateChecker(browser: browser, db: db),
-      saveRunner: (_) async => const QueueOutcome.success('x'),
-      checkRunner: (_) async => const QueueOutcome.success('x'),
-    );
   });
 
   tearDown(() async {
@@ -52,9 +38,6 @@ void main() {
         db: db,
         fileStore: store,
         browser: browser,
-        saveRun: run,
-        checker: UpdateChecker(browser: browser, db: db),
-        taskQueue: queue,
         clearCookies:
             cookies ??
             () async {
@@ -108,9 +91,17 @@ void main() {
       ),
     );
     await db.setSetting('collection.entrySort', 'oldestFirst');
-    await queue.enqueueSave(
-      startUrl: 'https://x.example/guide/foo/2',
-      entryLimit: 1,
+    await db.upsertQueueTask(
+      QueueTask(
+        id: 'waiting-1',
+        taskType: 'entrySave',
+        startUrl: 'https://x.example/guide/foo/2',
+        captureModeIsUserSet: false,
+        state: 'queued',
+        origin: 'queue',
+        orderIndex: 0,
+        queuedAt: DateTime(2026, 8, 1),
+      ),
     );
 
     final dir = Directory(p.join(root.path, 'library', 'collection-1'))
@@ -235,9 +226,6 @@ void main() {
       db: db,
       fileStore: store,
       browser: browser,
-      saveRun: run,
-      checker: UpdateChecker(browser: browser, db: db),
-      taskQueue: queue,
     );
     final report = await service.resetEverything();
     expect(report.ok, isTrue);
@@ -254,8 +242,6 @@ void main() {
     await makeService().resetEverything();
 
     expect(browser.automationOwner, isNull);
-    expect(await queue.queuedSaves(), isEmpty);
-    expect(queue.saveStartAuthorised, isFalse);
   });
 
   test('the report names every area', () async {
