@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:web_reader/library/entry_identity.dart';
+import 'package:web_reader/recognition/entry_identity.dart';
 
 /// The safety net under discovered entry numbers.
 ///
