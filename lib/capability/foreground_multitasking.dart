@@ -89,6 +89,13 @@ class ForegroundMultitasking extends ChangeNotifier {
   /// Is the paid capability available to this user at all?
   bool get proAvailable => proCapabilityAvailable(effectiveEntitlement);
 
+  /// **May this device use the cloud service?**
+  ///
+  /// The composition asks here rather than deriving it, so the gate on the
+  /// network drain is spelled once and nothing outside this directory ever
+  /// has to name an entitlement to ask a product question.
+  bool get cloudSyncAvailable => cloudSyncAvailableFor(effectiveEntitlement);
+
   /// **Is foreground multitasking actually happening?**
   ///
   /// Pro available *and* the user asked for it. Everything in the app reads

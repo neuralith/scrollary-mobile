@@ -19,11 +19,39 @@ import '../library/entry_labels.dart';
 /// Settings is a list of doors, not a control panel. Everything that changes
 /// behaviour lives where the behaviour is; this screen only points at the two
 /// stores of accumulated state — taught rules and task history.
-class SettingsScreen extends ConsumerWidget {
+class SettingsScreen extends ConsumerStatefulWidget {
   const SettingsScreen({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<SettingsScreen> createState() => _SettingsScreenState();
+}
+
+/// Listens to the capability holder for the same reason
+/// [KeepWorkingSettingRow] does: two things on this screen — the Sync section
+/// and the closing note — describe what this device may do, and a screen left
+/// mounted while that changed would go on describing the old answer.
+class _SettingsScreenState extends ConsumerState<SettingsScreen> {
+  late final ForegroundMultitasking _capability;
+
+  @override
+  void initState() {
+    super.initState();
+    _capability = ref.read(foregroundMultitaskingProvider);
+    _capability.addListener(_onChanged);
+  }
+
+  @override
+  void dispose() {
+    _capability.removeListener(_onChanged);
+    super.dispose();
+  }
+
+  void _onChanged() {
+    if (mounted) setState(() {});
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final rules = ref.watch(pageHintsStreamProvider).value;
     final tasks = ref.watch(queueTasksProvider).value;
     final entries = ref.watch(entriesStreamProvider).value;
@@ -152,8 +180,18 @@ class SettingsScreen extends ConsumerWidget {
             trailing: const Icon(Icons.chevron_right),
             onTap: () => LeaveBrowserGuard.push(context, '/activity'),
           ),
-          // Absent entirely until a scheduler is attached (D7).
-          const SyncStatusSection(),
+          // Absent entirely until a scheduler is attached (D7). With one
+          // attached, what this says depends on whether the device may use
+          // it: Pro gets the live section, Free gets one locked door and no
+          // status furniture whatsoever. A pending count, a state sentence or
+          // a *Sync now* button would all be describing work that is not
+          // going to happen, and nothing here is wrong — the library is
+          // simply staying where it is.
+          if (syncIsAttached(ref) && !_capability.cloudSyncAvailable) ...[
+            const SectionLabel('SYNC'),
+            const _CloudSyncSettingRow(),
+          ] else
+            const SyncStatusSection(),
           if (developerToolsAvailable) ...[
             const SectionLabel('DEVELOPER'),
             ListTile(
@@ -172,11 +210,21 @@ class SettingsScreen extends ConsumerWidget {
               // no scheduler attached the first sentence is literally true;
               // with one it would be a lie, and a settings screen that lies
               // about the network is the worst place for it.
-              syncIsAttached(ref)
-                  ? kSyncSettingsNote
-                  : 'Everything is stored on this device. There is no account, '
+              //
+              // The third state is the one that is easiest to get wrong:
+              // [kSyncSettingsNote] promises synchronisation that happens on
+              // its own, and without Pro none of it happens at all.
+              !syncIsAttached(ref)
+                  ? 'Everything is stored on this device. There is no account, '
                         'no sync and no background network activity — saves '
-                        'and update checks only run when you start them.',
+                        'and update checks only run when you start them.'
+                  : _capability.cloudSyncAvailable
+                  ? kSyncSettingsNote
+                  : 'Saves and update checks only run when you start them. '
+                        'Cloud sync is a Pro capability, so nothing about your '
+                        'library leaves this device; downloaded pages, '
+                        'browsing history and saved rules stay here either '
+                        'way.',
               style: TextStyle(
                 fontSize: 13,
                 height: 1.55,
@@ -188,6 +236,51 @@ class SettingsScreen extends ConsumerWidget {
       ),
     );
   }
+}
+
+/// The Sync section a Free device gets: one locked door and nothing else.
+///
+/// Exactly the shape [KeepWorkingSettingRow] uses when it is locked — the lock
+/// icon, the badge, the chevron and a subtitle that says what is missing —
+/// because a second visual language for the same idea is how two locked rows
+/// start meaning different things.
+///
+/// What it deliberately does **not** show is anything the live section shows:
+/// no state sentence, no pending count, no *Sync now*, and nothing drawn in a
+/// warning colour. Nothing is wrong here. The device is doing exactly what it
+/// says it does, and a count of changes waiting for a service the user cannot
+/// reach would read as a fault they have to fix.
+class _CloudSyncSettingRow extends StatelessWidget {
+  const _CloudSyncSettingRow();
+
+  static const String _subtitle =
+      'A Pro capability. Without it your library, reading state and '
+      'organisation stay on this device — everything else is unchanged.';
+
+  @override
+  Widget build(BuildContext context) => Semantics(
+    button: true,
+    label:
+        '$kCloudSyncLabel. Requires Pro. $_subtitle Double tap to learn more.',
+    excludeSemantics: true,
+    child: ListTile(
+      key: const ValueKey('settingsCloudSync'),
+      leading: const Icon(Icons.lock_outline),
+      title: Row(
+        children: const [
+          Flexible(child: Text(kCloudSyncLabel)),
+          SizedBox(width: 8),
+          ProBadge(),
+        ],
+      ),
+      subtitle: const Text(_subtitle),
+      trailing: const Icon(Icons.chevron_right),
+      onTap: () => showProInfoSheet(
+        context: context,
+        action: ForegroundGateAction.settingsCloudSync,
+      ),
+    ),
+  );
 }
 
 /// The one control for the foreground-multitasking capability.

@@ -22,6 +22,9 @@ import '../ui/theme.dart';
 /// The name the capability goes by everywhere the user can see it.
 const String kKeepWorkingLabel = 'Keep working while I read';
 
+/// The name the cloud-sync capability goes by everywhere the user can see it.
+const String kCloudSyncLabel = 'Cloud sync';
+
 /// The one sentence about what this is and is not. Repeated deliberately: it
 /// is the sentence that stops "keeps working" being read as "works in the
 /// background", and it belongs next to every offer of the capability.
@@ -384,6 +387,22 @@ class _EnableForNextTimeActionState extends State<_EnableForNextTimeAction> {
   );
 }
 
+/// What the user was doing, for the opening line of the multitasking sheet.
+///
+/// The wildcard arm is Settings — a row that asks about the capability itself
+/// rather than about a run in flight — and nothing else reaches it.
+String _multitaskingContext(ForegroundGateAction action) => switch (action) {
+  ForegroundGateAction.startCollectionCheck =>
+    'The check you are starting needs the Browser to read each '
+        'collection\'s page.',
+  ForegroundGateAction.startQueuedSaves ||
+  ForegroundGateAction.startEntrySave =>
+    'The save you are starting needs the Browser to prepare each page.',
+  ForegroundGateAction.leaveBrowser =>
+    'The step running right now needs the Browser page on screen.',
+  _ => 'A check or save needs the Browser page on screen while it works.',
+};
+
 /// What Pro adds here, and what it does not.
 ///
 /// There is no billing in this build, so there is no Buy button: offering one
@@ -399,18 +418,60 @@ Future<void> showProInfoSheet({
   showDragHandle: true,
   builder: (sheetContext) {
     final palette = AppPalette.of(sheetContext);
-    final what = switch (action) {
-      ForegroundGateAction.startCollectionCheck =>
-        'The check you are starting needs the Browser to read each '
-            'collection\'s page.',
-      ForegroundGateAction.startQueuedSaves ||
-      ForegroundGateAction.startEntrySave =>
-        'The save you are starting needs the Browser to prepare each page.',
-      ForegroundGateAction.leaveBrowser =>
-        'The step running right now needs the Browser page on screen.',
-      ForegroundGateAction.settingsPreference =>
-        'A check or save needs the Browser page on screen while it works.',
-    };
+    // One sheet, two capabilities. The layout, the *A Pro capability* line and
+    // the seat where a purchase will one day go are shared deliberately: two
+    // sheets is how two answers to "what does Pro do" start disagreeing.
+    final cloudSync = action == ForegroundGateAction.settingsCloudSync;
+    final headline = cloudSync ? kCloudSyncLabel : kKeepWorkingLabel;
+    final lede = cloudSync
+        ? 'Your library lives on this device, and it stays there. With Pro, '
+              'the way you have organised it and how far you have read also '
+              'reach the other devices you read Scrollary on.'
+        : '${_multitaskingContext(action)} With Pro, Scrollary can keep that '
+              'same check or save running while you read, browse your '
+              'Library, or look at a collection.';
+    final facts = cloudSync
+        ? const <Widget>[
+            _ProFact(
+              icon: Icons.devices,
+              text:
+                  'How your library is organised and how far you have read '
+                  'travel between your devices — folders, collections, and '
+                  'where you left off in an entry.',
+            ),
+            _ProFact(
+              icon: Icons.phone_iphone,
+              text:
+                  'Downloaded pages never leave this device, and neither do '
+                  'your browsing history or the rules you have taught.',
+            ),
+            _ProFact(
+              icon: Icons.check_circle_outline,
+              text:
+                  'Your library stays on this device and stays fully usable '
+                  'without it. Saving, reading, organising and everything '
+                  'already downloaded are the same on Free — they simply stay '
+                  'on the device you did them on.',
+            ),
+          ]
+        : const <Widget>[
+            _ProFact(icon: Icons.phone_iphone, text: kForegroundOnlyNote),
+            _ProFact(
+              icon: Icons.pan_tool_outlined,
+              text:
+                  'Some pages still need you — a sign-in, a consent banner, '
+                  'or a page Scrollary cannot read on its own. When that '
+                  'happens it brings you back to the exact page.',
+            ),
+            _ProFact(
+              icon: Icons.check_circle_outline,
+              text:
+                  'Everything else is the same on Free: starting, running, '
+                  'progress, stopping, pausing, retrying, and everything you '
+                  'have already saved. Without Pro a check or save simply '
+                  'waits while you are elsewhere.',
+            ),
+          ];
     return SafeArea(
       child: SingleChildScrollView(
         child: Padding(
@@ -421,7 +482,7 @@ Future<void> showProInfoSheet({
             children: [
               Semantics(
                 header: true,
-                child: Text(kKeepWorkingLabel, style: serifStyle(size: 22)),
+                child: Text(headline, style: serifStyle(size: 22)),
               ),
               const SizedBox(height: 4),
               Text(
@@ -430,9 +491,7 @@ Future<void> showProInfoSheet({
               ),
               const SizedBox(height: 12),
               Text(
-                '$what With Pro, Scrollary can keep that same check or save '
-                'running while you read, browse your Library, or look at a '
-                'collection.',
+                lede,
                 style: TextStyle(
                   fontSize: 13,
                   height: 1.55,
@@ -440,22 +499,7 @@ Future<void> showProInfoSheet({
                 ),
               ),
               const SizedBox(height: 14),
-              _ProFact(icon: Icons.phone_iphone, text: kForegroundOnlyNote),
-              _ProFact(
-                icon: Icons.pan_tool_outlined,
-                text:
-                    'Some pages still need you — a sign-in, a consent banner, '
-                    'or a page Scrollary cannot read on its own. When that '
-                    'happens it brings you back to the exact page.',
-              ),
-              _ProFact(
-                icon: Icons.check_circle_outline,
-                text:
-                    'Everything else is the same on Free: starting, running, '
-                    'progress, stopping, pausing, retrying, and everything you '
-                    'have already saved. Without Pro a check or save simply '
-                    'waits while you are elsewhere.',
-              ),
+              ...facts,
               const SizedBox(height: 16),
               _upgradeSeat(context, palette),
               const SizedBox(height: 6),
