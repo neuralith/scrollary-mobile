@@ -10,22 +10,119 @@
 /// by `url_key`, write it back. That tail is ordinary logic, and it is the
 /// only part of a save a V2 host needs to replace.
 ///
-/// So the tail is a seam and nothing else moves. [LibrarySaveResultSink] is
-/// the default and performs exactly the calls the engine used to make, in
-/// exactly the order it made them, so a V1 save is bit-for-bit the save it
-/// always was. A V2 caller injects its own and gets the engine to stop at
-/// *the package is staged and here is what it holds* — which is what lets
-/// `entry_capture.dart` run its own policy gate before the commit, and record
-/// an OfflineCopy instead of an `entries` row.
+/// So the tail is a seam and nothing else moves. The one implementation left
+/// is [StagedPackageSink]: the engine stops at *the package is staged and
+/// here is what it holds*, which is what lets `entry_capture.dart` run its own
+/// policy gate before the commit and record an OfflineCopy. The default that
+/// used to sit here wrote four V1 library rows; it retired with that library,
+/// and with it the last thing in this lane that could build one.
+///
+/// [CapturedEntry] is what the seam carries. It was V1's `Entry` row, and the
+/// fields are the same fields with the same names for the same reason the
+/// commit order is the same one: this is a description of *what a capture
+/// produced*, and the engine's phases are frozen. What changed is only that
+/// the description is now this lane's own value rather than another schema's
+/// row — a sink that keeps a library maps it, and the one that keeps a
+/// package ignores it.
 ///
 /// The sink is told about the result; it never judges it. Nothing here may
 /// measure a page, decide a capture mode, or turn a `partial` into a
 /// `complete`.
 library;
 
-import '../storage/database.dart';
 import '../storage/file_store.dart';
 import '../storage/manifest.dart';
+
+/// What one capture produced, as the engine describes it to its sink.
+///
+/// Every field is one the engine sets or one [carryReading] reads back off a
+/// previous capture of the same address; nothing here is derived, and nothing
+/// here is a database concept. A sink that has no library to re-save over
+/// answers null to [SaveResultSink.findExistingEntry], and then the carried
+/// halves are simply their defaults.
+class CapturedEntry {
+  const CapturedEntry({
+    required this.id,
+    required this.title,
+    required this.sourceUrl,
+    required this.urlKey,
+    required this.host,
+    required this.contentKind,
+    required this.contentKindConfidence,
+    required this.contentKindIsUserSet,
+    required this.artifactFormat,
+    required this.saveStatus,
+    required this.savedAt,
+    this.collectionId,
+    this.canonicalUrl,
+    this.sourceTitle,
+    this.publishedAt,
+    this.captureMode,
+    this.contentPath,
+    this.detectedAssetCount = 0,
+    this.storedAssetCount = 0,
+    this.nextSourceUrl,
+    this.entryOrder = 0,
+    this.saveError,
+    this.byteSize = 0,
+    this.entryNumber,
+    this.sourceMarker,
+    this.readStatus = 'unread',
+    this.progressFraction = 0,
+    this.progressPageIndex = 0,
+    this.progressOffsetInPage = 0,
+    this.firstOpenedAt,
+    this.lastReadAt,
+    this.completedAt,
+    this.progressUpdatedAt,
+    this.discoveredAt,
+    this.discoveryBasis,
+    this.discoveryConfidence,
+  });
+
+  final String id;
+  final String? collectionId;
+  final String title;
+  final String sourceUrl;
+  final String urlKey;
+  final String? canonicalUrl;
+  final String host;
+  final String? sourceTitle;
+  final DateTime? publishedAt;
+
+  final String contentKind;
+  final String contentKindConfidence;
+  final bool contentKindIsUserSet;
+
+  final String artifactFormat;
+  final String? captureMode;
+  final String saveStatus;
+  final String? contentPath;
+  final DateTime savedAt;
+  final int detectedAssetCount;
+  final int storedAssetCount;
+  final String? nextSourceUrl;
+  final int entryOrder;
+  final String? saveError;
+  final int byteSize;
+  final double? entryNumber;
+  final String? sourceMarker;
+
+  /// Reading state, carried across a re-save and never rebuilt.
+  final String readStatus;
+  final double progressFraction;
+  final int progressPageIndex;
+  final double progressOffsetInPage;
+  final DateTime? firstOpenedAt;
+  final DateTime? lastReadAt;
+  final DateTime? completedAt;
+  final DateTime? progressUpdatedAt;
+
+  /// Discovery history, when an update check introduced this address first.
+  final DateTime? discoveredAt;
+  final String? discoveryBasis;
+  final String? discoveryConfidence;
+}
 
 /// The save engine's final phase, injected.
 abstract interface class SaveResultSink {
@@ -45,7 +142,7 @@ abstract interface class SaveResultSink {
   ///
   /// A null answer means "nothing to re-save over": the capture keeps the id
   /// it minted, carries no reading state, and commits as a new package.
-  Future<Entry?> findExistingEntry(String urlKey);
+  Future<CapturedEntry?> findExistingEntry(String urlKey);
 
   /// Commit the staged package, and return the path recorded in the library —
   /// or **null** to leave it staged.
@@ -69,68 +166,17 @@ abstract interface class SaveResultSink {
   /// [collectionId] is null for a standalone entry, which has no collection to
   /// stamp — the entry's own `savedAt` is the whole record.
   Future<void> recordEntry(
-    Entry entry, {
+    CapturedEntry entry, {
     required String? collectionId,
     required DateTime savedAt,
   });
-}
-
-/// The V1 library: the four database calls and the atomic commit, exactly as
-/// the engine performed them itself.
-///
-/// This is the default, and it is deliberately the whole of the change: a
-/// [SaveEngine] built the way every current caller builds it — with a `db` —
-/// runs this and nothing else, so no measurement, ordering, retry posture or
-/// written row differs from before the seam was cut.
-class LibrarySaveResultSink implements SaveResultSink {
-  const LibrarySaveResultSink({required this.db, required this.fileStore});
-
-  final AppDatabase db;
-  final FileStore fileStore;
-
-  @override
-  Future<StagingHandle> beginEntry({
-    required String? collectionId,
-    required String entryId,
-  }) => fileStore.beginEntry(collectionId: collectionId, entryId: entryId);
-
-  @override
-  Future<Entry?> findExistingEntry(String urlKey) =>
-      db.findEntryByUrlKeyAnywhere(urlKey);
-
-  @override
-  Future<String?> commitEntry(
-    StagingHandle staging,
-    EntryManifest manifest, {
-    required bool replacing,
-  }) => replacing
-      ? fileStore.commitReplacing(staging, manifest)
-      : fileStore.commit(staging, manifest);
-
-  @override
-  Future<void> recordEntry(
-    Entry entry, {
-    required String? collectionId,
-    required DateTime savedAt,
-  }) async {
-    await db.upsertEntry(entry);
-    // Files are back, so the user-removed marker must go (a null on the
-    // data class would be treated as "leave it alone").
-    await db.clearOfflineRemovedMark(entry.id);
-    // Standalone entries have no collection to stamp; the entry's own
-    // `savedAt` is the whole record.
-    if (collectionId != null) {
-      await db.markCollectionSaved(collectionId, savedAt);
-    }
-  }
 }
 
 /// The other end of the seam: a capture that stops at *the package is staged*.
 ///
 /// It fills the staging directory the caller opened, answers "nothing here
 /// already" to the re-save lookup, and keeps the package staged. **No database
-/// is touched, because there is none to touch** — a V2 host has no V1 library
-/// and must not acquire one.
+/// is touched, because there is none to touch.**
 ///
 /// Leaving the package staged is the point: the pre-commit restricted-site
 /// gate and the atomic commit belong to `entry_capture.dart`, which asks the
@@ -154,7 +200,7 @@ class StagedPackageSink implements SaveResultSink {
   /// aimed at one that already exists. Nothing is looked up, so nothing is
   /// replaced by accident.
   @override
-  Future<Entry?> findExistingEntry(String urlKey) async => null;
+  Future<CapturedEntry?> findExistingEntry(String urlKey) async => null;
 
   /// Always null: the package stays in staging.
   @override
@@ -167,7 +213,7 @@ class StagedPackageSink implements SaveResultSink {
   /// Nothing. The copy is recorded by the pipeline, after the commit.
   @override
   Future<void> recordEntry(
-    Entry entry, {
+    CapturedEntry entry, {
     required String? collectionId,
     required DateTime savedAt,
   }) async {}

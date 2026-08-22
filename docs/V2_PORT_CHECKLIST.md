@@ -420,11 +420,11 @@ the *dedicated* suites are the ones whose subject the component is.
 
 The rule this list exists to enforce: *if a ported component needs an internal
 change, that is a task with its own review, not a side effect of a call-site
-edit.* Three such changes have now been reviewed and made. §17.1 and §17.2 cut
-the two seams V2 could not start without; §17.3 is the first of those seams'
-other end, made at the V1 retirement — the V1 route through it is removed now
-that nothing takes it. None of the three moves a measurement, a threshold, a
-wait, an ordering or a stopping condition.
+edit.* Four such changes have now been reviewed and made. §17.1 and §17.2 cut
+the two seams V2 could not start without; §17.3 and §17.4 are the same two
+seams' other ends, made at the V1 retirement — the V1 route through each is
+removed now that nothing takes it. None of the four moves a measurement, a
+threshold, a wait, an ordering or a stopping condition.
 
 ### 17.1 The save engine's result seam — 2026-08-21
 
@@ -576,6 +576,47 @@ wait, an ordering or a stopping condition.
   for the same reason (*it survives a move to the next entry*), and
   `test/document_reader_test.dart` one (*moving to the next document entry
   starts a fresh scroll*).
+
+### 17.4 The save engine's sink, made required — 2026-08-23
+
+- **File:** `lib/save/save_engine.dart` and `lib/save/save_result_sink.dart`
+  (§17.1's seam).
+- **Why.** §17.1 made the engine's final phase injectable and kept
+  `LibrarySaveResultSink` as the default, so a save built the way every V1
+  caller built it — with `db:` — was bit-for-bit the save it had always been.
+  Those callers are gone: the V1 queue, the V1 save run and the V1 library are
+  all retired, `SaveEnginePageCaptureSource` is the only construction site
+  left, and it passes `StagedPackageSink`. A default that builds a
+  `LibrarySaveResultSink` therefore had no consumer, and could not be built at
+  all once `AppDatabase` went.
+- **What changed.** The constructor's `AppDatabase? db` parameter and the
+  `db != null || sink != null` assertion are gone; `sink` is **required**.
+  `LibrarySaveResultSink` is deleted. The seam's payload stopped being a V1
+  row: `findExistingEntry` returns `CapturedEntry?` and `recordEntry` takes a
+  `CapturedEntry` — a plain value class in `save_result_sink.dart` whose fields
+  are V1's `Entry` fields, same names, same defaults, because it describes the
+  same thing (*what a capture produced*) and the phases that fill it are
+  frozen. `carryReading` takes it instead of a row.
+- **What did not change.** Nothing in the capture flow. Every measurement,
+  settle window, decode decision, probe, enumeration, extraction, collapse
+  guard, stop condition, retry posture and emitted progress state, and the
+  order of all of them. Both restricted-site checks still run before a staging
+  directory exists, so `AssetFetcher` still never meets the policy. The reading
+  carried across a re-save, the truncation rules and the refusal to replace a
+  fuller copy with a shorter one are the same code reading the same fields.
+- **Proof.** `test/save_v2/save_result_sink_test.dart` keeps the
+  `StagedPackageSink` half whole: a capture over it commits nothing and leaves
+  the package in the staging directory the caller opened. Every suite that
+  drives the engine — `document_save_test`, `asset_host_policy_test`,
+  `hidden_webview_test`, `adaptive_scroll_test`, `image_enumeration_test`,
+  `foreground_multitasking_test` — was retargeted at the staged package and the
+  returned `EntrySaveResult`, keeping every assertion about what the engine
+  does to a page.
+- **Retired with it.** The V1-equivalence half of
+  `test/save_v2/save_result_sink_test.dart` — the default sink's four library
+  calls in order, and a `db:`-built save writing a row equal field-for-field to
+  one built over an explicit `LibrarySaveResultSink`. It proved parity with a
+  library that no longer exists.
 
 ---
 

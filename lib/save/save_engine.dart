@@ -7,7 +7,6 @@ import '../browser/browser_surface_policy.dart';
 import '../browser/page_data.dart';
 import '../core/config.dart';
 import '../core/url_utils.dart';
-import '../storage/database.dart';
 import '../storage/file_store.dart';
 import '../storage/manifest.dart';
 import 'asset_fetcher.dart';
@@ -22,8 +21,6 @@ import 'page_hint.dart';
 import 'page_stability.dart';
 import 'stop_conditions.dart';
 import '../library/collection_identity.dart';
-import '../library/collection_repository.dart';
-import '../library/content_shape.dart';
 import 'content_detection.dart';
 
 const _uuid = Uuid();
@@ -160,7 +157,7 @@ class CarriedReading {
   final bool anchorReset;
 }
 
-CarriedReading carryReading(Entry? existing, ArtifactFormat artifact) {
+CarriedReading carryReading(CapturedEntry? existing, ArtifactFormat artifact) {
   if (existing == null) return const CarriedReading();
   final changed = ArtifactFormat.fromName(existing.artifactFormat) != artifact;
   return CarriedReading(
@@ -179,25 +176,20 @@ CarriedReading carryReading(Entry? existing, ArtifactFormat artifact) {
 /// decodes, and only extracts once the page has been quiet for a configured
 /// period. That is the whole reason this class exists.
 class SaveEngine {
-  /// [db] builds the default [LibrarySaveResultSink] — the V1 library, and the
-  /// only thing every existing caller passes. A caller with no V1 library
-  /// passes [sink] instead and the engine ends at a staged package; see
-  /// `save_result_sink.dart`. One of the two is required, because a save has
-  /// to end somewhere.
+  /// [sink] is where a finished capture goes, and it is required: a save has
+  /// to end somewhere, and with the V1 library retired there is no default
+  /// worth guessing at. Every caller passes `StagedPackageSink` — the engine
+  /// ends at *the package is staged*, and `entry_capture.dart` runs the
+  /// pre-commit policy gate and commits. See `save_result_sink.dart`.
   SaveEngine({
     required this.browser,
-    AppDatabase? db,
     required this.fileStore,
     required this.downloader,
-    SaveResultSink? sink,
+    required this.sink,
     this.config = kDefaultSaveConfig,
     this.onProgress,
     this.onLog,
-  }) : assert(
-         db != null || sink != null,
-         'a save has to end somewhere: pass the V1 database or a sink',
-       ),
-       sink = sink ?? LibrarySaveResultSink(db: db!, fileStore: fileStore);
+  });
 
   final BrowserController browser;
   final SaveResultSink sink;
@@ -742,7 +734,7 @@ class SaveEngine {
       }
 
       await sink.recordEntry(
-        Entry(
+        CapturedEntry(
           id: entryId,
           collectionId: owningCollectionId,
           title: pageTitle,
@@ -868,7 +860,7 @@ class SaveEngine {
     required CaptureMode captureMode,
     required bool captureModeIsUserSet,
     required String entryId,
-    required Entry? existing,
+    required CapturedEntry? existing,
     required String? owningCollectionId,
     required int entryOrder,
     required String pageUrl,
@@ -1076,7 +1068,7 @@ class SaveEngine {
       }
 
       await sink.recordEntry(
-        Entry(
+        CapturedEntry(
           id: entryId,
           collectionId: owningCollectionId,
           title: pageTitle,
@@ -1778,26 +1770,3 @@ class SaveEngine {
     return results;
   }
 }
-
-/// The collection that owns entries saved from [url] — or **null**, when this
-/// page is a standalone entry.
-///
-/// Null is the normal answer for a single saved article. A collection is created
-/// only when [sequence] says the page is part of one, so a one-off save never
-/// produces a group of one in the library.
-Future<Collection?> ensureCollection({
-  required AppDatabase db,
-  required String url,
-  required String title,
-  required SequenceShape sequence,
-  PageHints hints = const PageHints(),
-  void Function(String)? log,
-  Future<String?> Function(NewCollectionProposal)? confirmNewName,
-}) => CollectionRepository(db).resolveCollection(
-  entryUrl: url,
-  pageTitle: title,
-  sequence: sequence,
-  hints: hints,
-  log: log,
-  confirmNewName: confirmNewName,
-);

@@ -2,7 +2,6 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:dio/dio.dart';
-import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:web_reader/browser/page_data.dart';
 import 'package:web_reader/core/config.dart';
@@ -11,7 +10,7 @@ import 'package:web_reader/save/capture_mode.dart';
 import 'package:web_reader/features/v2_save_flow.dart';
 import 'package:web_reader/save/capture_policy.dart';
 import 'package:web_reader/save/save_engine.dart';
-import 'package:web_reader/storage/database.dart';
+import 'package:web_reader/save/save_result_sink.dart';
 import 'package:web_reader/storage/file_store.dart';
 import 'package:web_reader/storage/manifest.dart';
 
@@ -33,7 +32,6 @@ import 'save_v2/support/capture_harness.dart';
 /// a fake Dio adapter, which is also what makes "was this host ever requested"
 /// an assertable fact.
 void main() {
-  late AppDatabase db;
   late Directory root;
   late FileStore store;
 
@@ -55,7 +53,6 @@ void main() {
   const allowedPage = 'https://x.example/collection/entry-12';
 
   setUp(() {
-    db = AppDatabase.forTesting(NativeDatabase.memory());
     root = Directory.systemTemp.createTempSync('webread_asset_policy');
     store = FileStore(root);
     Directory('${root.path}/library').createSync(recursive: true);
@@ -63,7 +60,6 @@ void main() {
   });
 
   tearDown(() async {
-    await db.close();
     if (root.existsSync()) root.deleteSync(recursive: true);
   });
 
@@ -265,10 +261,13 @@ void main() {
         ),
       )..httpClientAdapter = adapter;
 
+      final staging = await store.beginEntry(
+        collectionId: null,
+        entryId: 'entry-1',
+      );
       final result =
           await SaveEngine(
             browser: browser,
-            db: db,
             fileStore: store,
             config: config,
             downloader: AssetFetcher(
@@ -276,6 +275,7 @@ void main() {
               config: config,
               dio: dio,
             ),
+            sink: StagedPackageSink(staging),
           ).saveCurrentPage(
             collectionId: null,
             entryOrder: 1,
@@ -292,10 +292,10 @@ void main() {
       expect(result.detectedImages, images.length);
       expect(adapter.requested, containsAll(images));
 
-      final entry = (await db.allEntries()).single;
-      expect(entry.saveStatus, 'complete');
-      expect(entry.saveError, isNull);
-      expect(entry.storedAssetCount, images.length);
+      final manifest = result.manifest!;
+      expect(manifest.status, SaveStatus.complete);
+      expect(manifest.statusReason, isNull);
+      expect(manifest.storedAssetCount, images.length);
     });
 
     test('the page itself is still what the policy judged', () async {
@@ -317,10 +317,12 @@ void main() {
         ),
       )..httpClientAdapter = adapter;
 
+      final sink = _CountingStagedSink(
+        await store.beginEntry(collectionId: null, entryId: 'entry-1'),
+      );
       final result =
           await SaveEngine(
             browser: browser,
-            db: db,
             fileStore: store,
             config: config,
             downloader: AssetFetcher(
@@ -328,6 +330,7 @@ void main() {
               config: config,
               dio: dio,
             ),
+            sink: sink,
           ).saveCurrentPage(
             collectionId: null,
             entryOrder: 1,
@@ -343,10 +346,9 @@ void main() {
         isEmpty,
         reason: 'a refused page never reaches the download loop',
       );
-      expect(await db.allEntries(), isEmpty);
       expect(
-        Directory('${root.path}/tmp').listSync(),
-        isEmpty,
+        sink.beginCalls,
+        0,
         reason: 'and never opens a staging directory either',
       );
     });
@@ -384,6 +386,27 @@ void main() {
       expect(await h.queue.pending(), isEmpty);
     });
   });
+}
+
+/// A [StagedPackageSink] that remembers whether the engine ever asked for a
+/// staging directory.
+///
+/// The engine no longer opens staging itself — the caller hands it one — so
+/// "a refused page never reaches a staging directory" is now a fact about the
+/// call, not about the filesystem, and this is where it is observed.
+class _CountingStagedSink extends StagedPackageSink {
+  _CountingStagedSink(super.staging);
+
+  int beginCalls = 0;
+
+  @override
+  Future<StagingHandle> beginEntry({
+    required String? collectionId,
+    required String entryId,
+  }) {
+    beginCalls++;
+    return super.beginEntry(collectionId: collectionId, entryId: entryId);
+  }
 }
 
 /// A Dio adapter that answers from a fixture and remembers what was asked for.

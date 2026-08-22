@@ -1,13 +1,12 @@
 import 'dart:io';
 
-import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:web_reader/browser/page_data.dart';
 import 'package:web_reader/save/asset_fetcher.dart';
 import 'package:web_reader/save/capture_mode.dart';
 import 'package:web_reader/save/save_engine.dart';
+import 'package:web_reader/save/save_result_sink.dart';
 import 'package:web_reader/core/config.dart';
-import 'package:web_reader/storage/database.dart';
 import 'package:web_reader/storage/file_store.dart';
 import 'package:web_reader/storage/manifest.dart';
 
@@ -17,8 +16,8 @@ import 'helpers/scripted_browser.dart';
 /// The adaptive traversal: fast over resolved regions, careful near pending
 /// content, and never a full asset-wait for an avatar that will not load.
 void main() {
-  late AppDatabase db;
   late Directory root;
+  late FileStore store;
 
   const vp = 800;
 
@@ -36,27 +35,34 @@ void main() {
   );
 
   setUp(() {
-    db = AppDatabase.forTesting(NativeDatabase.memory());
     root = Directory.systemTemp.createTempSync('webread_adaptive');
+    store = FileStore(root);
   });
   tearDown(() async {
-    await db.close();
     if (root.existsSync()) root.deleteSync(recursive: true);
   });
 
-  SaveEngine engine(ScriptedBrowser browser, {SaveConfig? cfg}) => SaveEngine(
+  SaveEngine engine(
+    ScriptedBrowser browser,
+    StagingHandle staging, {
+    SaveConfig? cfg,
+  }) => SaveEngine(
     browser: browser,
-    db: db,
-    fileStore: FileStore(root),
+    fileStore: store,
     downloader: AssetFetcher(browser: browser, config: cfg ?? config),
+    sink: StagedPackageSink(staging),
     config: cfg ?? config,
   );
 
   Future<void> run(ScriptedBrowser browser, {SaveConfig? cfg}) async {
     browser.setUrl('https://x.example/guide/foo/1');
+    final staging = await store.beginEntry(
+      collectionId: 'collection-1',
+      entryId: 'entry-1',
+    );
     // Downloads fail (no server) — irrelevant: the assertions are about the
     // scroll pacing recorded before the download phase.
-    await engine(browser, cfg: cfg).saveCurrentPage(
+    await engine(browser, staging, cfg: cfg).saveCurrentPage(
       collectionId: 'collection-1',
       entryOrder: 1,
       visitedNormalized: {},
@@ -431,7 +437,11 @@ void main() {
       Directory('${root.path}/library').createSync(recursive: true);
       Directory('${root.path}/tmp').createSync(recursive: true);
 
-      final result = await engine(browser).saveCurrentPage(
+      final staging = await store.beginEntry(
+        collectionId: null,
+        entryId: 'entry-1',
+      );
+      final result = await engine(browser, staging).saveCurrentPage(
         collectionId: null,
         entryOrder: 1,
         visitedNormalized: {},
@@ -442,10 +452,9 @@ void main() {
       expect(result.detectedImages, 6, reason: 'the broken panel was fetched');
       expect(result.storedImages, 5);
 
-      final entry = await db.entryById(result.entryId);
-      expect(entry!.saveStatus, 'partial');
-      expect(entry.detectedAssetCount, 6);
-      expect(entry.storedAssetCount, 5);
+      expect(result.manifest!.status, SaveStatus.partial);
+      expect(result.manifest!.detectedAssetCount, 6);
+      expect(result.manifest!.storedAssetCount, 5);
     });
   });
 
