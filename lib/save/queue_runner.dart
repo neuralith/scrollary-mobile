@@ -1,7 +1,11 @@
 import 'dart:async';
 
+import 'package:drift/drift.dart' show Value;
 import 'package:flutter/foundation.dart';
 
+import '../core/config.dart';
+import '../core/device_storage.dart';
+import '../data/schema.dart';
 import '../save/entry_capture.dart';
 import 'queue_repository.dart';
 import 'queue_task.dart';
@@ -20,11 +24,18 @@ class QueueRunner extends ChangeNotifier {
     required this.queue,
     required this._captureServiceFor,
     this._cancelPoll = const Duration(milliseconds: 400),
-  });
+    DeviceStorage? deviceStorage,
+    this.config = kDefaultSaveConfig,
+  }) : _deviceStorage = deviceStorage ?? DeviceStorage();
 
   final SaveQueueRepository queue;
   final EntryCaptureService Function() _captureServiceFor;
   final Duration _cancelPoll;
+  final DeviceStorage _deviceStorage;
+
+  /// Where the free-space floor comes from. The same [SaveConfig] the engine
+  /// is built with, so the two cannot drift apart.
+  final SaveConfig config;
 
   bool _running = false;
   bool _disposed = false;
@@ -59,6 +70,17 @@ class QueueRunner extends ChangeNotifier {
       while (!_disposed) {
         final eligible = await queue.eligible();
         if (eligible.isEmpty) break;
+        // The disk gate, asked once per row rather than once per batch: free
+        // space is a moving figure, and a batch that checked only at the start
+        // would fill the device on its fourth entry. Carried over from V1's
+        // run, which is the only place it lived.
+        //
+        // Asked **before** the claim, and settled the way a restricted row is
+        // settled — `queued` straight to `failed`. Claiming first would stamp
+        // `startedAt` on a capture that never started, and a row that says it
+        // began is a row a reader has to be told to distrust.
+        if (await _settleIfOutOfSpace(eligible.first)) break;
+
         final claimed = await queue.claim(eligible.first.id);
         // Lost to a cancel that got there first: skip and carry on — the
         // loser is told, and the row keeps its own verdict.
@@ -71,6 +93,35 @@ class QueueRunner extends ChangeNotifier {
       _running = false;
       if (!_disposed) notifyListeners();
     }
+  }
+
+  /// Too little room to take another entry? Then say so on the row that would
+  /// have run, and stop.
+  ///
+  /// **A platform that will not answer is not a refusal.** `freeBytes` returns
+  /// null when it cannot say, and treating that as zero would stop every save
+  /// on a device whose channel is missing — so unknown means carry on, exactly
+  /// as V1 had it. The engine's own guards still apply below this.
+  ///
+  /// The rows behind this one stay **queued**, not failed: nothing about them
+  /// is wrong, and freeing space is all it takes to start them again.
+  Future<bool> _settleIfOutOfSpace(SaveTask next) async {
+    final free = await _deviceStorage.freeBytes();
+    if (free == null || free >= config.minFreeSpaceToStart) return false;
+    await queue.updateIfState(
+      id: next.id,
+      expected: [SaveTaskState.queued],
+      values: SaveQueueCompanion(
+        state: Value(SaveTaskState.failed.name),
+        // The sentence comes from the reason, never from here: one stop, one
+        // wording, wherever it is read.
+        outcome: Value(StopReason.insufficientStorage.message),
+        lastError: Value(StopReason.insufficientStorage.message),
+        stopReason: Value(StopReason.insufficientStorage.name),
+        finishedAt: Value(DateTime.now().toUtc()),
+      ),
+    );
+    return true;
   }
 
   Future<void> _run(SaveTask task) async {
