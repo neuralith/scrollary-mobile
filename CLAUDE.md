@@ -282,7 +282,7 @@ and refused. Do not add video URL extraction, HLS/DASH, interception or playback
   **before** any row goes, then deletes the queue rows, the interrupted runs,
   the entries and the collection in one transaction, then discards the staged
   tree. The file move is not an optimisation: rows first would leave packages
-  under `library/` for startup recovery to rebuild the deleted entries from.
+  under `library/` for the storage survey to report as orphans.
   `deleteCollection` / `deleteEntriesForCollection` /
   `deleteQueueTasksForCollection` / `allRuns` belong to that service and have no
   other caller — never delete the collection row on its own. Rationale and the
@@ -353,8 +353,9 @@ durable user data that exists on devices today. A version-1 manifest has no
 `artifact` field and is read as an image sequence — the only thing the app could
 produce when it wrote one. Never rewrite a stored manifest in place, and never
 read an unrecognised `artifact` as a known one: it resolves to
-`ArtifactFormat.unknown` and the reader says so. `lib/storage/recovery.dart`
-rebuilds library rows from packages of either version.
+`ArtifactFormat.unknown` and the reader says so. The storage survey
+(`CleanupService`) lists a package with no `offline_copies` row as an orphan
+rather than rebuilding a row for it.
 
 ## Verification
 

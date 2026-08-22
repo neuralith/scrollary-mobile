@@ -144,7 +144,7 @@ the *dedicated* suites are the ones whose subject the component is.
 - **New location:** unchanged (§2 names it in Lane E's ported set).
 - **Intentional internal changes:** none.
 - **Tests carried:** dedicated — `test/file_store_test.dart`,
-  `test/disk_safety_test.dart`, `test/recovery_test.dart`,
+  `test/disk_safety_test.dart`, `test/storage_survey_test.dart`,
   `test/storage_format_test.dart`; shared harness — some fifty unit suites and
   every integration suite construct it as the storage root.
 - **Device assumptions:** atomic commit (staging under `tmp/`, manifest
@@ -154,7 +154,7 @@ the *dedicated* suites are the ones whose subject the component is.
   database, because the iOS app-container path contains a UUID that changes
   between installs.
 - **Integration dependency:** Lane E (E2 writes OfflineCopy bytes through it;
-  E5 reads through it), Lane H (recovery after Gate E).
+  E5 reads through it), the storage survey (§10, done).
 
 ## 6. Manifest
 
@@ -162,7 +162,7 @@ the *dedicated* suites are the ones whose subject the component is.
 - **New location:** unchanged.
 - **Intentional internal changes:** none.
 - **Tests carried:** dedicated — `test/manifest_test.dart`; heavily exercised
-  by `test/recovery_test.dart`, `test/document_persistence_test.dart`,
+  by `test/storage_survey_test.dart`, `test/document_persistence_test.dart`,
   `test/file_store_test.dart` and the save/reader suites; integration —
   `integration_test/save_flow_test.dart`,
   `integration_test/offline_read_test.dart`,
@@ -177,7 +177,7 @@ the *dedicated* suites are the ones whose subject the component is.
   is itself atomic: temp file + rename). `ArtifactFormat` is the only field a
   reader or recovery may switch on.
 - **Integration dependency:** Lane E (E2 provenance snapshot into OfflineCopy,
-  E5 reading), recovery (§10, after Gate E).
+  E5 reading), the storage survey (§10, done).
 
 ## 7. Document model
 

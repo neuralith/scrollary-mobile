@@ -251,7 +251,7 @@ Columns: **ID · outcome · scope · depends · owns · parallel-safe with · va
 | **H2** | End-to-end: client action → backend → phone library | Gate E prerequisites | Runs against a real Postgres and the fixture server | Integration · **done** — `tool/e2e/run.sh`, `test/e2e/` |
 | **H3** | End-to-end: phone offline mutation → reconnect → second client | H2 | Includes interrupted pull and duplicate mutation | Integration · **done** — `test/e2e/h3_offline_reconnect_test.dart` |
 | **H4** | End-to-end: Download to Mobile → local queue → capture → OfflineCopy | E4, B10 | **Asserts the backend made no outbound request** | Integration · **done** — `test/e2e/h4_download_to_mobile_test.dart`; outbound peers sampled with `lsof`, fixture hits asserted zero |
-| **H5** | V1 cleanup passes (§10) | Per cutover | Deleted subsystem has no remaining caller | Hardening · **done** for the library screens, queue/save run and checker; the V1 database stack is the last row of §10 |
+| **H5** | V1 cleanup passes (§10) | Per cutover | Deleted subsystem has no remaining caller | Hardening · **done** — no `AppDatabase` reference remains under `lib/` |
 | **H6** | Device validation re-run | H2–H4 | `FOREGROUND_MULTITASKING_PLAN.md §4a` programme, re-argued not assumed | Hardening · **external** — the suites are ported to V2 (`integration_test/`), simulator/emulator runs were partial; hardware runs need a device operator |
 
 ## 8. Tasks that must not be parallelised
@@ -308,8 +308,8 @@ before the replacement passes validation.
 | **After D3 + E5 merge** | `lib/features/collection_detail_screen.dart`, `library_screen.dart`, `library_check_ui.dart` | New library UX passes widget tests and the reader opens through OfflineCopy — **done** |
 | **After E2 + E3 merge** | `lib/queue/task_queue.dart`, `lib/save/save_run.dart` orchestration | New queue unit passes; single-winner cancellation preserved — **done** |
 | **After F3 + F4 merge** | `lib/library/update_checker.dart`, `lib/library/library_check.dart` | Source-scoped discovery green on fixtures — **done** |
-| **After C3–C8 merge** | `lib/storage/database.dart`, `lib/library/collection_repository.dart`, `lib/library/collection_deletion.dart`, `lib/reading/reading_repository.dart`, `lib/storage/cleanup.dart` | All repository tests green; no remaining caller — **in progress**: device-local stores (favicons, saved sites, history, page hints, settings) move onto `LibraryDatabase`, then the V1 stack is deleted |
-| **After Gate E** | `lib/storage/recovery.dart` V1 path | Recovery rebuilt against OfflineCopy — **in progress** with the row above |
+| **After C3–C8 merge** | `lib/storage/database.dart`, `lib/library/collection_repository.dart`, `lib/library/collection_deletion.dart`, `lib/reading/reading_repository.dart`, `lib/storage/cleanup.dart` | All repository tests green; no remaining caller — **done**: device-local stores (favicons, saved sites, history, page hints, settings) moved onto `LibraryDatabase`; `lib/storage/database.dart` and the V1 repositories are deleted |
+| **After Gate E** | `lib/storage/recovery.dart` V1 path | Recovery rebuilt against OfflineCopy — **done** (`CleanupService` surveys `offline_copies` against the FileStore) |
 
 Each cleanup task states: *the old path may be deleted because the new path owns
 X and passes Y.* Never *"it looks unused"*.

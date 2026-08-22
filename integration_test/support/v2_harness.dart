@@ -45,6 +45,8 @@ import 'package:web_reader/features/check_controller.dart';
 import 'package:web_reader/features/source_observation_browser.dart';
 import 'package:web_reader/data/reading_state_repository.dart';
 import 'package:web_reader/features/v2_composition.dart';
+import 'package:web_reader/features/v2_save_flow.dart';
+import 'package:web_reader/save/page_hint_repository.dart';
 import 'package:web_reader/recognition/recognise.dart';
 import 'package:web_reader/recognition/check.dart';
 import 'package:web_reader/library_ui/providers.dart' as libui;
@@ -57,7 +59,6 @@ import 'package:web_reader/save/queue_runner.dart';
 import 'package:web_reader/save/queue_task.dart';
 import 'package:web_reader/save/save_engine.dart';
 import 'package:web_reader/save/save_state.dart';
-import 'package:web_reader/storage/database.dart';
 import 'package:web_reader/storage/file_store.dart';
 import 'package:web_reader/storage/manifest.dart';
 
@@ -204,7 +205,6 @@ class V2App {
   final SourceObservationSource Function(BrowserController browser)?
   observationsOver;
 
-  late AppDatabase db;
   late LibraryDatabase library;
   late FileStore fileStore;
   late BrowserController browser;
@@ -283,7 +283,6 @@ class V2App {
     // waits silently is the failure `device_harness.dart` exists to prevent.
     if (_anyTreeMounted) await pumpFor(tester, const Duration(seconds: 3));
 
-    db = AppDatabase(name: 'it_$tag');
     library = LibraryDatabase(name: 'it_lib_$tag');
     fileStore = await FileStore.open(folderName: 'webread_it_$tag');
     browser = BrowserController();
@@ -324,7 +323,6 @@ class V2App {
     capability = ForegroundMultitasking(multitaskingPreference)
       ..override = entitlement;
     services = AppServices(
-      db: db,
       fileStore: fileStore,
       browser: browser,
       foregroundMultitasking: capability,
@@ -334,11 +332,16 @@ class V2App {
       collections: ui.collections,
       reading: ReadingStateRepository(library),
     );
+    final assist = V2AssistController(
+      browser: browser,
+      hints: PageHintRepository.forLibrary(library),
+    );
     v2 = V2Services(
       library: library,
       ui: ui,
       runner: runner,
       check: check,
+      assist: assist,
       recogniser: recogniser,
       history: BrowsingHistoryStore(library),
       // No service in the device suites: the resolver answers null, the

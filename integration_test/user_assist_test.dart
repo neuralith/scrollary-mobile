@@ -73,9 +73,8 @@ void main() {
   Future<void> boot(WidgetTester tester, {String? startUrl}) async {
     app = V2App(tag: 'assist_${caseIndex++}_$kRunStamp');
     await app.boot(tester);
-    // Rules live in the V1 database, which is still where user-taught page
-    // hints are kept — nothing about the port moved them.
-    rules = PageHintRepository(app.db);
+    // Rules live in the V2 page_hints table.
+    rules = PageHintRepository.forLibrary(app.library);
     await showBrowser(tester);
     if (startUrl != null) await openPage(tester, app, startUrl);
   }
