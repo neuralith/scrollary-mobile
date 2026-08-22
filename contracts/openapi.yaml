@@ -9,7 +9,7 @@ openapi: 3.1.0
 # and are $ref-ed so one lint validates the whole graph.
 #
 # Vocabulary rule: wire field names are snake_case and match the column names
-# and CHECK-constraint spellings of backend/migrations/0001_init.up.sql — the
+# and CHECK-constraint spellings of scrollary-backend/migrations/0001_init.up.sql — the
 # single spelling authority. The one exception is GET /version, which mirrors
 # the handler that already ships (`devMode`).
 
