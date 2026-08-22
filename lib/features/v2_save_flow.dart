@@ -1,6 +1,9 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../browser/browser_controller.dart';
 import '../core/config.dart';
 import '../data/recognition_index.dart';
 import '../domain/domain.dart';
@@ -10,9 +13,14 @@ import '../recognition/history.dart';
 import '../recognition/recognise.dart';
 import '../save/capture_mode.dart';
 import '../save/capture_policy.dart';
+import '../save/entry_capture.dart';
+import '../save/page_hint.dart';
+import '../save/page_hint_repository.dart';
 import '../save/queue_task.dart';
+import '../save/selection_request.dart';
 import '../ui/palette.dart';
 import 'capture_mode_section.dart';
+import 'selection_overlay.dart';
 
 /// The Browser's save flow over the V2 library.
 ///
@@ -162,6 +170,185 @@ class RecognitionIndexOf {
   RecognitionIndex get index => RecognitionIndex(services.db);
 }
 
+/// Holds a capture while the user points at the reading area.
+///
+/// The V2 counterpart of what V1's save run did between two calls to the
+/// engine, and it keeps V1's three rules exactly:
+///
+/// * **A rule is only ever written from an explicit tap.** Nothing here
+///   infers one, and no capture result creates one on its own.
+/// * **The page is put into selection mode first**, so the tap teaches
+///   instead of navigating.
+/// * **Scope is the user's choice**, defaulting to the narrowest one — this
+///   collection on this host.
+///
+/// Only reader-area holds exist on this side. A V2 capture is one page per
+/// queue row, so there is no next-entry traversal here for a next-link rule
+/// to serve; `PageHintRepository` still stores and matches both kinds,
+/// because a hint taught in V1 outlives the run that asked for it.
+class V2AssistController extends ChangeNotifier implements SelectionHost {
+  V2AssistController({required this.browser, required this.hints});
+
+  @override
+  final BrowserController browser;
+
+  /// Over the V2 library's `page_hints` table.
+  final PageHintRepository hints;
+
+  SelectionRequest? _pending;
+  Completer<SelectionOutcome>? _answer;
+
+  @override
+  SelectionRequest? get pendingSelection => _pending;
+
+  /// Hold until the user answers. Returns what they decided.
+  Future<SelectionOutcome> ask(SelectionRequest request) async {
+    _pending = request;
+    _answer = Completer<SelectionOutcome>();
+    notifyListeners();
+    await browser.startSelection(mode: 'reader');
+    return _answer!.future;
+  }
+
+  /// The user picked an element in the page.
+  @override
+  Future<void> submitSelection(
+    SelectedElement element, {
+    HintScope scope = HintScope.collection,
+  }) async {
+    final request = _pending;
+    if (request == null) return;
+    final rule = await hints.createReaderAreaHint(
+      element: element,
+      sourceUrl: request.sourceUrl,
+      scope: scope,
+    );
+    await _settle(SelectionOutcome.rule(rule, element));
+  }
+
+  /// The user gave up on selecting; the capture keeps the failure it had.
+  @override
+  Future<void> cancelSelection() => _settle(const SelectionOutcome.cancelled());
+
+  /// Try automatic detection once more instead of picking by hand.
+  @override
+  Future<void> retryAutomaticDetection() =>
+      _settle(const SelectionOutcome.retryAuto());
+
+  Future<void> _settle(SelectionOutcome outcome) async {
+    if (_pending == null) return;
+    await browser.stopSelection();
+    _pending = null;
+    _answer?.complete(outcome);
+    _answer = null;
+    notifyListeners();
+  }
+}
+
+/// The V2 assist host, one per app.
+final v2AssistProvider = Provider<V2AssistController>((ref) {
+  final controller = V2AssistController(
+    browser: ref.watch(browserProvider),
+    hints: PageHintRepository.forLibrary(ref.watch(libraryDatabaseProvider)),
+  );
+  ref.onDispose(controller.dispose);
+  return controller;
+});
+
+/// Capture one Entry, asking the user to point at the reading area if the
+/// page needs it.
+///
+/// The order is V1's. The narrowest rule the user already taught for this
+/// address goes *in*; what comes back says whether pointing at the container
+/// could help; a tap writes one rule and the capture is run again with it.
+/// The counters move exactly as V1 moved them: a rule that was applied and
+/// produced a copy counts a success, a rule the page stopped matching counts
+/// a failure, and a capture that failed for some other reason counts neither.
+///
+/// **Blocked state, recorded here so the next lane finds it.** The queue's
+/// worker still calls [EntryCaptureService.capture] directly: the capture
+/// service is built inside `main.dart`'s composition and the shell's hooks
+/// are attached in `app.dart`, neither of which this lane may edit. Routing
+/// `QueueRunner` through this function — handing it the [V2AssistController]
+/// from [v2AssistProvider] — is the one composition step left, and until it
+/// is taken a capture that needs the reading area fails instead of asking.
+Future<EntryCaptureResult> v2CaptureWithAssist({
+  required EntryCaptureService capture,
+  required V2AssistController assist,
+  required String entryId,
+  required String locationUrl,
+  required CaptureMode? captureMode,
+  String? locationId,
+  bool captureModeIsUserSet = false,
+  bool Function()? shouldContinue,
+}) async {
+  final hints = assist.hints;
+  final nextHint = await hints.findFor(locationUrl, HintKind.nextLink);
+  var readerHint = await hints.findFor(locationUrl, HintKind.readerArea);
+
+  Future<EntryCaptureResult> run({
+    required CaptureMode? mode,
+    required bool modeIsUserSet,
+  }) async {
+    final result = await capture.capture(
+      entryId: entryId,
+      locationId: locationId,
+      locationUrl: locationUrl,
+      captureMode: mode,
+      captureModeIsUserSet: modeIsUserSet,
+      shouldContinue: shouldContinue,
+      readerHint: readerHint,
+      nextHint: nextHint,
+    );
+    final applied = readerHint;
+    if (applied != null) {
+      if (result.isCaptured) {
+        await hints.recordUse(applied.id, success: true);
+      } else if (result.needsReaderAreaAssist) {
+        await hints.recordUse(applied.id, success: false);
+      }
+    }
+    return result;
+  }
+
+  final first = await run(
+    mode: captureMode,
+    modeIsUserSet: captureModeIsUserSet,
+  );
+  if (!first.needsReaderAreaAssist) return first;
+
+  final failed = readerHint;
+  final outcome = await assist.ask(
+    SelectionRequest(
+      kind: HintKind.readerArea,
+      sourceUrl: locationUrl,
+      prompt: 'Select the reader area',
+      reason: first.error ?? 'automatic extraction found too little',
+      isHintFailure: failed != null,
+      failedHintId: failed?.id,
+    ),
+  );
+  // Nothing was taught, so there is nothing new to try: the capture keeps the
+  // failure it already had.
+  if (outcome.cancelled) return first;
+
+  if (outcome.hasRule) {
+    // The rule the page stopped matching is gone, replaced by the one the
+    // user just pointed at. Its counters went with it; what survives is the
+    // rule that works.
+    if (failed != null) await hints.delete(failed.id);
+    readerHint = outcome.rule;
+    // Reader-area assistance only ever produces an image sequence — the user
+    // pointed at a container of images — and a person chose it.
+    return run(mode: CaptureMode.imageSequence, modeIsUserSet: true);
+  }
+
+  // "Retry auto": run detection again with no rule in the way, including the
+  // one that just stopped matching.
+  readerHint = null;
+  return run(mode: captureMode, modeIsUserSet: captureModeIsUserSet);
+}
+
 /// The sheet behind the Browser's save control.
 class V2SavePanel extends ConsumerStatefulWidget {
   const V2SavePanel({super.key, required this.url, required this.pageTitle});
@@ -247,6 +434,23 @@ class _V2SavePanelState extends ConsumerState<V2SavePanel> {
 
   @override
   Widget build(BuildContext context) {
+    final assist = ref.watch(v2AssistProvider);
+    return AnimatedBuilder(
+      animation: assist,
+      builder: (context, _) {
+        final request = assist.pendingSelection;
+        // A capture holding for the user takes over this slot rather than
+        // opening a second surface: the page above stays visible, and the tap
+        // that teaches lands on it.
+        if (request != null) {
+          return RuleSelectionOverlay(run: assist, request: request);
+        }
+        return _sheet(context);
+      },
+    );
+  }
+
+  Widget _sheet(BuildContext context) {
     final palette = AppPalette.of(context);
     final status = _status;
     final task = status?.task;

@@ -37,6 +37,7 @@ import '../storage/manifest.dart';
 import 'capture_mode.dart';
 import 'capture_policy.dart';
 import 'page_capture_source.dart';
+import 'page_hint.dart';
 import 'stop_conditions.dart';
 
 /// How a capture ended.
@@ -63,6 +64,7 @@ class EntryCaptureResult {
     this.stopReason,
     this.message,
     this.error,
+    this.needsReaderAreaAssist = false,
   });
 
   const EntryCaptureResult.captured({
@@ -87,12 +89,16 @@ class EntryCaptureResult {
         message: kCaptureRestrictedMessage,
       );
 
-  const EntryCaptureResult.failed(String error, {StopReason? stopReason})
-    : this._(
-        status: EntryCaptureStatus.failed,
-        error: error,
-        stopReason: stopReason,
-      );
+  const EntryCaptureResult.failed(
+    String error, {
+    StopReason? stopReason,
+    bool needsReaderAreaAssist = false,
+  }) : this._(
+         status: EntryCaptureStatus.failed,
+         error: error,
+         stopReason: stopReason,
+         needsReaderAreaAssist: needsReaderAreaAssist,
+       );
 
   final EntryCaptureStatus status;
 
@@ -109,6 +115,12 @@ class EntryCaptureResult {
   final StopReason? stopReason;
   final String? message;
   final String? error;
+
+  /// The page held too little for automatic image extraction, or a saved
+  /// reader-area rule stopped matching. Carried up untouched from the
+  /// [PageCaptureSource]: whoever has a user to ask decides what to do with
+  /// it, and this file never asks anything of anyone.
+  final bool needsReaderAreaAssist;
 
   bool get isCaptured => status == EntryCaptureStatus.captured;
   bool get isRefused => status == EntryCaptureStatus.refused;
@@ -211,6 +223,8 @@ class EntryCaptureService {
     String? locationId,
     bool captureModeIsUserSet = false,
     bool Function()? shouldContinue,
+    UserPageHint? readerHint,
+    UserPageHint? nextHint,
   }) async {
     final carryOn = shouldContinue ?? () => true;
 
@@ -253,6 +267,10 @@ class EntryCaptureService {
         staging: staging,
         requestedMode: captureMode,
         shouldContinue: carryOn,
+        // Straight through, unchanged. A rule exists only because a person
+        // tapped an element, and nothing on this path may invent one.
+        readerHint: readerHint,
+        nextHint: nextHint,
       );
     } catch (e) {
       await fileStore.discard(staging);
@@ -265,6 +283,7 @@ class EntryCaptureService {
       return EntryCaptureResult.failed(
         outcome.error ?? outcome.stopReason?.name ?? 'the capture failed',
         stopReason: outcome.stopReason,
+        needsReaderAreaAssist: outcome.needsReaderAreaAssist,
       );
     }
 
