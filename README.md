@@ -18,10 +18,12 @@ developer.
 The current build is single-device and needs no account. **V2** — a
 recognition-driven library where reading updates your library automatically,
 Collections have several Sources, Folders organise everything, and library
-metadata syncs across your devices — is fully designed and only its backend
-foundation is built. See [docs/PRODUCT.md](docs/PRODUCT.md) for the product,
-[docs/V2_ARCHITECTURE.md](docs/V2_ARCHITECTURE.md) for the domain and
-[docs/V2_ROADMAP.md](docs/V2_ROADMAP.md) for the plan.
+metadata syncs across your devices — has its domain, data, recognition,
+capture, library-UX, sync and backend layers built and merged; the composition
+that wires those screens up as the running app in place of the one described
+below is still in integration. See [docs/PRODUCT.md](docs/PRODUCT.md) for the
+product, [docs/V2_ARCHITECTURE.md](docs/V2_ARCHITECTURE.md) for the domain and
+[docs/V2_ROADMAP.md](docs/V2_ROADMAP.md) for the plan and current status.
 
 ## Documentation
 
@@ -39,7 +41,7 @@ by [docs/STORE_POLICY_MAP.md](docs/STORE_POLICY_MAP.md) and
 | Path | What it is |
 |---|---|
 | `lib/`, `test/`, `integration_test/` | The Flutter app as built today |
-| `../scrollary-backend/` | The V2 synchronisation service — Go, Fiber v3, PostgreSQL. **Foundation only**; see [backend/README.md](backend/README.md) |
+| `../scrollary-backend/` | The V2 synchronisation service — Go, Fiber v3, PostgreSQL. B1–B11 complete; see [../scrollary-backend/README.md](../scrollary-backend/README.md) |
 | `docs/` | Product, architecture, V2 design and plan, store and privacy |
 
 ## Running

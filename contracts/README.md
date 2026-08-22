@@ -49,7 +49,7 @@ server accepting one — are defects even when they "work".
 ## Vocabulary rules
 
 - Wire field names are `snake_case` and match the column names of
-  `backend/migrations/0001_init.up.sql`, which is the single spelling
+  `scrollary-backend/migrations/0001_init.up.sql`, which is the single spelling
   authority. Enum spellings (`ordering_basis`, `lifecycle`, `placement`,
   reading `status`, download-request `state`, tombstone `kind`) are exactly the
   migration's CHECK-constraint spellings.

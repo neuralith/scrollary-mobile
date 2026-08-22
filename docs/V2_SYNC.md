@@ -1,8 +1,11 @@
 # V2 sync, backend boundary and client contract
 
-> **Status: final design, not built.** This document owns the synchronisation
-> model, the backend responsibility boundary, the shared API contract and the
-> browser-extension contract including Download to Mobile.
+> **Status: built and merged on `master`** — the backend (B1–B11), the sync
+> engine (G1–G7) and the frozen contract below. This document owns the
+> synchronisation model, the backend responsibility boundary, the shared API
+> contract and the browser-extension contract including Download to Mobile.
+> The extension itself is not built; everything else here describes running
+> code.
 >
 > Domain and ownership: [V2_ARCHITECTURE.md](./V2_ARCHITECTURE.md) · Product:
 > [PRODUCT.md](./PRODUCT.md) · Deferred: [V2_PRODUCTIZATION.md](./V2_PRODUCTIZATION.md)
@@ -40,19 +43,34 @@ no content, and is invisible when it succeeds. See
 
 ## 2. When sync runs
 
+Implemented in `lib/sync/scheduler.dart` (`SyncScheduler`) and
+`lib/sync/retry.dart` (`RetryPolicy`) — roadmap G5–G6.
+
 | Opportunity | Behaviour |
 |---|---|
-| App launch | Drain, then pull |
-| App resume to foreground | Same, subject to a minimum interval |
-| Network reconnect while in front | Drain resumes |
-| A local mutation | Journalled immediately; drained opportunistically |
-| Foreground idle | Opportunistic |
-| Platform-supported background execution | **Where available**, best-effort, never assumed |
-| Manual *Sync now* | Always available |
+| App launch | Requested immediately; the run itself starts after a jittered delay (up to 3s) |
+| App resume to foreground | Same jittered delay, skipped if the last opportunity was inside the last 2 minutes |
+| Network reconnect while in front | Requested immediately (same jitter), and clears any backoff |
+| A local mutation | Journalled immediately; the run is debounced up to 5s so a burst of edits becomes one push |
+| Foreground idle | A tick every 15 minutes while the app is in front |
+| Platform-supported background execution | Not hooked up. Nothing runs once the app is not in front — leaving the foreground cancels every timer |
+| Manual *Sync now* | Runs immediately, with no jitter and no foreground check — the only trigger that does either |
 
-The exact mobile scheduling mechanism is an implementation concern for Lane G and
-is deliberately not fixed here. The product semantics above are what must hold
-whichever mechanism is chosen.
+Two more rules the scheduler holds:
+
+- **Never two at once.** A run in flight absorbs every trigger that arrives
+  during it into one follow-up; the follow-up itself is bounded to a single
+  extra pass, so a steady trickle of local mutations cannot keep the loop
+  turning indefinitely.
+- **A failure waits longer each time.** Backoff starts at 30 seconds, doubles,
+  and is capped at 30 minutes, with a subtractive jitter (up to 20% shaved off
+  a step, so the ceiling stays the cap and nothing more). A success, a
+  reconnect or *Sync now* resets it to zero. An unconfigured transport is
+  recorded as a quiet no-op (`neverConfigured`) — never an error, never
+  retried.
+
+The product semantics in §1 are what must hold; the numbers above are the
+current implementation and may be retuned without changing them.
 
 ## 3. Sync state the user can see
 
@@ -100,7 +118,7 @@ the moment to revisit — not before.
 
 The server assigns a **monotonic revision per library**. Every synced row and
 every tombstone carries the revision at which it last changed. A client's cursor
-is the highest revision it has seen. `GET /changes?since=<revision>` returns
+is the highest revision it has seen. `GET /changes?cursor=<revision>` returns
 creates, updates and tombstones in revision order.
 
 ### 4.4 Order of operations
@@ -280,23 +298,24 @@ is written once at Gate B and frozen; it is not a runtime dependency.
 
 ### 8.2 Operations
 
-Authentication wrappers are Productization work. The shape below is what the
-functionality build implements.
+Authentication wrappers are Productization work. The table below is the frozen
+contract's actual surface (`contracts/openapi.yaml`). Every entity write —
+Folder, Collection, Source, Entry, Location, ReadingState, Measurement —
+goes through the one `POST /mutations` envelope rather than a per-entity
+route; placement and the download-request lifecycle are the only synchronous
+endpoints outside that envelope, because both need server-side arbitration
+(§4.6, §7) rather than a stored mutation.
 
 | Operation | Purpose |
 |---|---|
-| `POST /evidence` | Submit what a client observed; receive canonical identity or `unresolved` |
-| `POST /mutations` | Submit a batch of idempotent mutations from the outbox |
-| `GET /changes?since=` | Incremental pull: creates, updates, tombstones, in revision order |
-| `POST /folders`, `PATCH`, `DELETE` | Folder create, rename, move, delete |
-| `POST /collections/{id}/follow` · `/archive` | Following lifecycle |
-| `POST /collections/{id}/sources` · `PATCH` | Source add, lifecycle, preferred |
-| `POST /entries/{id}/placement` | Ordinal placement, arbitrated |
-| `PUT /entries/{id}/reading` | Reading state |
-| `PUT /entries/{id}/measurements/{source}` | Scoped measurement |
-| `POST /download-requests` | Create an intent |
-| `POST /download-requests/{id}/claim` · `/resolve` | Device claim and terminal report |
 | `GET /healthz` | Liveness |
+| `GET /version` | Build identity and whether the dev namespace is enabled |
+| `POST /identity/arbitrate` | Submit evidence; receive canonical identity or `unresolved` |
+| `POST /mutations` | Submit a batch of idempotent mutations from the outbox — the envelope for every entity write |
+| `GET /changes?cursor=` | Incremental pull: creates, updates, tombstones, in revision order |
+| `POST /entries/{id}/placement` | Ordinal placement, arbitrated centrally |
+| `POST /download-requests` | Create a Download-to-Mobile intent |
+| `POST /download-requests/{id}/claim` · `/resolve` | Device claim and terminal report |
 
 ### 8.3 Client responsibilities
 
@@ -310,19 +329,24 @@ functionality build implements.
 
 ### 8.4 Extension capability matrix
 
+Everything below except identity arbitration, placement and the
+DownloadRequest lifecycle is one `entity_type` inside the `POST /mutations`
+envelope (§8.2); the matrix names the entity a mutation carries, not a
+separate endpoint.
+
 | Operation | Mobile | Extension |
 |---|---|---|
 | Authenticate | Optional | **Required** |
-| Submit evidence, receive identity | ✓ | ✓ |
-| Follow / archive a Collection | ✓ | ✓ |
-| Folder organisation | ✓ | ✓ |
-| Add a Source, set preferred | ✓ | ✓ |
-| Record a Location | ✓ | ✓ |
-| Record access, set read state | ✓ | ✓ |
-| Submit a measurement | ✓ | Only if honestly observable |
-| Place an unplaced Entry | ✓ | ✓ |
-| Pull changes | ✓ | ✓ |
-| **Create a DownloadRequest** | ✓ | ✓ |
+| Submit evidence, receive identity (`POST /identity/arbitrate`) | ✓ | ✓ |
+| `collection` mutation — follow, archive | ✓ | ✓ |
+| `folder` mutation — create, rename, move | ✓ | ✓ |
+| `source` mutation — add, lifecycle, preferred | ✓ | ✓ |
+| `location` mutation — record a Location | ✓ | ✓ |
+| `readingState` mutation — record access, set read state | ✓ | ✓ |
+| `measurement` mutation — scoped `(entry, source)` progress | ✓ | Only if honestly observable |
+| Place an unplaced Entry (`POST /entries/{id}/placement`) | ✓ | ✓ |
+| Pull changes (`GET /changes?cursor=`) | ✓ | ✓ |
+| **Create a DownloadRequest** (`POST /download-requests`) | ✓ | ✓ |
 | **Capture / download content** | ✓ | **No** |
 
 The extension does not capture because doing so would mean re-implementing the

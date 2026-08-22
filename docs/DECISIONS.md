@@ -271,6 +271,110 @@ It is labelled development-only, authenticates nothing and says so, is one
 middleware to remove, and distorts nothing — `library_id` is a real column the
 production account model will populate.
 
+### V2-D29 · An unplaced Entry surfaces inside its own Collection's list (resolves O-B)
+
+A NEEDS PLACEMENT section sits at the end of the Collection's **one** Entry
+list (`lib/library_ui/collection_screen.dart`), not in a separate view. Both
+halves of the list draw the same row widget with the same actions; the
+section label and a one-line explanation are the only difference a placed and
+an unplaced Entry get.
+
+*Why.* D3's rule is one list, availability as row state — a second,
+download-oriented list was already refused for the same reason. An unplaced
+Entry is exactly as real and readable as a placed one; giving it a separate
+screen would make it feel like a queue rather than a library item waiting on
+one fact.
+
+### V2-D30 · Measurement tombstones are scoped by `source_id`
+
+A Measurement is keyed `(entry, source)` (I12), so its tombstone names the
+Source too — `tombstones.source_id` on the backend
+(`scrollary-backend/migrations/0001_init.up.sql`,
+`internal/domain/tombstone.go`). Every other tombstone kind leaves it empty.
+
+*Why.* An unscoped measurement tombstone would read as "drop every measurement
+for this Entry", deleting readings taken on Sources nobody touched. The scope
+is part of the tombstone's identity, not an afterthought on top of it — two
+scoped deletions of one Entry are two tombstones, never one overwriting the
+other.
+
+### V2-D31 · Revisions are allocated inside the write transaction; the feed reads from one snapshot
+
+The library's next revision is allocated inside the same transaction that
+writes the row it belongs to (`scrollary-backend/internal/storage/postgres/state.go`,
+`sync.go`), and `GET /changes` reads the head and every row it returns from one
+repeatable-read snapshot.
+
+*Why.* A revision handed out before its row commits, or a feed read that mixes
+snapshots mid-page, both create a window where a puller sees a later revision
+without having received an earlier one — and once its cursor has moved past
+that gap, nothing asks it to go back. Allocating inside the transaction and
+reading from one snapshot closes both windows by construction rather than by
+convention.
+
+### V2-D32 · `applyRemote*` uses `insertOnConflictUpdate`, never `insertOrReplace`
+
+Every pulled-row writer in `lib/data/*_repository.dart` upserts with
+`insertOnConflictUpdate`.
+
+*Why.* SQLite's `INSERT OR REPLACE` is a `DELETE` followed by an `INSERT` when
+a conflict exists, and the schema's `ON DELETE CASCADE` foreign keys
+(Locations, Measurements, the save queue and more, all keyed off `entries.id`
+and similar) would fire on the delete half — silently destroying children of a
+row a pull only meant to refresh.
+
+### V2-D33 · Folder delete is confirm-with-counts; no optimistic Undo
+
+Deleting a Folder shows what it holds and where its children will land, then
+asks for confirmation (`lib/library_ui/folder_actions.dart`). There is no
+Undo affordance the way a removed queue row gets one.
+
+*Why.* Undo elsewhere works by restoring an `orderIndex` on a row that never
+left the database. A deleted Folder's children have already been reparented
+and, for the Folder row itself, restoring it would mean minting a new
+identity — sync would see a create, not the row that was there a moment ago.
+Asking first, with real counts, is the honest version of reversibility here;
+pretending to undo it is not.
+
+### V2-D34 · Device label is random, opaque, minted once, never hardware-derived
+
+`lib/sync/device_label.dart` mints an opaque `device-<8 hex chars>` label on
+first use, stores it in local settings and never rewrites it. Nothing about it
+comes from a device name, model or platform identifier.
+
+*Why.* The label exists only so a claim can say which of a user's own devices
+took a download (V2_SYNC.md §7); device targeting stays deliberately minimal
+(V2-D25), so the label needs no permission, no dependency and no capability
+beyond naming a record. Deriving it from hardware would make it an
+identifier in substance even though the product makes no use of it as one.
+
+### V2-D35 · A Download-to-Mobile request for an Entry this device does not hold is never claimed
+
+`lib/sync/download_intent.dart` selects only the pending requests for Entries
+this library holds and can reach before it claims anything.
+
+*Why.* Claiming is single-winner (V2-D25): burning the one claim on an Entry
+this device cannot even attempt would take the request away from a device
+that could fulfil it, with no way to give it back. Leaving it alone costs
+nothing — the next device to pull sees the same pending request.
+
+### V2-D36 · Sync scheduler and retry constants
+
+`lib/sync/scheduler.dart` (`SyncSchedule`) and `lib/sync/retry.dart`
+(`RetryPolicy`) fix the numbers behind V2_SYNC.md §2: start jitter up to 3s,
+a 15-minute foreground tick, a 2-minute minimum resume interval, a 5-second
+mutation debounce, and retry backoff from 30s doubling to a 30-minute cap with
+a subtractive 0.2 jitter fraction. A run in flight absorbs every trigger into
+one follow-up; nothing runs while the app is backgrounded; an unconfigured
+transport is a quiet no-op; manual *Sync now* bypasses jitter and the
+foreground check.
+
+*Why recorded here rather than left as code comments.* These are product
+commitments as much as implementation choices — the 15-minute tick in
+particular trades off battery and traffic against how stale a second device's
+view is allowed to feel, and retuning it should be a deliberate decision, not
+a side effect of an unrelated change.
+
 ---
 
 ## Open
@@ -281,7 +385,6 @@ Productization.
 | # | Question | Blocks |
 |---|---|---|
 | O-A | Whether the nested-folder UI ships in the first functional release, or only flat folders over the hierarchical schema | Lane D scope only. The schema supports both |
-| O-B | Whether an unplaced Entry is surfaced inside its Collection's list or in a separate "needs placement" view | Lane D presentation only |
 
 Everything else previously open — authentication, monetization, tombstone
 retention, cross-device unreadable Sources, cross-source progress presentation,
