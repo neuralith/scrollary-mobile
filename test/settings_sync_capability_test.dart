@@ -22,11 +22,8 @@ import 'package:web_reader/capability/entitlement.dart';
 import 'package:web_reader/capability/foreground_multitasking.dart';
 import 'package:web_reader/features/foreground_gate_sheet.dart';
 import 'package:web_reader/features/settings_screen.dart';
-import 'package:web_reader/library/update_checker.dart';
 import 'package:web_reader/library_ui/sync_status_section.dart';
 import 'package:web_reader/providers.dart';
-import 'package:web_reader/queue/task_queue.dart';
-import 'package:web_reader/save/save_run.dart';
 import 'package:web_reader/storage/database.dart';
 import 'package:web_reader/storage/file_store.dart';
 import 'package:web_reader/sync/status.dart';
@@ -108,24 +105,11 @@ void main() {
     final store = FileStore(root);
     final browser = BrowserController();
     addTearDown(browser.dispose);
-    final run = SaveRunController(browser: browser, db: db, fileStore: store);
     return ProviderScope(
       overrides: [
         databaseProvider.overrideWithValue(db),
         fileStoreProvider.overrideWithValue(store),
         browserProvider.overrideWithValue(browser),
-        saveRunProvider.overrideWithValue(run),
-        updateCheckerProvider.overrideWithValue(
-          UpdateChecker(browser: browser, db: db),
-        ),
-        taskQueueProvider.overrideWithValue(
-          TaskQueueController(
-            db: db,
-            browser: browser,
-            saveRun: run,
-            checker: UpdateChecker(browser: browser, db: db),
-          ),
-        ),
         faviconServiceProvider.overrideWithValue(
           FaviconService(db: db, allowNetwork: false),
         ),
