@@ -16,10 +16,13 @@ import 'storage/database.dart';
 import 'storage/file_store.dart';
 import 'data/recognition_index.dart';
 import 'data/schema.dart' show LibraryDatabase;
+import 'data/reading_state_repository.dart';
 import 'features/check_controller.dart';
 import 'features/source_observation_browser.dart';
 import 'features/v2_composition.dart';
 import 'library_ui/providers.dart' as libui;
+import 'library_ui/sync_status_section.dart' show syncStatusSourceProvider;
+import 'recognition/recognise.dart';
 import 'save/asset_fetcher.dart';
 import 'save/entry_capture.dart';
 import 'save/page_capture_source.dart';
@@ -166,7 +169,14 @@ class _AppBootState extends State<AppBoot> with WidgetsBindingObserver {
                       _startup.v2.checkCollection?.call(id, name),
                 ),
                 libui.placementSubmitProvider.overrideWithValue(
-                  placementSubmitOver(_startup.v2),
+                  placementSubmitFor(_startup.v2),
+                ),
+                // The scheduler is what `Settings → Sync` reads. Attached
+                // whatever this build is configured with: an unconfigured or
+                // unentitled device has a state to report, and reporting it is
+                // not the same as doing anything.
+                syncStatusSourceProvider.overrideWithValue(
+                  _startup.v2.sync.scheduler,
                 ),
               ],
               child: const WebReaderApp(),
@@ -230,24 +240,6 @@ class AppStartup {
 
     final browser = BrowserController();
 
-    // Browsing history (M18). The controller emits every completed load; the
-    // repository decides which of them was a page the *user* visited, so the
-    // filtering rule lives in one place rather than at every call site (D53).
-    final history = HistoryRepository(db);
-    browser.onVisitCompleted = (visit) => unawaited(
-      history
-          .recordVisit(
-            url: visit.url,
-            title: visit.title,
-            source: visit.source,
-            finalUrl: visit.wasRedirected ? visit.url : null,
-          )
-          .catchError((Object e) {
-            debugPrint('[history] record failed: $e');
-            return null;
-          }),
-    );
-
     // Read before the app builds, not watched: the shell decides how to
     // composite the Browser on its first frame, and a capability that arrived
     // a frame later would flip that decision under a run.
@@ -304,13 +296,45 @@ class AppStartup {
       index: RecognitionIndex(library),
       observations: BrowserSourceObservationSource(browser),
     );
+    final recogniser = Recogniser(
+      index: RecognitionIndex(library),
+      collections: ui.collections,
+      reading: ReadingStateRepository(library),
+    );
+    final history = BrowsingHistoryStore(library);
     _v2 = V2Services(
       library: library,
       ui: ui,
       runner: runner,
       check: check,
-      syncBaseUrl: await db.setting(kSyncBaseUrlSettingKey),
-      syncLibrary: await db.setting(kSyncLibrarySettingKey),
+      recogniser: recogniser,
+      history: history,
+      sync: SyncComposition(
+        db: library,
+        queue: ui.queue,
+        // The gate on the network drain, and the only thing the sync stack is
+        // told about what this user has. Local writes and the outbox are
+        // never gated (V2-D7); this closure is asked at the drain and nowhere
+        // else.
+        cloudSyncAvailable: () => multitasking.cloudSyncAvailable,
+        capabilityChanges: multitasking,
+        transport: buildSyncTransport(),
+      ),
+    );
+
+    // What the user reads is how the library stays current (V2-D13, F6). The
+    // controller emits every completed load; only navigation the *user*
+    // performed is acted on, and nothing here creates a library row.
+    browser.onVisitCompleted = (visit) => unawaited(
+      recordCompletedVisit(
+        _v2!,
+        url: visit.url,
+        title: visit.title,
+        // The controller emits automation's loads too, and the source is how
+        // they are told apart.
+        userInitiated: visit.source == NavigationSource.manual,
+        requestedUrl: visit.requestedUrl,
+      ).catchError((Object e) => debugPrint('[history] record failed: $e')),
     );
 
     // Entry assets are re-downloadable; a multi-GB library must not ride
@@ -379,8 +403,7 @@ class AppStartup {
   /// recommendation the app is not entitled to make, and a bundled starting
   /// point is how a neutral reader acquires a provider catalogue by accident.
   Future<void> _browserData() async {
-    final db = _db!;
-    final pruned = await HistoryRepository(db).prune();
+    final pruned = await _v2!.history.prune();
     if (pruned > 0) debugPrint('[history] pruned $pruned old visit(s)');
   }
 

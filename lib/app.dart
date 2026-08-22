@@ -23,6 +23,7 @@ import 'features/v2_reader_route.dart';
 import 'library_ui/collection_screen.dart';
 import 'library_ui/shelf_screen.dart';
 import 'save/queue_runner.dart';
+import 'sync/scheduler.dart';
 import 'capability/foreground_gate.dart';
 import 'library_ui/providers.dart';
 import 'save/queue_task.dart';
@@ -134,6 +135,11 @@ class _WebReaderAppState extends ConsumerState<WebReaderApp>
   late final ForegroundMultitasking _capability;
   late final ValueNotifier<bool> _pendingSurfaceClaim;
 
+  /// When metadata sync takes an opportunity. The app root drives it because
+  /// the app root is what knows whether the app is in front — the scheduler
+  /// reaches for no platform signal of its own (V2-D20).
+  late final SyncScheduler _sync;
+
   @override
   void initState() {
     super.initState();
@@ -153,6 +159,7 @@ class _WebReaderAppState extends ConsumerState<WebReaderApp>
       ref.read(shellTabRequestProvider).value = 1;
     };
     _capability = ref.read(foregroundMultitaskingProvider);
+    _sync = v2.sync.scheduler;
     _pendingSurfaceClaim = ref.read(pendingSurfaceClaimProvider);
     _pendingSurfaceClaim.addListener(_recomputeSurface);
     for (final source in [_queueRunner, _sourceCheck, _capability, _browser]) {
@@ -162,6 +169,11 @@ class _WebReaderAppState extends ConsumerState<WebReaderApp>
     _router.routerDelegate.addListener(_recomputeSurface);
     WidgetsBinding.instance.addObserver(this);
     _recomputeSurface();
+    // The app is up and in front. Nothing before this frame is an opportunity:
+    // a scheduler that assumed a foreground would run before anything told it
+    // to.
+    v2.sync.start();
+    _sync.onAppLaunch();
   }
 
   /// The app leaving the foreground is not a background hand-off; it is the
@@ -172,6 +184,14 @@ class _WebReaderAppState extends ConsumerState<WebReaderApp>
   void didChangeAppLifecycleState(AppLifecycleState state) {
     _foreground = state == AppLifecycleState.resumed;
     _recomputeSurface();
+    // The same signal, read for the other thing it decides. Sync stops when
+    // the app is not in front and picks up when it comes back — never a
+    // promise of background execution, because no platform offers one.
+    if (_foreground) {
+      _sync.onAppResumed();
+    } else {
+      _sync.onAppPaused();
+    }
   }
 
   bool _foreground = true;

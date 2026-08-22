@@ -6,14 +6,17 @@ import 'dart:io';
 
 import 'package:drift/native.dart';
 import 'package:web_reader/browser/browser_controller.dart';
+import 'package:web_reader/capability/foreground_multitasking.dart';
 import 'package:web_reader/data/collection_repository.dart';
 import 'package:web_reader/data/entry_repository.dart';
+import 'package:web_reader/data/reading_state_repository.dart';
 import 'package:web_reader/data/recognition_index.dart';
 import 'package:web_reader/data/schema.dart';
 import 'package:web_reader/features/check_controller.dart';
 import 'package:web_reader/features/v2_composition.dart';
 import 'package:web_reader/library_ui/providers.dart' as libui;
 import 'package:web_reader/recognition/check.dart';
+import 'package:web_reader/recognition/recognise.dart';
 import 'package:web_reader/save/entry_capture.dart';
 import 'package:web_reader/save/queue_runner.dart';
 import 'package:web_reader/storage/file_store.dart';
@@ -34,8 +37,12 @@ class _NoObservations implements SourceObservationSource {
 }
 
 class V2Harness {
-  V2Harness({required BrowserController browser, required FileStore fileStore})
-    : library = LibraryDatabase.forTesting(NativeDatabase.memory()) {
+  V2Harness({
+    required BrowserController browser,
+    required FileStore fileStore,
+    ForegroundMultitasking? capability,
+  }) : library = LibraryDatabase.forTesting(NativeDatabase.memory()),
+       capability = capability ?? ForegroundMultitasking() {
     ui = libui.LibraryUiServices(library, fileStore: fileStore);
     runner = QueueRunner(
       queue: ui.queue,
@@ -54,23 +61,45 @@ class V2Harness {
       index: RecognitionIndex(library),
       observations: const _NoObservations(),
     );
+    history = BrowsingHistoryStore(library);
+    // Unconfigured, which is what a widget test is: no transport is built, so
+    // the scheduler resolves nothing and every opportunity is a no-op.
+    sync = SyncComposition(
+      db: library,
+      queue: ui.queue,
+      cloudSyncAvailable: () => this.capability.cloudSyncAvailable,
+      capabilityChanges: this.capability,
+      transport: null,
+    );
     services = V2Services(
       library: library,
       ui: ui,
       runner: runner,
       check: check,
+      recogniser: Recogniser(
+        index: RecognitionIndex(library),
+        collections: ui.collections,
+        reading: ReadingStateRepository(library),
+      ),
+      history: history,
+      sync: sync,
     );
   }
 
   final LibraryDatabase library;
+  final ForegroundMultitasking capability;
   late final libui.LibraryUiServices ui;
   late final QueueRunner runner;
   late final CheckController check;
+  late final BrowsingHistoryStore history;
+  late final SyncComposition sync;
   late final V2Services services;
 
   Future<void> close() async {
     runner.dispose();
     check.dispose();
+    await sync.dispose();
+    capability.dispose();
     await library.close();
   }
 }

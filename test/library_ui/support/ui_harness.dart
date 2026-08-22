@@ -226,6 +226,10 @@ class UiHarness {
 
   String _copyPath(String entryId) => 'library/$entryId';
 
+  /// How many intents the journal is holding. Every synced write appends
+  /// exactly one, so this is how a test says "and it was recorded once".
+  Future<int> outboxRows() async => (await db.select(db.outbox).get()).length;
+
   Future<int> offlineCopyRows(String entryId) async {
     final rows = await (db.select(
       db.offlineCopies,

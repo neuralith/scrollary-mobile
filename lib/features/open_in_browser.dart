@@ -4,7 +4,6 @@ import 'package:go_router/go_router.dart';
 
 import '../core/url_utils.dart';
 import '../providers.dart';
-import '../storage/database.dart';
 import '../ui/palette.dart';
 import '../ui/status_style.dart';
 import 'entry_source_state.dart';
@@ -122,17 +121,6 @@ Future<bool> openInBrowser(
   showBrowserSurface(context, ref);
   return true;
 }
-
-/// [openInBrowser] for an entry row, with the source-URL rule applied.
-Future<bool> openEntryInBrowser(
-  BuildContext context,
-  WidgetRef ref,
-  Entry entry,
-) => openInBrowser(
-  context,
-  ref,
-  hasUsableSourceUrl(entry) ? entry.sourceUrl : '',
-);
 
 bool _isUsableUrl(String url) {
   if (url.isEmpty) return false;

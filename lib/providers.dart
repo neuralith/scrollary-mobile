@@ -18,7 +18,6 @@ import 'features/v2_composition.dart';
 import 'save/queue_runner.dart';
 import 'features/library_formats.dart';
 import 'library/library_sort.dart';
-import 'library/collection_deletion.dart';
 import 'library/collection_repository.dart';
 import 'reading/reading_repository.dart';
 import 'save/page_hint.dart';
@@ -94,19 +93,6 @@ final cleanupProvider = Provider<CleanupService>((ref) {
     );
   }
 });
-
-/// Permanent collection deletion.
-///
-/// Degrades the same way [cleanupProvider] does: a widget test that overrides
-/// the database and the file store only still gets a working service, and
-/// without a queue there is simply no pending work for it to cancel.
-final collectionDeletionProvider = Provider<CollectionDeletionService>(
-  (ref) => CollectionDeletionService(
-    db: ref.watch(databaseProvider),
-    fileStore: ref.watch(fileStoreProvider),
-    cleanup: ref.watch(cleanupProvider),
-  ),
-);
 
 /// The persisted appearance preference (default: follow the system).
 final appearanceProvider = StreamProvider<AppearanceMode>(
@@ -471,8 +457,15 @@ final readerChromeVisibleProvider = Provider<ReaderChromeVisibility>((ref) {
 ///
 // --- browser (M18) ---------------------------------------------------------
 
-final historyRepositoryProvider = Provider<HistoryRepository>(
-  (ref) => HistoryRepository(ref.watch(databaseProvider)),
+/// Browsing history: the **V2** `history` table, which is the one the
+/// recognition pipeline reads too.
+///
+/// The V1 `browsing_history` table has no writers left. Two tables holding the
+/// same fact is how they come to disagree, so the screens written against V1's
+/// repository read this instead; the row shape they were given is a view model
+/// and nothing constructed from it reaches the V1 table.
+final historyRepositoryProvider = Provider<BrowsingHistoryStore>(
+  (ref) => ref.watch(v2ServicesProvider).history,
 );
 
 final savedSitesRepositoryProvider = Provider<SavedSitesRepository>(
@@ -515,7 +508,9 @@ final savedSitesProvider = StreamProvider<List<SavedSite>>(
 /// and Browser Home's "recently visited" both read this one stream, so a
 /// cleared range disappears from both at once with no cache to invalidate.
 final browsingHistoryProvider = StreamProvider<List<BrowsingHistoryData>>(
-  (ref) => ref.watch(databaseProvider).watchVisits(limit: kHistoryStreamLimit),
+  (ref) => ref
+      .watch(historyRepositoryProvider)
+      .watchRecent(limit: kHistoryStreamLimit),
 );
 
 /// How many rows the shared history stream carries.

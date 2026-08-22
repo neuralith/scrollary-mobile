@@ -52,14 +52,35 @@ class SyncOutcome {
   bool get succeeded => error == null;
 }
 
+/// Work that belongs *inside* an opportunity, between the first pull and the
+/// push drain.
+///
+/// One hook, and only that position, because only one thing needs it: the
+/// Download-to-Mobile consumer, which acts on requests the pull has just
+/// delivered and reports its outcomes through the outbox the push is about to
+/// drain. Anything else that wanted a place here would be new work happening on
+/// a sync opportunity, which is a decision rather than a wiring detail.
+///
+/// Typed as a function rather than as the consumer itself so this file stays
+/// unaware of the save queue: `download_intent.dart` reaches the queue, and a
+/// session that imported it would drag capture into the sync engine.
+typedef SyncOpportunityHook = Future<void> Function(SyncTransport transport);
+
 class SyncEngine {
-  SyncEngine(LibraryDatabase db, {Clock? now})
+  SyncEngine(LibraryDatabase db, {Clock? now, this.betweenPullAndPush})
     : _repos = SyncRepositories(db),
       _now = now ?? utcNow {
     _identity = SyncIdentity(_repos);
     _puller = SyncPuller(_repos, _identity);
     _pusher = SyncPusher(_repos);
   }
+
+  /// Optional, and absent in every test that does not care: an engine built
+  /// without one behaves exactly as it did before this existed.
+  ///
+  /// Mutable so the composition can attach a consumer that needs the engine to
+  /// exist first, without a second engine or a late final.
+  SyncOpportunityHook? betweenPullAndPush;
 
   final SyncRepositories _repos;
   final Clock _now;
@@ -79,6 +100,10 @@ class SyncEngine {
     PushResult? pushed;
     try {
       pulled = await _puller.pullAll(transport, limit: pullLimit);
+      // After the pull that delivered the requests, before the drain that
+      // carries the answers away — so a resolution decided here leaves on this
+      // same opportunity rather than waiting for the next one.
+      await betweenPullAndPush?.call(transport);
       pushed = await _pusher.drainAll(transport);
       if (pushed.stoppedBy != null) {
         await _repos.syncState.recordError(pushed.stoppedBy!, _now());
