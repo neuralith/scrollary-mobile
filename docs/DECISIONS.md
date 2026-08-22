@@ -519,9 +519,9 @@ conservative delete, Folder state syncs (V2-D21).
 Recognition answers *which rows do we hold for this address*. It deliberately
 says nothing about what the page **is**, and for a long time the save flow
 inherited that silence: anything recognition could not place became a
-standalone Entry in the root Folder. A webtoon chapter on a site the library
-did not already hold was reduced to a loose item with no Collection, no Source,
-and no way to attach it to one.
+standalone Entry in the root Folder. One numbered Entry of a serialized work,
+read on a site the library did not already hold, was reduced to a loose item
+with no Collection, no Source, and no way to attach it to one.
 
 `readPageShape` (`lib/recognition/page_kind.dart`) answers the missing question
 from structure alone — a printed number by `parseEntryNumber`, or an address

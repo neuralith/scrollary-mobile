@@ -12,9 +12,10 @@ much of it do you want?* — and the V2 rewrite lost both. Commit `b0740eb`
 ("retire the V1 queue and save run") removed `save_scope_sheet.dart`, the save
 panel and the collection-name panel along with the V1 queue they were wired
 to. The V2 sheet that replaced them offers one button, for one page, and its
-`Unrecognised` branch creates a **standalone Entry in the root Folder**. So a
-webtoon chapter on a site the library did not already hold became a loose
-item, with no Collection, no Source, and no way to attach it to one.
+`Unrecognised` branch creates a **standalone Entry in the root Folder**. So one
+numbered Entry of a serialized work, read on a site the library did not already
+hold, became a loose item — no Collection, no Source, and no way to attach it to
+one.
 
 Two things were lost, and they are one journey:
 

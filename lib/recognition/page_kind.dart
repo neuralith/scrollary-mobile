@@ -5,8 +5,8 @@
 /// deliberately says nothing about what the page **is**, because identity is
 /// not shape. But the save flow has to know the difference between an entry
 /// of a serialized work, the index that lists them, and an ordinary page:
-/// sending all three down the standalone path is what reduced a webtoon to a
-/// loose item in the root Folder.
+/// sending all three down the standalone path is what reduced a followed work
+/// to a loose item in the root Folder.
 ///
 /// The question is answered from structure and the page's own words, with the
 /// helpers that already exist — `parseEntryNumber` and `collectionFingerprint`
