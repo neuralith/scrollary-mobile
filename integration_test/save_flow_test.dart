@@ -107,7 +107,11 @@ void main() {
       await tester.tap(saveAction, warnIfMissed: false);
       await pumpFor(tester, const Duration(seconds: 3));
 
-      final saveButton = find.byKey(const ValueKey('v2SaveButton'));
+      // A numbered fixture entry reads as one entry of a collection, so the
+      // sheet leads with "Add to a Collection…" and offers the loose save
+      // underneath. This test is about the queue, so it takes the loose one —
+      // the deliberate fallback, which is exactly what it is for.
+      final saveButton = find.byKey(const ValueKey('v2SaveStandalone'));
       expect(
         saveButton,
         findsOneWidget,
@@ -200,7 +204,7 @@ void main() {
       );
       await pumpFor(tester, const Duration(seconds: 3));
       await tester.tap(
-        find.byKey(const ValueKey('v2SaveButton')),
+        find.byKey(const ValueKey('v2SaveStandalone')),
         warnIfMissed: false,
       );
       await pumpFor(tester, const Duration(seconds: 3));
