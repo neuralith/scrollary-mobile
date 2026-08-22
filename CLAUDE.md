@@ -31,7 +31,7 @@ Do not write code, comments, tests, fixtures, docs or store copy that position i
 as any of those. `test/repository_cleanliness_test.dart` enforces part of this
 and will fail the build.
 
-### V2 replaces V1; the data and sync layers are built, composition is in integration
+### V2 replaces V1; it is composed and running
 
 The V2 direction is a **recognition-driven, cross-platform reading library**: you
 read, Scrollary recognises what it is, and your library stays current across your
@@ -45,7 +45,7 @@ Specified in [docs/PRODUCT.md](docs/PRODUCT.md),
 [docs/V2_PRODUCTIZATION.md](docs/V2_PRODUCTIZATION.md); every decision recorded
 in [docs/DECISIONS.md](docs/DECISIONS.md).
 
-**What is built and merged on `master`, by layer:**
+**What is built, merged and composed on `master`, by layer:**
 
 - **Backend** (`../scrollary-backend/`, B1–B11) — `/healthz`, `/version`,
   `/identity/arbitrate`, `/mutations`, `/changes?cursor=`,
@@ -69,15 +69,29 @@ in [docs/DECISIONS.md](docs/DECISIONS.md).
 - **Sync** (`lib/sync`, G1–G7) — push, pull, identity canonicalisation, merge,
   session, scheduler, retry, status, download-intent consumption, device
   label, transport.
+- **Composition** (`lib/features/v2_composition.dart`, `lib/app.dart`) — the
+  V2 screens above are the running app. The sync stack is wired up with a Pro
+  gate on the network drain (`SyncComposition.resolve`, docs/DECISIONS.md
+  V2-D37) and the scheduler's lifecycle hooks called from app launch,
+  resume, pause, local mutation and capability change; placement submits
+  locally when no service is reachable and over the network when one is
+  (V2-D41); a completed, user-initiated navigation updates the library only
+  through a followed Collection or a standalone Entry, everything else
+  becomes device-local history (V2-D40). The V1 library screens, queue,
+  update checker and `CollectionDeletionService` are retired — `lib/library/`
+  holds only the domain helpers V2 still calls (`entry_labels.dart`,
+  `collection_identity.dart`, `collection_repository.dart`,
+  `content_shape.dart`, `library_sort.dart`), not a screen.
+- **Real-system end-to-end harness** (Lane H, H2–H4) — `tool/e2e/run.sh` and
+  `test/e2e/` run the suite against a real Go service on a real PostgreSQL,
+  over the app's real `HttpSyncTransport`, and assert the no-outbound
+  invariant.
 
-**Not yet on `master`:** the composition that wires these V2 screens up as the
-running app in place of V1's (retiring the V1 library screens, queue and
-checker), and the end-to-end harness (Lane H, H2–H4). Until that composition
-merges, the app a user runs is still the V1 shell — do not describe the V2
-screens as the running app, and do not describe this work as planned rather
-than built.
+**Do not describe the V1 shell as the running app.** It is not — the V2
+screens are what `lib/app.dart` routes to, and there is no V1 fallback left to
+route to instead.
 
-Rules that still bind while that finishes: the port checklist
+Rules that still bind: the port checklist
 ([docs/V2_PORT_CHECKLIST.md](docs/V2_PORT_CHECKLIST.md)) governs any further
 change to a ported file; the shared contract (`contracts/`) is frozen and
 changes only through `contracts/README.md`'s protocol; the guard tests in

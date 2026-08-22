@@ -40,16 +40,32 @@ change.
 
 ## P2 · Monetization
 
-**No decision is required now**, and the architecture must not presume one
-([DECISIONS.md](./DECISIONS.md) V2-D7).
+**Sync is Pro, decided through the existing seam — billing itself is still
+not.** The boundary this section used to leave open is now implemented: `lib/capability/entitlement.dart`
+(`cloudSyncAvailableFor`) is the single question, asked only at the network
+drain (`SyncComposition.resolve`, `lib/features/v2_composition.dart`) —
+exactly the seam this document already required
+([DECISIONS.md](./DECISIONS.md) V2-D7, V2-D37). What remains genuinely
+undecided is everything about *paying*: there is no purchase flow, no
+provider, and `productionEntitlement()` (`lib/capability/entitlement.dart`)
+returns `Entitlement.free` unconditionally, honestly, because there is
+nothing behind it yet.
 
 | Item | Note |
 |---|---|
-| Whether sync is Pro | Sync is the first feature with a real per-user server cost |
+| ~~Whether sync is Pro~~ | **Decided and implemented** — V2-D37. What is still open below is how a user *becomes* Pro |
 | Whether foreground multitasking remains separately gated | The existing V1 boundary, `FOREGROUND_MULTITASKING.md §10.0` |
-| How server-cost capabilities map to entitlement | |
+| How server-cost capabilities map to entitlement | Sync answers this; a future capability repeats the pattern |
 | Purchase and restore behaviour | `_upgradeSeat` is the existing seam; nothing fakes a purchase |
 | Entitlement across clients | Mobile and extension must agree |
+
+**The accepted cost of gating only at the drain.** A device that never
+upgrades keeps journaling to its outbox forever — every local mutation, on a
+permanently-Free device, is a row nothing ever drains. Nothing prunes it and
+nothing caps it. This is not an oversight: it is the direct, accepted
+consequence of V2-D7's rule that local writes and the outbox are never
+gated. A retention or compaction policy for an outbox that will never drain is
+production work, not foundation work, and is not designed here.
 
 **Foundation must already support, and this is binding:** local writes and the
 outbox are **never** gated; `lib/capability/` stays the only entitlement reader;

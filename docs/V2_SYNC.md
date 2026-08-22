@@ -1,11 +1,20 @@
 # V2 sync, backend boundary and client contract
 
-> **Status: built and merged on `master`** — the backend (B1–B11), the sync
-> engine (G1–G7) and the frozen contract below. This document owns the
-> synchronisation model, the backend responsibility boundary, the shared API
-> contract and the browser-extension contract including Download to Mobile.
-> The extension itself is not built; everything else here describes running
-> code.
+> **Status: built, merged and composed on `master`** — the backend (B1–B11),
+> the sync engine (G1–G7), the frozen contract below, and the composition that
+> wires the whole stack into the running app (`lib/features/v2_composition.dart`,
+> `lib/app.dart`), including the Pro gate on the network drain (V2-D37) and the
+> scheduler's lifecycle hooks (§2). This document owns the synchronisation
+> model, the backend responsibility boundary, the shared API contract and the
+> browser-extension contract including Download to Mobile. The extension
+> itself is not built; everything else here describes running code.
+>
+> **The real-system harness proves this design against a real service.**
+> `tool/e2e/run.sh` brings up the real Go service against a real PostgreSQL and
+> runs the suite in `test/e2e/` over the app's real `HttpSyncTransport` and
+> real repositories — including the no-outbound invariant asserted in
+> `test/e2e/h4_download_to_mobile_test.dart` and `test/e2e/support/e2e_support.dart`
+> (roadmap lane H, H2–H4).
 >
 > Domain and ownership: [V2_ARCHITECTURE.md](./V2_ARCHITECTURE.md) · Product:
 > [PRODUCT.md](./PRODUCT.md) · Deferred: [V2_PRODUCTIZATION.md](./V2_PRODUCTIZATION.md)
@@ -31,6 +40,17 @@ Three separate guarantees, and the middle one is new in V2:
 not offer it, so the product does not claim it. Sync runs when the app has a
 reasonable opportunity; between those opportunities, local state is durable and
 that is the guarantee that matters.
+
+**The first guarantee holds for every device; the other two hold only for one
+that may use the network.** Cloud sync is a Pro capability
+(V2-D37, [V2_PRODUCTIZATION.md](./V2_PRODUCTIZATION.md) P2): `lib/capability/entitlement.dart`
+(`cloudSyncAvailableFor`) is the single question, and it is asked only at the
+network drain — `SyncComposition.resolve` in `lib/features/v2_composition.dart`.
+A Free device still gets guarantee 1 in full: every mutation commits locally,
+the outbox keeps recording intents, and nothing about recording, reading or
+organising the library is gated. What it does not get is 2 and 3 — its outbox
+never drains and it never pulls another device's changes, silently and by
+design, until it is entitled.
 
 ### 1.1 The rule this supersedes
 
@@ -65,17 +85,28 @@ Two more rules the scheduler holds:
 - **A failure waits longer each time.** Backoff starts at 30 seconds, doubles,
   and is capped at 30 minutes, with a subtractive jitter (up to 20% shaved off
   a step, so the ceiling stays the cap and nothing more). A success, a
-  reconnect or *Sync now* resets it to zero. An unconfigured transport is
-  recorded as a quiet no-op (`neverConfigured`) — never an error, never
-  retried.
+  reconnect or *Sync now* resets it to zero. An unconfigured transport, and an
+  unentitled one (V2-D37), are both recorded as the same quiet no-op
+  (`neverConfigured`) — never an error, never retried.
+
+**Where each hook is called.** The scheduler itself only reacts; the app is
+what decides an opportunity exists.
+
+| Hook | Called from |
+|---|---|
+| `onAppLaunch` | `lib/app.dart`, once, after the shell's first frame and `SyncComposition.start()` has begun watching the outbox |
+| `onAppResumed` / `onAppPaused` | `lib/app.dart`'s `didChangeAppLifecycleState`, on every foreground/background transition |
+| `onLocalMutation` | `SyncComposition._watchOutbox` (`lib/features/v2_composition.dart`) — a live query over `outbox` row count; only a *rise* counts, so the drain's own acknowledgement never re-triggers itself |
+| `onConnectivityRegained` | Reused for a second kind of "reachable now": `SyncComposition._onCapabilityChanged` calls it when `cloudSyncAvailable()` flips from false to true, so gaining Pro nudges the same way regaining a network does. Losing it needs no call — the resolver starts answering null and the next opportunity is already a no-op |
+| Manual *Sync now* | `lib/library_ui/sync_status_section.dart`, the only caller that bypasses jitter and the foreground check |
 
 The product semantics in §1 are what must hold; the numbers above are the
 current implementation and may be retuned without changing them.
 
 ## 3. Sync state the user can see
 
-Routine success is silent. `Settings → Sync` shows, without any of it appearing
-in the reader:
+Routine success is silent. For a device entitled to cloud sync, `Settings →
+Sync` shows, without any of it appearing in the reader:
 
 - last successful sync;
 - current state — idle, syncing, offline, retrying, blocked;
@@ -85,6 +116,14 @@ in the reader:
 
 Nothing about routine sync appears in the library or the reader. A failure that
 the user can do nothing about is not an alert.
+
+**A Free device gets one locked row and nothing else** (`lib/features/settings_screen.dart`
+`_CloudSyncSettingRow`, V2-D37): no pending count, no state sentence, no *Sync
+now* — none of the furniture above, because it would describe a drain that is
+not going to run. The row states plainly that cloud sync is a Pro capability
+and that the library, reading state and organisation stay on the device
+either way. This is not a degraded version of the live section; it is a
+different, honest description of what a Free device actually does.
 
 ## 4. Mechanism
 
@@ -138,6 +177,21 @@ at the end of the run, to a fixpoint. Two rules keep that durable
   `latest_revision` — a dead row must not pin it forever. A tombstone for a
   parent takes its deferred children with it, the same cascade the local schema
   applies to rows that did land.
+
+**Soft references never hold a row back.** `preferred_source_id` on a
+Collection and `resolved_into_source_id` on a Source name something the row
+can exist without — unlike a Folder or a Collection parent, which the row is
+meaningless without. Such a row applies immediately with the pointer left
+null, and is retried only to fill that value in later; it never counts toward
+`orphaned`.
+
+**A known limit at the boundary.** Before the run calls anything an orphan it
+asks once more (`confirmedHead`) — a parent may have landed on the service
+during the run's own paging. That narrows the residual window between "last
+page fetched" and "actually at head" to one confirming fetch rather than the
+whole run, but does not close it: a row created in the gap between that
+confirming fetch and the decision is still possible. See DECISIONS.md
+V2-D38.
 
 ### 4.4 Order of operations
 
@@ -193,6 +247,13 @@ check timestamps · derived Collection pointers · favicons · settings.
 | Delete a Folder | User | Yes | Yes | None. Children reparent to its parent |
 | Forget source-derived discovery | Source | No | No | None |
 | Delete the account | Server | — | — | None. Devices keep their libraries |
+
+**Archiving also stops this device's own queued downloads for the Collection**
+— a device-local, not a sync, effect: `cancelWaitingDownloadsOf`
+(`lib/library_ui/collection_actions.dart`) cancels every **queued** save task
+for the Collection's Entries; a task already **running** is left to finish,
+because stopping is always cooperative here and archiving does not ask for a
+mid-write kill. See DECISIONS.md V2-D42.
 
 **A remote mutation never deletes local bytes** (invariant I14). A removal that
 arrives from another device takes library rows and leaves the package on disk,
@@ -278,6 +339,16 @@ extension: "Download on mobile"
 | `claimed_by_device`, `claimed_at` | Minimal targeting — see below |
 | `idempotency_key` | Supplied by the requesting client |
 | `created_by` | A client label, for the requester's own UI |
+
+**Where consumption runs.** `createDownloadIntentConsumer` builds a
+`DownloadIntentConsumer` over the app's own `SaveQueueRepository` — the
+instance that already holds Start authorisation, so nothing here reasons
+about a queue nobody started. `SyncComposition` (`lib/features/v2_composition.dart`)
+wires it into `SyncEngine.betweenPullAndPush` (`lib/sync/session.dart`), the
+one hook `syncOnce` calls between the pull that just delivered new requests
+and the push that carries the resulting claim or terminal report away — so a
+request answered on this device leaves on the same sync opportunity that
+found it (V2-D35 for what a device may claim; §4.4 for pull-before-push).
 
 **Rules that keep it from becoming something else.**
 

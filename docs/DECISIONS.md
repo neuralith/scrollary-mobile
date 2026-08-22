@@ -375,6 +375,127 @@ particular trades off battery and traffic against how stale a second device's
 view is allowed to feel, and retuning it should be a deliberate decision, not
 a side effect of an unrelated change.
 
+### V2-D37 · Cloud sync is a Pro capability, gated only at the network drain
+
+`lib/capability/entitlement.dart` (`cloudSyncAvailableFor`) answers whether
+this device may use the cloud service; `ForegroundMultitasking.cloudSyncAvailable`
+carries that answer to the composition, and `SyncComposition.resolve` in
+`lib/features/v2_composition.dart` is the one place it is asked — the closure
+handed to `SyncScheduler` as its transport, re-evaluated on every opportunity
+rather than latched at startup. A capability gained while the app is running
+nudges the scheduler the same way a network reconnect does; losing it needs no
+nudge, because the resolver starts answering null and the next opportunity is
+a quiet no-op.
+
+Nothing else moves. Local writes, the outbox and every read stay ungated
+(V2-D7): a Free device's outbox keeps journaling exactly as a Pro device's
+does. `Settings → Sync` shows a locked *Cloud sync* row and nothing else for a
+Free device — no pending count, no state sentence, no *Sync now* — because
+that furniture would describe a drain that is not going to run
+(`lib/features/settings_screen.dart`).
+
+*The accepted cost, recorded once.* A device that never upgrades keeps
+recording sync intents into an outbox that never drains. Nothing prunes it and
+nothing caps it — the outbox is by-design unbounded on a permanently-Free
+device. That is a deliberate consequence of the gate sitting on the network
+drain and nowhere else (V2-D7), not an oversight; a retention or compaction
+policy for it is Productization work ([V2_PRODUCTIZATION.md](./V2_PRODUCTIZATION.md)
+P2, P3).
+
+### V2-D38 · Pull defers parent-less rows to a fixpoint; soft references land null and fill later
+
+`lib/sync/pull.dart` holds back a row whose parent is not local yet, retries
+every held-back row after each later page and again at the end of the run,
+and pins the persisted cursor at `min(page's last revision, lowest deferred
+revision − 1)` so an interrupted run always re-offers the first row it could
+not apply. What is still waiting once the feed reaches head is treated as an
+orphan — the parent exists nowhere in the feed — and is dropped, counted, and
+allowed to fall behind the cursor rather than pin it forever.
+
+A **soft reference** — `preferred_source_id` on a Collection,
+`resolved_into_source_id` on a Source — does not hold the row back the way a
+hard parent (a Collection's Folder, an Entry's Collection) does. The row
+applies with the pointer left null and is retried only to fill that pointer
+in; it is never counted as an orphan for a reference that never resolves,
+because the row it names is already real without it.
+
+*A known limit.* A page just fetched can still be behind a row that landed on
+the server between the last page's fetch and the moment the run decides it is
+at head, so the run confirms with one more fetch before calling anything an
+orphan (`confirmedHead` in `pullAll`). That narrows the window to one
+uncertain page rather than the whole run, but does not close it to zero — a
+row created on the exact page boundary between the confirming fetch and the
+decision remains a live possibility this design accepts rather than
+eliminates. See [V2_SYNC.md](./V2_SYNC.md) §4.3.
+
+### V2-D39 · A device's root Folder is mapped onto the server's at the first pull, journaling no outbox intent
+
+`FolderRepository.ensureRoot` (`lib/data/folder_repository.dart`) inserts the
+one local root Folder a device needs before it can place anything, and does
+not append an outbox row for it — there is no "create the root" intent to
+send, because a device's root and the library's root are the same fact
+(I1) and not something one device gets to originate. When `lib/sync/pull.dart`
+meets the server's root Folder for the first time, it maps it onto the local
+root rather than treating it as an unrelated create (`_applyFolder`,
+`kind == 'root'`).
+
+*Why.* The server's identity model has exactly one root per library
+(V2-D21). A device that minted its own root locally and then received the
+server's would either hold two roots or need special-case reconciliation the
+day it first syncs. Recognising the root by its kind, once, avoids both.
+
+### V2-D40 · Browsing recognises into the library only through a followed Collection or a standalone Entry
+
+`recordCompletedVisit` (`lib/features/v2_composition.dart`) is the one place
+a completed, user-initiated navigation is turned into either a library write
+or a history row (roadmap F6). It asks the recogniser
+(`lib/recognition/recognise.dart`) what the page is, and only a
+`RecognisedLocation` whose `authorisesLibraryUpdate` is true — a standalone
+Entry's Location, or one on a followed Collection — records access
+(`recordAccess`, never completion: I16, V2-D9). A page on a *known* Source
+whose Collection has stopped being followed, and anything the recogniser does
+not know at all, is device-local history and nothing else.
+
+*Why.* Following is the sole authorising act (V2-D13). A page that happens to
+match a Source the library once followed must not silently re-expand a
+library the user chose to stop keeping current — that would make Archive a
+suggestion rather than a decision. Browsing alone never creates a Collection,
+an Entry or a Location; the only route from history into the library is the
+one-tap promotion the user makes.
+
+### V2-D41 · Placement is a local write when no sync service is configured or reachable
+
+`placementSubmitFor` (`lib/features/v2_composition.dart`) applies a placement
+locally (`localPlacementSubmit`) whenever this build carries no service
+address, or the device is not currently entitled to use the one it carries
+(`v2.sync.resolve() == null`) — the same gate the sync drain asks, asked
+again at the moment a placement is submitted, so the two can never disagree
+about whether this device has a service. Only when a service is both
+configured and reachable does placement go through `PlacementService` for
+server-side arbitration.
+
+*Why.* Server arbitration exists because two devices placing the same
+unplaced Entry differently is a contradiction only a second device can create
+(§4.6). A device with no reachable service has no second device to
+contradict, so applying the position the user typed, locally, and journaling
+the same intent a synced device would send is not a lesser behaviour — it is
+the correct one for the situation, consistent with V2-D7.
+
+### V2-D42 · Collection removal reaches every device; archiving stops only queued downloads
+
+*Remove from library*, at Collection scope, removes the Collection and its
+Entries library-wide and leaves every device's downloaded bytes untouched
+(I14) — `_removeCollectionFromLibrary` in `lib/library_ui/collection_actions.dart`.
+*Archive* stops following without removing anything, and additionally cancels
+this Collection's **queued** downloads (`cancelWaitingDownloadsOf`, filtered
+to `SaveTaskState.queued`); a download already running is left to finish,
+because archiving is not a stop and this app never offers a stop that does
+not stop.
+
+The V1 `CollectionDeletionService` (`lib/library/collection_deletion.dart`) is
+retired; its file-and-row transaction is superseded by the V2 repository path
+above plus the OfflineCopy cascade (I14).
+
 ---
 
 ## Open
