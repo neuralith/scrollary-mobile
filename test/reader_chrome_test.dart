@@ -1,25 +1,20 @@
-import 'dart:io';
-
-import 'package:drift/native.dart';
+import 'package:drift/drift.dart' show driftRuntimeOptions;
 import 'package:flutter/material.dart';
 import 'package:flutter/semantics.dart' show SemanticsAction;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
-import 'package:path/path.dart' as p;
 import 'package:web_reader/browser/browser_controller.dart';
 import 'package:web_reader/features/document_reader.dart';
 import 'package:web_reader/features/operation_indicator.dart';
 import 'package:web_reader/features/reader_screen.dart';
 import 'package:web_reader/providers.dart';
-import 'package:web_reader/storage/database.dart';
+import 'package:web_reader/reading_v2/offline_read.dart';
 import 'package:web_reader/storage/document.dart';
-import 'package:web_reader/storage/file_store.dart';
-import 'package:web_reader/storage/manifest.dart';
 
-import '../tool/fixture/fixture_site.dart';
 import 'package:web_reader/domain/collection.dart' show OrderingBasis;
 
+import 'helpers/reader_harness.dart';
 import 'helpers/v2_harness.dart';
 
 /// What shows and hides the reader's overlaid chrome.
@@ -40,9 +35,10 @@ import 'helpers/v2_harness.dart';
 /// treat that contact as a tap; the reader follows the platform rather than
 /// inventing an arbiter for it.
 void main() {
-  late AppDatabase db;
-  late Directory root;
-  late FileStore store;
+  /// The reader's own inputs: a V2 library, a committed package, and the
+  /// OfflineCopy that ties them together — exactly what the route resolves
+  /// before it builds the screen.
+  late ReaderHarness reader;
 
   /// The flag the reader publishes its bar visibility on. Built here rather
   /// than by the provider so a test can still read it after the reader has
@@ -52,125 +48,41 @@ void main() {
   late int browserOpened;
   late V2Harness v2;
 
+  /// The Entry these tests open, and the Collection its swipe-back lands in.
+  late String entryId;
+  late String collectionId;
+
+  // Two in-memory libraries on purpose: the reader's own (the package it
+  // opens) and the queue the indicator reports on. They share no executor, so
+  // drift's multiple-database warning is noise here.
+  driftRuntimeOptions.dontWarnAboutMultipleDatabases = true;
+
   setUp(() {
-    db = AppDatabase.forTesting(NativeDatabase.memory());
-    root = Directory.systemTemp.createTempSync('webread_reader_chrome');
-    store = FileStore(root);
-    v2 = V2Harness(browser: BrowserController(), fileStore: store);
+    reader = ReaderHarness();
+    v2 = V2Harness(browser: BrowserController(), fileStore: reader.fileStore);
     chromeFlag = ReaderChromeVisibility();
     detailsOpened = 0;
     browserOpened = 0;
-    Directory(
-      p.join(root.path, FileStore.libraryFolderName),
-    ).createSync(recursive: true);
-    Directory(
-      p.join(root.path, FileStore.tmpFolderName),
-    ).createSync(recursive: true);
   });
 
   tearDown(() async {
     chromeFlag.dispose();
     await v2.close();
-    await db.close();
-    if (root.existsSync()) root.deleteSync(recursive: true);
+    await reader.close();
   });
 
-  Future<void> seedCollection() => db.upsertCollection(
-    Collection(
-      contentKind: 'unknownWebContent',
-      sequenceKind: 'none',
-      orderingBasis: 'discoveryOrder',
-      shapeConfidence: 'low',
-      lifecycle: 'active',
-      id: 'collection-1',
-      title: 'Fixture Collection',
-      sourceUrl: 'https://x.example/guide/foo',
-      host: 'x.example',
-      collectionKey: '/guide/foo',
-      createdAt: DateTime(2026, 7, 1),
-    ),
-  );
-
   /// A tall image entry, so there is always somewhere to scroll to.
-  ///
-  /// [entryId] and [order] are parameters only so a second entry can be seeded
-  /// beside the first — entry-to-entry navigation needs somewhere to go.
-  Future<void> seedImages({
-    double progressFraction = 0,
-    int progressPageIndex = 0,
-    String entryId = 'c1',
-    int order = 1,
-  }) async {
-    await seedCollection();
-    final staging = await store.beginEntry(
-      collectionId: 'collection-1',
-      entryId: entryId,
-    );
-    final assets = <EntryAsset>[];
-    for (var i = 1; i <= 12; i++) {
-      await staging
-          .assetFile('0$i.png')
-          .writeAsBytes(panelPng(entry: 1, index: i));
-      assets.add(
-        EntryAsset(
-          index: i,
-          sourceUrl: 'https://cdn.example/$i.png',
-          status: AssetStatus.stored,
-          relativePath: 'assets/0$i.png',
-          width: 800,
-          height: 1200,
-          dimensionsVerified: true,
-        ),
-      );
-    }
-    final relative = await store.commit(
-      staging,
-      EntryManifest(
-        schemaVersion: 1,
-        entryId: entryId,
-        collectionId: 'collection-1',
-        sourceUrl: 'https://x.example/guide/foo/$order',
-        title: 'Foo Entry $order',
-        savedAt: DateTime(2026, 7, 20),
-        status: SaveStatus.complete,
-        detectedAssetCount: 12,
-        storedAssetCount: 12,
-        assets: assets,
-      ),
-    );
-    await db.upsertEntry(
-      Entry(
-        host: '',
-        contentKind: 'unknownWebContent',
-        contentKindConfidence: 'low',
-        contentKindIsUserSet: false,
-        id: entryId,
-        collectionId: 'collection-1',
-        title: 'Foo Entry $order',
-        sourceUrl: 'https://x.example/guide/foo/$order',
-        urlKey: 'https://x.example/guide/foo/$order',
-        artifactFormat: 'imageSequence',
-        saveStatus: 'complete',
-        contentPath: relative,
-        savedAt: DateTime(2026, 7, 20),
-        detectedAssetCount: 12,
-        storedAssetCount: 12,
-        entryOrder: order,
-        byteSize: 1024,
-        entryNumber: order.toDouble(),
-        sourceMarker: 'Entry $order',
-        readStatus: 'unread',
-        progressFraction: progressFraction,
-        progressPageIndex: progressPageIndex,
-        progressOffsetInPage: 0,
-      ),
-    );
+  Future<void> seedImages({int? anchorIndex}) async {
+    collectionId = await reader.collectionId();
+    entryId = await reader.seedEntry(title: 'Foo Entry 1', ordinal: 201);
+    await reader.seedImages(entryId: entryId, anchorIndex: anchorIndex);
   }
 
   /// The same screen over a structured document, to prove the policy is
   /// written once rather than per artifact.
   Future<void> seedDocument() async {
-    await seedCollection();
+    collectionId = await reader.collectionId();
+    entryId = await reader.seedEntry(title: 'The Saved Page', ordinal: 201);
     final blocks = <DocumentBlock>[
       const DocumentBlock(
         index: 0,
@@ -190,72 +102,25 @@ void main() {
         ),
       );
     }
-    final document = StructuredDocument(
-      schemaVersion: StructuredDocument.currentSchemaVersion,
-      title: 'The Saved Page',
-      sourceUrl: 'https://x.example/guide/foo/1',
-      blocks: blocks,
-    );
-    final staging = await store.beginEntry(
-      collectionId: 'collection-1',
-      entryId: 'c1',
-    );
-    await staging.documentFile.writeAsString(document.encode());
-    final relative = await store.commit(
-      staging,
-      EntryManifest(
-        schemaVersion: EntryManifest.currentSchemaVersion,
-        artifact: ArtifactFormat.structuredDocument,
-        document: DocumentRef(
-          relativePath: FileStore.documentFileName,
-          blockCount: document.blockCount,
-          textLength: document.textLength,
-        ),
-        entryId: 'c1',
-        collectionId: 'collection-1',
-        sourceUrl: 'https://x.example/guide/foo/1',
+    await reader.seedDocument(
+      entryId: entryId,
+      document: StructuredDocument(
+        schemaVersion: StructuredDocument.currentSchemaVersion,
         title: 'The Saved Page',
-        savedAt: DateTime(2026, 7, 20),
-        status: SaveStatus.complete,
-        detectedAssetCount: 0,
-        storedAssetCount: 0,
-        assets: const [],
-      ),
-    );
-    await db.upsertEntry(
-      Entry(
-        host: '',
-        contentKind: 'article',
-        contentKindConfidence: 'high',
-        contentKindIsUserSet: false,
-        id: 'c1',
-        collectionId: 'collection-1',
-        title: 'The Saved Page',
-        sourceUrl: 'https://x.example/guide/foo/1',
-        urlKey: 'https://x.example/guide/foo/1',
-        artifactFormat: 'structuredDocument',
-        saveStatus: 'complete',
-        contentPath: relative,
-        savedAt: DateTime(2026, 7, 20),
-        detectedAssetCount: 0,
-        storedAssetCount: 0,
-        entryOrder: 1,
-        byteSize: 4096,
-        entryNumber: 1,
-        sourceMarker: 'Entry 1',
-        readStatus: 'unread',
-        progressFraction: 0,
-        progressPageIndex: 0,
-        progressOffsetInPage: 0,
+        sourceUrl: 'https://reading.example.com/serial-alpha/part-101',
+        blocks: blocks,
       ),
     );
   }
 
-  Widget harness({String start = '/reader/c1'}) {
+  /// The app around the reader: the router it leaves through, and the
+  /// indicator that lives above it.
+  ///
+  /// [offline] is resolved before the widget is built, because that is how the
+  /// route builds it — the screen looks nothing up for itself.
+  Widget app(OfflineReaderData offline) {
     return ProviderScope(
       overrides: [
-        databaseProvider.overrideWithValue(db),
-        fileStoreProvider.overrideWithValue(store),
         v2ServicesProvider.overrideWithValue(v2.services),
         readerChromeVisibleProvider.overrideWithValue(chromeFlag),
       ],
@@ -274,18 +139,19 @@ void main() {
           ],
         ),
         routerConfig: GoRouter(
-          initialLocation: start,
+          initialLocation: '/reader/$entryId',
           routes: [
             GoRoute(
               path: '/collection/:collectionId',
-              builder: (context, state) => CollectionDetailScreen(
-                collectionId: state.pathParameters['collectionId']!,
-              ),
+              builder: (context, state) => const _EntryListStub(),
             ),
             GoRoute(
               path: '/reader/:entryId',
-              builder: (context, state) =>
-                  ReaderScreen(entryId: state.pathParameters['entryId']!),
+              builder: (context, state) => ReaderScreen(
+                entryId: state.pathParameters['entryId']!,
+                offline: offline,
+                collectionId: collectionId,
+              ),
             ),
           ],
         ),
@@ -296,7 +162,9 @@ void main() {
   /// Real file IO needs the event loop to turn, so the load is pumped with
   /// `runAsync` windows until the body appears.
   Future<void> openReader(WidgetTester tester, Finder body) async {
-    await tester.pumpWidget(harness());
+    late OfflineReaderData offline;
+    await tester.runAsync(() async => offline = await reader.open(entryId));
+    await tester.pumpWidget(app(offline));
     for (var i = 0; i < 120; i++) {
       await tester.runAsync(
         () => Future<void>.delayed(const Duration(milliseconds: 20)),
@@ -660,45 +528,6 @@ void main() {
       expect(chromeVisible(tester), isTrue);
     });
 
-    readerTest('it survives a move to the next entry', (tester) async {
-      await tester.runAsync(() async {
-        await seedImages();
-        await seedImages(entryId: 'c2', order: 2);
-        await queueWork();
-      });
-      await openReader(tester, find.byType(ListView));
-      await settle(tester);
-      expect(pill, findsOneWidget);
-
-      // The move is made from the chrome, so it is made with the bars up.
-      await tester.tap(find.text('Next entry'));
-      for (var i = 0; i < 60; i++) {
-        await tester.runAsync(
-          () => Future<void>.delayed(const Duration(milliseconds: 20)),
-        );
-        await tester.pump();
-      }
-
-      expect(find.text('Entry 2'), findsWidgets, reason: 'setup: it moved');
-      expect(
-        pill,
-        findsOneWidget,
-        reason: 'one State spans both entries; the flag is not reset by a move',
-      );
-
-      // …and the pair still agree on the entry it arrived at. The reader keeps
-      // its own `_chromeVisible` across the transition, so a stale published
-      // flag would show up here as a pill that no longer follows the bars.
-      await tester.tap(find.byType(ListView));
-      await settle(tester);
-      expect(chromeVisible(tester), isFalse);
-      expect(pill, findsNothing);
-
-      await tester.tap(find.byType(ListView));
-      await settle(tester);
-      expect(pill, findsOneWidget);
-    });
-
     readerTest('it takes only its own box, and the page keeps the rest', (
       tester,
     ) async {
@@ -750,7 +579,7 @@ void main() {
   group('unchanged behaviour', () {
     readerTest('the jump chip still follows the chrome', (tester) async {
       // Restored well into the entry, so wandering away earns the chip.
-      await tester.runAsync(() => seedImages(progressFraction: 0.35));
+      await tester.runAsync(() => seedImages(anchorIndex: 4));
       await openReader(tester, find.byType(ListView));
 
       await tester.drag(find.byType(ListView), const Offset(0, -3000));
@@ -785,7 +614,7 @@ void main() {
         await tester.pump(const Duration(milliseconds: 40));
       }
       expect(find.byType(ReaderScreen), findsNothing);
-      expect(find.byType(CollectionDetailScreen), findsOneWidget);
+      expect(find.byType(_EntryListStub), findsOneWidget);
     });
 
     readerTest('reading progress still tracks the scroll', (tester) async {
@@ -812,11 +641,11 @@ void main() {
   });
 }
 
-/// Stands in for the retired V1 collection screen: these tests assert the
-/// reader RETURNS somewhere, not what that somewhere renders.
-class CollectionDetailScreen extends StatelessWidget {
-  const CollectionDetailScreen({super.key, this.collectionId = ''});
-  final String collectionId;
+/// Stands in for the collection's entry list: these tests assert the reader
+/// RETURNS somewhere, not what that somewhere renders.
+class _EntryListStub extends StatelessWidget {
+  const _EntryListStub();
   @override
-  Widget build(BuildContext context) => const SizedBox.expand();
+  Widget build(BuildContext context) =>
+      const Scaffold(body: Center(child: Text('entry list')));
 }

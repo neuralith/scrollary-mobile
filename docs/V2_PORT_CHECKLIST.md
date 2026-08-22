@@ -420,9 +420,11 @@ the *dedicated* suites are the ones whose subject the component is.
 
 The rule this list exists to enforce: *if a ported component needs an internal
 change, that is a task with its own review, not a side effect of a call-site
-edit.* Two such changes have now been reviewed and made. Both are seams — a
-place where the **caller** changes — and neither moves a measurement, a
-threshold, a wait, an ordering or a stopping condition.
+edit.* Three such changes have now been reviewed and made. §17.1 and §17.2 cut
+the two seams V2 could not start without; §17.3 is the first of those seams'
+other end, made at the V1 retirement — the V1 route through it is removed now
+that nothing takes it. None of the three moves a measurement, a threshold, a
+wait, an ordering or a stopping condition.
 
 ### 17.1 The save engine's result seam — 2026-08-21
 
@@ -501,6 +503,79 @@ threshold, a wait, an ordering or a stopping condition.
   pre-existing reader suite (`reader_lifecycle`, `reader_navigation`,
   `reader_bottom_controls`, `reader_chrome`, `finished_transition`,
   `document_reader`) passes unedited.
+
+
+### 17.3 The reader's V1 route, removed — 2026-08-23
+
+- **File:** `lib/features/reader_screen.dart` (§13), the host of §17.2's
+  injection point.
+- **Why.** §17.2 added `ReaderScreen.offline` as an *optional* parameter: null
+  was the V1 route, and the screen went on loading a row, a manifest, the
+  files, the anchor, the collection touch and the sibling list from
+  `AppDatabase` inside its own state. With the V1 database retired there is no
+  such row to load — and every production caller now passes
+  `OfflineReaderData` (`V2ReaderRoute` is the one reader route, and it resolves
+  the package from an OfflineCopy before the screen is built). The V1 route was
+  therefore code no caller could reach against a database no build has.
+- **What changed.** `offline` became **required**, and with it went: `_load`'s
+  V1 branch (`db.entryById`, `markEntryContentMissing`, `reading.markOpened`,
+  `db.touchCollection`, `reading.positionOf`), the `_reading` and `_cleanup`
+  fields and the reader's cleanup lock, and the whole apparatus that hung off
+  the neighbour list — `_siblingsFor` / `_refreshSiblings` / `_publishSiblings`
+  / `_onRemovals`, the `_siblings` notifier, `readerCanOpen`, `_ForwardPlan`,
+  `_planForForward`, `_resolveCleanupPreference`, `_applyOnArrival`,
+  `_removeFinished`, `_goTo` / `_navigateTo`, the bottom bar's two
+  `_EntryStepButton`s, the end-of-entry *Next entry* button, the transient
+  notice and its Undo, and *Save again* on the unavailable screen. All of it
+  read from, or wrote to, entries of a **Collection**; a reader opened over a
+  package on this device has no neighbour list, which §17.2 already recorded
+  as the deliberate shape of the provided route. 2639 lines to 1448.
+
+  Two things were **added**, both to keep behaviour the V1 route had:
+
+  - `ReaderScreen.collectionId`, an optional constructor argument the route
+    supplies, so the right-swipe still leaves for the collection's entry list.
+    Resolved by `V2ReaderRoute` rather than looked up here: a Collection is a
+    library fact, this screen is handed a package, and a reader that reached
+    into the library to answer a navigation question would be a library
+    dependency smuggled back in — the reader is still constructible in a
+    `ProviderScope` with no overrides at all.
+  - `_measureRestoredPosition`, which measures the restored position's
+    *fraction* from the geometry on the frame after the reader opens. The
+    anchor arrives on the OfflineCopy; a fraction is a fact about this
+    rendering and there is deliberately no stored one (V1 read it from a
+    `progress_fraction` column). Without it `_restoredFraction` was
+    permanently zero and the jump-to-saved chip could never appear — a
+    regression the ported chrome suite caught.
+- **What did not change.** **Position restore, in either direction**: the image
+  reader still opens *at* its position from manifest geometry before a single
+  image decodes, and the document reader still restores *to* its position on
+  the first measurement. The chrome: the tap policy in full (brief, stationary,
+  single-pointer, content at rest), the `Listener` that observes without
+  joining the arena, the fade, the publication to
+  `readerChromeVisibleProvider` and the restore of `true` on the way out. The
+  progress debounce (`kProgressSaveInterval`), the unconditional flush on close
+  and on lifecycle change, the completion threshold and its dwell, the
+  no-false-completion-on-termination rule, the completed-is-100% rule, the live
+  percentage readout, the decode budget, the partial banner and its retry, the
+  swipe thresholds, and every unavailable state.
+- **Proof.** `test/reader_lifecycle_test.dart` (7), `test/reader_chrome_test.dart`
+  (32), `test/document_reader_test.dart` (11) and
+  `test/reader_navigation_test.dart` (4) were ported onto the V2 route over a
+  real committed package and a real OfflineCopy (`test/helpers/reader_harness.dart`),
+  and assert the same behaviours: restore-at-open and restore-to-position, the
+  flush and the dwell, the anchor written back to the copy, the reading state
+  written through `ReadingStateRepository`, the chrome policy, the jump chip and
+  the swipe out. `test/save_v2/engine_capture_source_test.dart` still opens the
+  real reader in a `ProviderScope` with no overrides at all.
+- **Retired with the route.** `test/reader_bottom_controls_test.dart` (the two
+  entry-navigation controls) and `test/finished_transition_test.dart` (the
+  finished-entry dialog, the collection cleanup preference and the notice). Both
+  suites' subject was the forward move to the next entry *in a collection*;
+  neither has one to move through. `test/reader_chrome_test.dart` lost one test
+  for the same reason (*it survives a move to the next entry*), and
+  `test/document_reader_test.dart` one (*moving to the next document entry
+  starts a fresh scroll*).
 
 ---
 

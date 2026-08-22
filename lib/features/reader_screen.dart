@@ -18,18 +18,13 @@ import '../library_ui/providers.dart'
     show libraryUiServicesProvider, primaryLocation;
 import '../providers.dart';
 import '../reading/reading_position.dart';
-import '../reading/reading_repository.dart';
 import '../reading_v2/offline_read.dart';
-import '../storage/cleanup.dart';
-import '../storage/database.dart';
 import '../storage/document.dart';
 import '../storage/file_store.dart';
 import '../storage/manifest.dart';
 import '../reading/decode_budget.dart';
 import '../ui/palette.dart';
 import 'document_reader.dart';
-import 'cleanup_dialogs.dart';
-import 'library_formats.dart';
 
 /// How long the reader waits before writing a scroll position.
 ///
@@ -49,96 +44,45 @@ const double kReaderTopSpacer = 104;
 /// the saved position instead of jumping there afterwards.
 const double kPartialBannerExtent = 88;
 
-/// How long the transient reader notice stays on screen.
-///
-/// Two seconds: it reports something that has already happened and offers one
-/// optional way out, so it is read at a glance and then gone. A notice that
-/// outstays the glance competes with the page the reader came here for.
-///
-/// Deliberately inside [CleanupService.undoWindow], so Undo is still real for
-/// the whole time the notice offers it. Lengthening this past that window would
-/// put a dead button on screen.
-const Duration kReaderNoticeDuration = Duration(seconds: 2);
-
-/// Where the floating reader notice sits above the bottom chrome (a 48px
-/// control row plus its padding) — the same band the jump chip uses, and it is
-/// added to the safe-area inset rather than assuming one: Android's
-/// three-button navigation bar reports ~48px there, enough to push the chrome
-/// up under a fixed offset and cover the entry controls.
-const double kReaderNoticeInset = 104;
-
-/// The one condition under which the reader can open an entry: the package is
-/// still on the device and the save got far enough to be readable.
-///
-/// This is the authority behind every entry-navigation control. A row whose
-/// `contentPath` is null has had its downloads removed (by the user, by the
-/// finished-entry flow, or by a collection deletion) or was never stored;
-/// either way opening it lands on the unavailable screen, so nothing may offer
-/// it as a destination. Deletion needs no separate test — a deleted row is not
-/// in the collection's entries at all.
-///
-/// Deliberately **not** derived from a display flag or from a count: the file
-/// column and the save status are what [_ReaderScreenState._load] itself
-/// checks, so the control and the screen it leads to agree by construction.
-bool readerCanOpen(Entry entry) =>
-    entry.contentPath != null &&
-    (entry.saveStatus == 'complete' || entry.saveStatus == 'partial');
-
-/// What a forward move has undertaken to do to the entry it leaves behind.
-///
-/// Built before the reader moves, from questions asked while it was still on
-/// that entry, and carried until the destination is open. Two fields, both
-/// false by default, because the ordinary forward move — a skip ahead, a look
-/// at the next entry, a mistap — promises nothing at all.
-class _ForwardPlan {
-  const _ForwardPlan({
-    this.leaving,
-    this.markComplete = false,
-    this.remove = false,
-  });
-
-  /// Move, and change nothing about the entry being left.
-  static const none = _ForwardPlan();
-
-  /// The entry being left, when there is something to do to it.
-  final Entry? leaving;
-
-  /// The reader said it is finished. Only ever true for an entry that was not
-  /// already complete and whose reader answered *Mark complete and continue*.
-  final bool markComplete;
-
-  /// The collection's decision is to remove a finished entry's downloads, and
-  /// this entry is (or is about to be) finished.
-  final bool remove;
-
-  bool get hasWork => leaving != null && (markComplete || remove);
-}
-
 /// Vertical image reader over **local files only**.
 ///
 /// No remote-URL fallback exists anywhere in this screen: if a file is missing
 /// the reader says so. Falling back to the source would make "offline" a lie
 /// that only surfaces once the network is gone.
 class ReaderScreen extends ConsumerStatefulWidget {
-  const ReaderScreen({super.key, required this.entryId, this.offline});
+  const ReaderScreen({
+    super.key,
+    required this.entryId,
+    required this.offline,
+    this.collectionId,
+  });
 
   final String entryId;
+
+  /// Where the swipe-back lands, when the caller knows.
+  ///
+  /// Supplied by the route rather than looked up here: a Collection is a
+  /// library fact, this screen is handed a package, and a reader that reached
+  /// for the library to answer a navigation question would be a library
+  /// dependency smuggled in through the back door. Null — a standalone Entry,
+  /// or a caller that has no route to go back to — leaves the gesture with
+  /// nowhere to land, and it does nothing.
+  final String? collectionId;
 
   /// The Entry's package, resolved by the caller, and the session its reading
   /// goes back through (`lib/reading_v2/offline_read.dart`).
   ///
-  /// Null is the default and the V1 route: the screen loads the row, the
-  /// manifest, the files and the anchor itself, exactly as it always has.
-  /// Given one, it touches no V1 row at all — not to load, not to record the
-  /// open, not to save progress — which is what lets an OfflineCopy open this
-  /// reader on a device with no V1 library behind it.
+  /// **Required.** This screen loads nothing itself: the package is resolved
+  /// from an OfflineCopy before the route builds, the open is recorded through
+  /// the session, and the anchor comes from the copy. There is no library row
+  /// behind any of it.
   ///
-  /// **Position restore is unchanged either way.** The image reader still
-  /// opens *at* its position, because panel geometry comes from the manifest;
-  /// the document reader still restores *to* its position on the first
-  /// measurement, because a paragraph has no offset until it has been laid
-  /// out. The anchor simply arrives from the copy instead of from a column.
-  final OfflineReaderData? offline;
+  /// **Position restore is unchanged.** The image reader opens *at* its
+  /// position, because panel geometry comes from the manifest; the document
+  /// reader restores *to* its position on the first measurement, because a
+  /// paragraph has no offset until it has been laid out. The anchor simply
+  /// arrives from the copy instead of from a column.
+  final OfflineReaderData offline;
 
   @override
   ConsumerState<ReaderScreen> createState() => _ReaderScreenState();
@@ -183,58 +127,16 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
   ReadingPosition _restoredPosition = ReadingPosition.start;
   double get _restoredFraction => _restoredPosition.fraction;
 
+  /// Whether [_measureRestoredPosition] has run. Once per open: the restored
+  /// position is where the reader *started*, and a second measurement after
+  /// they have scrolled would quietly redefine it as wherever they are now.
+  bool _restoredMeasured = false;
+
   Timer? _saveTimer;
   DateTime? _pastThresholdSince;
   bool _completed = false;
   bool _restored = false;
   String? _entryId;
-
-  /// The collection this entry belongs to — the destination of the swipe-back.
-  String? _collectionId;
-
-  /// Locally readable siblings of the open entry, in reading order.
-  ///
-  /// A notifier rather than a field of [_ReaderData] because the list can go
-  /// stale *while the reader is open*: the finished-entry flow removes the
-  /// downloads of the entry just left, and a collection deletion elsewhere can
-  /// take a sibling with it. Both bump [CleanupService.removals], which is what
-  /// [_refreshSiblings] listens to — so the entry controls disable themselves
-  /// the moment their target stops being openable, instead of staying lit until
-  /// the next load and then landing on the unavailable screen.
-  final ValueNotifier<List<Entry>> _siblings = ValueNotifier(const <Entry>[]);
-
-  /// Held in a field, not read through `ref`, because the last flush runs
-  /// from [dispose] — where Riverpod forbids `ref`. Reading it there threw,
-  /// which silently lost the final position on every ordinary reader close.
-  late final ReadingRepository _reading;
-  late final CleanupService _cleanup;
-
-  /// The transient notice on screen, or null when there is none.
-  ///
-  /// Screen state and nothing else: never written to the database, never
-  /// restored. It is dropped when the entry changes, when the app leaves the
-  /// foreground, when the user closes it, and with the screen itself — so a
-  /// notice can only ever be seen once, for as long as its own timeout.
-  _ReaderNotice? _notice;
-
-  /// Identity for the notice widget, so a second removal *replaces* the first
-  /// (fresh countdown, one notice) instead of reusing its element and
-  /// inheriting the timeout already half spent.
-  int _noticeSeq = 0;
-
-  /// The collection whose cleanup question is on screen, or null when none is.
-  ///
-  /// Screen state, and the reason a burst of "next entry" taps cannot open a
-  /// second dialog or race two decisions into the database.
-  String? _cleanupAskCollectionId;
-
-  /// True from the moment a move is asked for until the destination is loading.
-  ///
-  /// A transition can now sit on an open dialog for as long as the reader takes
-  /// to answer it, and every entry control is still on screen behind it. One
-  /// transition at a time is what stops the same move being planned — and
-  /// applied — twice.
-  bool _navigating = false;
 
   static const _policy = kDefaultCompletionPolicy;
 
@@ -242,39 +144,19 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    // Both of these reach the V1 library, and building them builds one. A
-    // reader that was handed its data has no V1 library to reach, so they are
-    // resolved only on the route that uses them — and every use of either is
-    // on that route.
-    if (widget.offline == null) {
-      _reading = ref.read(readingRepositoryProvider);
-      _cleanup = ref.read(cleanupProvider);
-    }
     _entryId = widget.entryId;
     _chromeVisibility = ref.read(readerChromeVisibleProvider);
-    if (widget.offline == null) {
-      // The open entry is locked against offline-file removal for as long
-      // as this screen exists.
-      _cleanup.openReaderEntryId.value = widget.entryId;
-      _cleanup.removals.addListener(_onRemovals);
-    }
-    _future = _load(widget.entryId);
+    _future = _load(widget.offline);
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
-    if (widget.offline == null) _cleanup.removals.removeListener(_onRemovals);
     _saveTimer?.cancel();
     // Fire-and-forget: dispose cannot await, but the write is a single row.
     unawaited(_flush());
     _scrollController?.dispose();
     _livePosition.dispose();
-    _siblings.dispose();
-    if (widget.offline == null &&
-        _cleanup.openReaderEntryId.value == _entryId) {
-      _cleanup.openReaderEntryId.value = null;
-    }
     // Whatever this reader hid, it stops hiding on the way out — otherwise the
     // running-operation indicator would stay gone on every screen after it.
     //
@@ -296,111 +178,20 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
     // Backgrounded or about to be killed: write now rather than hoping the
     // debounce fires first.
     if (state != AppLifecycleState.resumed) unawaited(_flush());
-    // A notice is a moment, not a state. Cleared on *every* transition rather
-    // than only on the way out, so coming back has nothing left to show even
-    // if the app was suspended before the timeout could run.
-    _clearNotice();
-  }
-
-  // --- transient notice ----------------------------------------------------
-
-  /// Show (or replace) the transient notice. There is at most one, ever.
-  void _showNotice(
-    String text, {
-    required IconData icon,
-    Future<void> Function()? undo,
-  }) {
-    if (!mounted) return;
-    setState(() {
-      _notice = _ReaderNotice(
-        id: ++_noticeSeq,
-        text: text,
-        icon: icon,
-        undo: undo,
-      );
-    });
-  }
-
-  void _clearNotice() {
-    if (!mounted || _notice == null) return;
-    setState(() => _notice = null);
-  }
-
-  /// Put the files back, then say so — the confirmation is itself transient
-  /// and carries no action.
-  Future<void> _undoRemoval(_ReaderNotice notice) async {
-    final undo = notice.undo;
-    if (undo == null) return;
-    // Cleared first: the offer has been taken, and leaving the countdown
-    // running would let the timeout fire mid-restore.
-    _clearNotice();
-    await undo();
-    // The files are back, so the entry is a destination again — the controls
-    // have to hear about it, since a restore frees nothing and so bumps no
-    // removal counter.
-    await _refreshSiblings();
-    if (!mounted) return;
-    // Parallel to the removal copy, and equally short: the verb first, the same
-    // noun after it, so the pair reads as one action and its reversal.
-    _showNotice('Restored downloads', icon: Icons.undo);
   }
 
   // --- loading -------------------------------------------------------------
 
-  /// Locally readable siblings, in reading order.
-  ///
-  /// A standalone entry has none: there is no previous or next, and the reader
-  /// says so rather than showing an empty strip where controls were.
-  Future<List<Entry>> _siblingsFor(AppDatabase db, Entry entry) async {
-    final collectionId = entry.collectionId;
-    if (collectionId == null) return const <Entry>[];
-    return sortEntriesForReading(
-      (await db.entriesForCollection(
-        collectionId,
-      )).where(readerCanOpen).toList(),
-    );
-  }
-
-  /// Re-read the neighbours from the database.
-  ///
-  /// Called whenever something removed offline files anywhere, because the
-  /// reader itself is one of the things that does that: finishing an entry and
-  /// moving on removes the downloads of the one left behind, which is exactly
-  /// the entry the *Previous entry* control was pointing at.
-  Future<void> _refreshSiblings() async {
-    final id = _entryId;
-    if (id == null) return;
-    final db = ref.read(databaseProvider);
-    final entry = await db.entryById(id);
-    if (entry == null) return;
-    final siblings = await _siblingsFor(db, entry);
-    // The reader may have moved on across those awaits; a list resolved for an
-    // entry that is no longer open must not be published.
-    if (_entryId != id) return;
-    _publishSiblings(siblings);
-  }
-
-  /// The only writer of [_siblings].
-  ///
-  /// Every list is resolved across an await, and the screen can be popped
-  /// inside one — so the guard belongs here rather than at each call site,
-  /// where forgetting it writes to a disposed notifier.
-  void _publishSiblings(List<Entry> siblings) {
-    if (!mounted) return;
-    _siblings.value = siblings;
-  }
-
-  void _onRemovals() => unawaited(_refreshSiblings());
-
-  /// The provided route: the package was resolved from an OfflineCopy, so
-  /// there is nothing to look up and nothing to re-derive.
+  /// The package was resolved from an OfflineCopy before this screen was
+  /// built, so there is nothing to look up and nothing to re-derive.
   ///
   /// What still happens is what an *open* means: the access is recorded
   /// through the session, and the reader starts from the copy's own anchor.
-  /// Siblings stay empty — neighbours are a fact about a Collection's entries,
-  /// which is a question for a library and not for a package on this device —
-  /// so no entry-navigation control is offered and none can be taken.
-  Future<_ReaderData> _loadProvided(OfflineReaderData offline) async {
+  /// There is deliberately no neighbour list: neighbours are a fact about a
+  /// Collection's entries, which is a question for a library and not for a
+  /// package on this device, so no entry-navigation control is offered and
+  /// none can be taken.
+  Future<_ReaderData> _load(OfflineReaderData offline) async {
     switch (offline.read) {
       case OfflineReadUnavailable(:final refusal):
         return _ReaderData.unavailable(
@@ -415,7 +206,6 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
         _completed = await offline.recordOpen();
         _position = restored;
         return _ReaderData(
-          entry: null,
           manifest: manifest,
           pages: [
             for (final page in pages)
@@ -436,7 +226,6 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
         _completed = await offline.recordOpen();
         _position = restored;
         return _ReaderData(
-          entry: null,
           manifest: manifest,
           pages: const [],
           document: document,
@@ -465,322 +254,6 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
     OfflineReadRefusal.documentUnreadable =>
       'The saved text for this entry is unreadable.',
   };
-
-  Future<_ReaderData> _load(String entryId) async {
-    final offline = widget.offline;
-    if (offline != null) return _loadProvided(offline);
-    final db = ref.read(databaseProvider);
-    final store = ref.read(fileStoreProvider);
-    final reading = _reading;
-
-    final entry = await db.entryById(entryId);
-    if (entry == null) {
-      return const _ReaderData.unavailable('This entry is no longer listed.');
-    }
-    final relative = entry.contentPath;
-    if (relative == null && entry.offlineRemovedAt != null) {
-      // The USER removed these files. That is a state, not a failure —
-      // nothing gets demoted, and the copy says "save again", not
-      // "something went wrong".
-      return _ReaderData.unavailable(
-        'You removed this entry\'s offline files. It\'s still in your '
-        'library with your reading history — save it again to read it '
-        'here.',
-        filesGone: true,
-        removedByUser: true,
-        unavailableMeta:
-            'removed ${formatRelative(entry.offlineRemovedAt)}'
-            '${entry.detectedAssetCount > 0 ? ' · ${entry.detectedAssetCount} pages' : ''}',
-        unavailableEntry: entry,
-      );
-    }
-    if (relative == null || !store.entryExists(relative)) {
-      await db.markEntryContentMissing(entry.id);
-      return _ReaderData.unavailable(
-        'The local files for "${entry.title}" are gone. The entry is '
-        'still listed, but it is not available offline.',
-        filesGone: true,
-        unavailableMeta: '0 of ${entry.detectedAssetCount} files present',
-        unavailableEntry: entry,
-      );
-    }
-
-    var manifest = await store.readManifest(relative);
-    if (manifest == null) {
-      return const _ReaderData.unavailable(
-        'The entry package is unreadable (missing manifest).',
-      );
-    }
-
-    // Page geometry is built **only** from dimensions decoded out of the stored
-    // bytes at save time (`dimensionsVerified`). There is no repair pass: a
-    // version-1 library records verified dimensions when it saves, and re-reading
-    // every file on every open to fix manifests this build never wrote would be
-    // migration machinery for a shape no library has.
-    //
-    // What can still happen is a file whose header the decoder does not
-    // understand. Then the manifest holds the *page's own claim* about the size,
-    // which is a layout assertion and not a pixel fact — panels sized from it
-    // laid out at the wrong aspect ratio, which is what "the saved page looks
-    // squashed" was. Such a page gets no recorded size at all, so the reader
-    // falls back to a fixed box and crops from the top rather than stretching.
-    //
-    // A package saved by a newer build. Say so rather than misreading it as
-    // one of the formats this version does know.
-    if (!manifest.artifact.isReadable) {
-      return const _ReaderData.unavailable(
-        'This entry was saved in a format this version of the app cannot '
-        'open. Updating the app should fix it; the files are untouched.',
-      );
-    }
-
-    if (manifest.isDocument) {
-      final document = await store.readDocument(
-        relative,
-        fileName: manifest.document?.relativePath ?? FileStore.documentFileName,
-      );
-      if (document == null || document.isEmpty) {
-        return const _ReaderData.unavailable(
-          'The saved text for this entry is unreadable.',
-        );
-      }
-      _publishSiblings(await _siblingsFor(db, entry));
-      await reading.markOpened(entry.id);
-      if (entry.collectionId != null) {
-        await db.touchCollection(entry.collectionId!);
-      }
-      _position = reading.positionOf(entry);
-      _completed = entry.readStatus == ReadStatus.completed.name;
-      _collectionId = entry.collectionId;
-      return _ReaderData(
-        entry: entry,
-        manifest: manifest,
-        pages: const [],
-        document: document,
-        entryDir: Directory(store.resolve(relative)),
-      );
-    }
-
-    // Manifest order is DOM order, which is reading order.
-    final pages = <_ReaderPage>[];
-    for (final asset in manifest.storedAssets) {
-      final file = store.assetFile(relative, asset.relativePath!);
-      pages.add(
-        _ReaderPage(
-          file: file,
-          exists: file.existsSync(),
-          width: asset.dimensionsVerified ? asset.width : null,
-          height: asset.dimensionsVerified ? asset.height : null,
-        ),
-      );
-    }
-
-    final collectionId = entry.collectionId;
-    _publishSiblings(await _siblingsFor(db, entry));
-
-    await reading.markOpened(entry.id);
-    if (collectionId != null) await db.touchCollection(collectionId);
-
-    _position = reading.positionOf(entry);
-    _completed = entry.readStatus == ReadStatus.completed.name;
-    _collectionId = entry.collectionId;
-
-    return _ReaderData(entry: entry, manifest: manifest, pages: pages);
-  }
-
-  // --- moving on: completion, then cleanup ---------------------------------
-
-  /// What a forward move should do to the entry it leaves behind — or null
-  /// when the user said no and the reader must stay exactly where it is.
-  ///
-  /// **Completion, navigation and cleanup are three decisions, not one.**
-  /// Moving forward is not evidence of finishing: a reader looks ahead,
-  /// compares two entries, mistaps, or means to come back. So the only entries
-  /// this can plan anything for are the ones already finished, and the ones
-  /// the reader has explicitly *said* are finished when asked. Everything else
-  /// moves and changes nothing — which is what keeps a collection's remove
-  /// preference away from an entry that is still being read.
-  ///
-  /// Nothing here writes to the entry being left. The questions are asked
-  /// while the reader is still on it, and the answers are carried in the plan
-  /// until the destination is genuinely open — see [_applyOnArrival].
-  Future<_ForwardPlan?> _planForForward(Entry target) async {
-    final leavingId = _entryId;
-    if (leavingId == null || leavingId == target.id) return _ForwardPlan.none;
-
-    final db = ref.read(databaseProvider);
-    final leaving = await db.entryById(leavingId);
-    if (leaving == null) return _ForwardPlan.none;
-
-    // Forward only: reading order, not tap order. A standalone entry has no
-    // reading order to move forward through, so none of this applies to one.
-    final collectionId = leaving.collectionId;
-    if (collectionId == null) return _ForwardPlan.none;
-    final ordered = sortEntriesForReading(
-      await db.entriesForCollection(collectionId),
-    );
-    final from = ordered.indexWhere((c) => c.id == leaving.id);
-    final to = ordered.indexWhere((c) => c.id == target.id);
-    if (from < 0 || to < 0 || to <= from) return _ForwardPlan.none;
-
-    final item = await db.collectionById(collectionId);
-    if (item == null) return _ForwardPlan.none;
-
-    var markComplete = false;
-    if (leaving.readStatus != ReadStatus.completed.name) {
-      // The live position rather than the row: [_flush] has just written it,
-      // but an entry whose geometry never materialised has nothing to flush
-      // and the restored position is still the honest answer.
-      if (!_policy.nearEnd(_position.fraction)) return _ForwardPlan.none;
-      if (!mounted) return _ForwardPlan.none;
-
-      // Read before the question so the dialog can name the consequence: when
-      // this collection already removes downloads after continuing, saying
-      // "mark complete" is also what removes this entry's files.
-      final stored = collectionCleanupFromName(item.cleanupPreference);
-      final choice = await showEntryCompletionDialog(
-        context: context,
-        entryName: leaving.sourceMarker ?? leaving.title,
-        percentRead: (_position.fraction * 100).clamp(0, 100).round(),
-        willRemoveDownloads: stored == CollectionCleanupPreference.remove,
-      );
-      switch (choice) {
-        // Dismissed by the barrier or the back gesture is the same answer as
-        // Cancel: the reader asked for nothing, so nothing happens — including
-        // the navigation.
-        case null:
-        case EntryCompletionChoice.cancel:
-          return null;
-        // Moving on with the entry left as it is. No completion, no cleanup
-        // question, and the collection's stored preference is deliberately
-        // NOT consulted: it is a rule about finished entries, and this one is
-        // not finished.
-        case EntryCompletionChoice.continueWithout:
-          return _ForwardPlan.none;
-        case EntryCompletionChoice.completeAndContinue:
-          markComplete = true;
-      }
-    }
-
-    final decision = await _resolveCleanupPreference(item);
-    return _ForwardPlan(
-      leaving: leaving,
-      markComplete: markComplete,
-      remove: decision == CollectionCleanupPreference.remove,
-    );
-  }
-
-  /// The collection's decision about a finished entry's downloaded files,
-  /// asking for it once if the collection has none (D37).
-  ///
-  /// Null means *there is no decision to apply*: the question was dismissed
-  /// without an answer, or one is already on screen for this collection.
-  /// Both keep the files and store nothing, and the question comes back on the
-  /// next eligible transition.
-  ///
-  /// An answer is persisted the moment it is given, before the reader moves.
-  /// That is the existing contract of this question everywhere it is asked —
-  /// the dialog's button says *Save choice*, and the collection sheet writes on
-  /// each tap — and it is a rule about the collection, not about this
-  /// transition. What waits for the destination is the *removal*, never the
-  /// rule.
-  Future<CollectionCleanupPreference?> _resolveCleanupPreference(
-    Collection item,
-  ) async {
-    final stored = collectionCleanupFromName(item.cleanupPreference);
-    if (stored != null) return stored;
-
-    // One question at a time. A second transition arriving while the dialog is
-    // open must not stack a duplicate or race a conflicting write.
-    if (_cleanupAskCollectionId != null || !mounted) return null;
-    _cleanupAskCollectionId = item.id;
-    final CollectionCleanupPreference? decision;
-    try {
-      decision = await showCollectionCleanupDialog(
-        context: context,
-        collectionName: item.userTitle ?? item.title,
-      );
-    } finally {
-      _cleanupAskCollectionId = null;
-    }
-    if (decision == null) return null;
-    // The collection was captured before the dialog opened, so an answer can
-    // only ever be written to the collection it was asked about.
-    await ref
-        .read(databaseProvider)
-        .setCollectionCleanupPreference(item.id, decision.name);
-    return decision;
-  }
-
-  /// Carry out a plan — but only once the destination is genuinely open.
-  ///
-  /// "Open" means the load resolved to something readable, not merely that the
-  /// row passed [readerCanOpen] a moment earlier. A manifest that turns out to
-  /// be unreadable, files that vanished between the check and the read, and a
-  /// package written by a newer build all land on the unavailable screen, and
-  /// none of them is a reason to finish or empty the entry the reader just
-  /// left. That entry is then the only readable thing they had.
-  Future<void> _applyOnArrival(
-    _ForwardPlan plan,
-    Future<_ReaderData> arriving,
-    String targetId,
-  ) async {
-    final leaving = plan.leaving;
-    if (leaving == null) return;
-
-    final _ReaderData data;
-    try {
-      data = await arriving;
-    } catch (_) {
-      // The destination could not even be read. Nothing was promised about the
-      // outgoing entry that has to be honoured now.
-      return;
-    }
-    if (data.unavailableReason != null) return;
-    if (!data.isDocument && data.pages.isEmpty) return;
-    // The reader moved on again, or left, while the destination was loading:
-    // this plan belongs to a transition that is no longer the current one.
-    if (_entryId != targetId) return;
-
-    if (plan.markComplete) {
-      // [ReadingRepository.markRead] keeps the anchor and only lifts the
-      // fraction to 1, so the spot this entry would resume at survives being
-      // finished. A progress write still in flight cannot undo it either:
-      // `saveProgress` reads the row first and keeps a completed entry
-      // completed, whatever the flag it was called with says.
-      await _reading.markRead(leaving.id);
-    }
-    if (plan.remove) await _removeFinished(leaving);
-  }
-
-  /// Remove and offer an undo. A failure here never blocks reading — the new
-  /// entry is already open; the worst case is that files stay.
-  ///
-  /// The notice is deliberately minimal: which entry it was is obvious (the
-  /// user just left it) and how many megabytes came back is not a decision
-  /// anyone makes mid-read. All that matters, for the moment it is up, is that
-  /// something was removed and that it can be put back.
-  ///
-  /// The copy names the *downloads*, never the entry. Removing offline files is
-  /// not deleting an entry — the row, the reading position and the history all
-  /// survive — so "Removed previous entry" would say the opposite of what
-  /// happened. It is the short form of the phrase the cleanup question already
-  /// uses ("Keep downloaded files"), so the answer and its consequence read as
-  /// one thing, and it is the longest of the honest phrasings that still sets
-  /// on one line at 320pt.
-  Future<void> _removeFinished(Entry leaving) async {
-    try {
-      final result = await _cleanup.removeOffline([leaving.id]);
-      if (!mounted || result.removed == 0) return;
-      _showNotice(
-        'Removed downloads',
-        icon: Icons.delete_outline,
-        undo: result.canUndo ? result.undo.undo : null,
-      );
-    } catch (e) {
-      debugPrint('[cleanup] finished-entry removal failed: $e');
-    }
-  }
 
   // --- position ------------------------------------------------------------
 
@@ -812,6 +285,7 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
     final controller = ScrollController(initialScrollOffset: initial)
       ..addListener(_onScroll);
     _scrollController = controller;
+    _measureRestoredPosition();
     return controller;
   }
 
@@ -858,6 +332,47 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
       final target = (_leadingExtent + layout.offsetForPosition(position))
           .clamp(0.0, controller.position.maxScrollExtent);
       controller.jumpTo(target);
+      _measureRestoredPosition();
+    });
+  }
+
+  /// Measure how far through the entry the restored position actually is.
+  ///
+  /// The **anchor** is what restore uses, and it arrives on the OfflineCopy —
+  /// an index into these bytes. The **fraction** is a different thing: it is a
+  /// fact about this rendering, at this width, and there is deliberately no
+  /// stored one to read (`lib/reading_v2/offline_read.dart`). So it is
+  /// measured, on the frame after the reader has opened — the first moment the
+  /// geometry and the viewport both exist and the scroll view is still exactly
+  /// where it was put.
+  ///
+  /// It feeds the jump chip and nothing else. The chip offers a way back to
+  /// where reading left off once the reader has wandered away from it, and
+  /// "how far away" is a comparison of two fractions; with no restored
+  /// fraction to compare against the chip could never appear.
+  void _measureRestoredPosition() {
+    if (_restoredMeasured) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final controller = _scrollController;
+      final layout = _geometry;
+      if (!mounted ||
+          _restoredMeasured ||
+          controller == null ||
+          layout == null ||
+          !controller.hasClients) {
+        return;
+      }
+      _restoredMeasured = true;
+      final panelOffset = (controller.offset - _leadingExtent).clamp(
+        0.0,
+        double.infinity,
+      );
+      final measured = layout.positionForOffset(
+        panelOffset,
+        viewportHeight: controller.position.viewportDimension,
+      );
+      if (measured.fraction <= 0) return;
+      setState(() => _restoredPosition = measured);
     });
   }
 
@@ -912,12 +427,7 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
     _saveTimer?.cancel();
     _saveTimer = null;
     try {
-      final offline = widget.offline;
-      if (offline != null) {
-        await offline.saveProgress(_position, completed: _completed);
-      } else {
-        await _reading.saveProgress(id, _position, completed: _completed);
-      }
+      await widget.offline.saveProgress(_position, completed: _completed);
     } catch (_) {
       // The dispose-time flush is fire-and-forget; if the database is
       // already shutting down there is nowhere left to save to, and an
@@ -928,89 +438,21 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
   // --- actions -------------------------------------------------------------
 
   Future<void> _toggleRead() async {
-    final id = _entryId;
-    if (id == null) return;
-    final offline = widget.offline;
+    if (_entryId == null) return;
     // A debounced save queued before the tap would land after it and write
     // the status straight back. The user's explicit choice is the newer
     // fact, so the pending write is dropped rather than allowed to race.
     _saveTimer?.cancel();
     _saveTimer = null;
     if (_completed) {
-      await (offline == null ? _reading.markUnread(id) : offline.markUnread());
+      await widget.offline.markUnread();
       _completed = false;
       _pastThresholdSince = null;
     } else {
-      await (offline == null ? _reading.markRead(id) : offline.markRead());
+      await widget.offline.markRead();
       _completed = true;
     }
     if (mounted) setState(() {});
-  }
-
-  /// Save first, then move.
-  ///
-  /// The order is the safety property, and it is worth reading as one list:
-  /// flush the position of the entry being left; confirm the destination can
-  /// be opened at all; ask whatever this transition has to ask, while the
-  /// reader is still on the entry the questions are about; move; and only once
-  /// the destination has actually opened, apply anything that changes the
-  /// entry left behind. A transition that fails or is cancelled at any point
-  /// leaves that entry with its progress, its status and its files.
-  ///
-  /// One at a time, because the questions are awaited: a second tap arriving
-  /// mid-transition would otherwise plan the same move twice and could apply
-  /// completion or removal twice over.
-  Future<void> _goTo(Entry target) async {
-    if (_navigating) return;
-    _navigating = true;
-    try {
-      await _navigateTo(target);
-    } finally {
-      _navigating = false;
-    }
-  }
-
-  Future<void> _navigateTo(Entry target) async {
-    await _flush();
-
-    // The control was drawn from a list; between that frame and this tap the
-    // target's downloads may have gone. Ask the row itself before moving, so a
-    // stale control can never land the reader on the unavailable screen — and
-    // republish the neighbours, which is what disables the control that just
-    // failed rather than leaving it lit for the next tap.
-    final fresh = await ref.read(databaseProvider).entryById(target.id);
-    if (fresh == null || !readerCanOpen(fresh)) {
-      await _refreshSiblings();
-      return;
-    }
-
-    final plan = await _planForForward(fresh);
-    // Cancelled. Nothing has been written on the way here, so staying put is
-    // simply not doing the rest of this.
-    if (plan == null || !mounted) return;
-
-    _saveTimer?.cancel();
-    _scrollController?.removeListener(_onScroll);
-    // The lock follows the reader: the entry being LEFT is no longer open,
-    // and the one arriving is. Without this the entry just finished stays
-    // locked against its own cleanup.
-    _cleanup.openReaderEntryId.value = target.id;
-    final arriving = _load(target.id);
-    setState(() {
-      // Anything the last transition had to say is about an entry that is no
-      // longer on screen. A new removal will post its own notice.
-      _notice = null;
-      _entryId = target.id;
-      _restored = false;
-      _layout = null;
-      _geometry = null;
-      _documentRestorePending = false;
-      _completed = false;
-      _pastThresholdSince = null;
-      _position = ReadingPosition.start;
-      _future = arriving;
-    });
-    if (plan.hasWork) unawaited(_applyOnArrival(plan, arriving, target.id));
   }
 
   // --- leaving for the entry list ----------------------------------------
@@ -1064,7 +506,7 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
   /// Activity, a deep link) replace the reader with it. Both leave exactly one
   /// entry-list route on the stack, so repeated in-and-out never piles up.
   Future<void> _leaveToCollection() async {
-    final collectionId = _collectionId;
+    final collectionId = widget.collectionId;
     if (collectionId == null) return;
     await _flush();
     if (!mounted) return;
@@ -1250,17 +692,6 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
     _chromeVisibility.publish(_chromeVisible);
   }
 
-  /// Bring an entry back that has no local files — the same queued save
-  /// as anywhere else, so it shows up in Activity like any other run.
-  /// Only reachable from a V1 row, which the app no longer opens: the one
-  /// reader route hands an [OfflineReaderData] through, and that path reports
-  /// an unavailable Entry with no row to offer this for. Kept honest rather
-  /// than kept working — a V1 row has no V2 queue, and pretending otherwise
-  /// would fake a download.
-  Future<void> _saveAgain(Entry entry) async {
-    _say('Downloading starts from the library.');
-  }
-
   /// Re-download this entry to fill in the panels a partial save missed.
   ///
   /// The queue owns the work and the Browser is where it becomes visible, so
@@ -1300,46 +731,13 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
 
   @override
   Widget build(BuildContext context) {
-    final notice = _notice;
     return Scaffold(
       // Near-black, not `#000000`: a pure-black canvas smears under this
       // screen's continuous vertical scrolling on OLED and maximises the halo
       // around the overlaid chrome (D62). Still dark enough that a panel's own
       // black borders read as part of the artwork.
       backgroundColor: ReaderColors.canvas,
-      // The notice sits outside the FutureBuilder: it is posted as the *next*
-      // entry starts loading, and rebuilding it with the page would restart
-      // its countdown (or flicker it away) on every load state.
-      body: Stack(
-        children: [
-          _body(),
-          if (notice != null)
-            Positioned(
-              left: 12,
-              right: 12,
-              bottom: kReaderNoticeInset + MediaQuery.paddingOf(context).bottom,
-              child: _TransientNotice(
-                // A new removal is a new notice, with a full countdown.
-                key: ValueKey(notice.id),
-                text: notice.text,
-                icon: notice.icon,
-                duration: kReaderNoticeDuration,
-                // Two seconds is not a reachable window with a screen reader:
-                // getting to the Undo takes longer than the notice lasts. The
-                // same exception the cleanup snack bar already makes — and the
-                // notice is still dropped by an entry change, by leaving the
-                // app, and by the Dismiss button, so it cannot become permanent.
-                persist:
-                    MediaQuery.maybeOf(context)?.accessibleNavigation ?? false,
-                actionLabel: notice.undo == null ? null : 'Undo',
-                onAction: notice.undo == null
-                    ? null
-                    : () => unawaited(_undoRemoval(notice)),
-                onDismissed: _clearNotice,
-              ),
-            ),
-        ],
-      ),
+      body: _body(),
     );
   }
 
@@ -1352,13 +750,9 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
         }
         final data = snapshot.data;
         if (data == null || data.unavailableReason != null) {
-          final missing = data?.unavailableEntry;
           return _Unavailable(
             message: data?.unavailableReason ?? 'Could not open the entry.',
             filesGone: data?.filesGone ?? false,
-            removedByUser: data?.removedByUser ?? false,
-            meta: data?.unavailableMeta,
-            onSaveAgain: missing == null ? null : () => _saveAgain(missing),
           );
         }
         if (!data.isDocument && data.pages.isEmpty) {
@@ -1426,12 +820,7 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
                                   onRetry: () => _retryMissing(data),
                                 )
                               : null,
-                          trailing: _EndOfEntry(
-                            data: data,
-                            entryId: _entryId!,
-                            siblings: _siblings,
-                            onGoTo: _goTo,
-                          ),
+                          trailing: _EndOfEntry(data: data),
                         )
                       : ListView.builder(
                           controller: controller,
@@ -1454,12 +843,7 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
                             }
                             final panel = index - (partial ? 1 : 0);
                             if (panel == data.pages.length) {
-                              return _EndOfEntry(
-                                data: data,
-                                entryId: _entryId!,
-                                siblings: _siblings,
-                                onGoTo: _goTo,
-                              );
+                              return _EndOfEntry(data: data);
                             }
                             return _PanelView(
                               page: data.pages[panel],
@@ -1492,11 +876,8 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
             _ReaderChrome(
               visible: _chromeVisible,
               data: data,
-              entryId: _entryId!,
               completed: _completed,
               position: _livePosition,
-              siblings: _siblings,
-              onGoTo: _goTo,
               onToggleRead: _toggleRead,
             ),
           ],
@@ -1519,30 +900,20 @@ class _ReaderChrome extends StatelessWidget {
   const _ReaderChrome({
     required this.visible,
     required this.data,
-    required this.entryId,
     required this.completed,
     required this.position,
-    required this.siblings,
-    required this.onGoTo,
     required this.onToggleRead,
   });
 
   final bool visible;
   final _ReaderData data;
-  final String entryId;
   final bool completed;
   final ValueListenable<ReadingPosition> position;
-
-  /// The live neighbour list. Listened to rather than captured, so a removal
-  /// that happens while this screen is up disables the control it invalidated.
-  final ValueListenable<List<Entry>> siblings;
-  final Future<void> Function(Entry) onGoTo;
   final VoidCallback onToggleRead;
 
   @override
   Widget build(BuildContext context) {
     final insets = MediaQuery.paddingOf(context);
-    final entry = data.entry;
 
     return IgnorePointer(
       ignoring: !visible,
@@ -1584,13 +955,10 @@ class _ReaderChrome extends StatelessWidget {
                         mainAxisSize: MainAxisSize.min,
                         children: [
                           Text(
-                            entry?.sourceMarker ??
-                                entry?.title ??
-                                // No V1 row on the provided route: the
-                                // manifest is what names the package, and it
-                                // carries the same two facts in the same
-                                // order.
-                                data.manifest?.sourceMarker ??
+                            // The manifest names the package, and it carries
+                            // the same two facts in the same order the V1 row
+                            // did.
+                            data.manifest?.sourceMarker ??
                                 data.manifest?.title ??
                                 'Reader',
                             maxLines: 1,
@@ -1602,7 +970,7 @@ class _ReaderChrome extends StatelessWidget {
                             ),
                           ),
                           Text(
-                            entry?.title ?? data.manifest?.title ?? '',
+                            data.manifest?.title ?? '',
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: const TextStyle(
@@ -1658,50 +1026,11 @@ class _ReaderChrome extends StatelessWidget {
                       ),
                     ),
                     const SizedBox(height: 6),
-                    ValueListenableBuilder<List<Entry>>(
-                      valueListenable: siblings,
-                      builder: (context, ordered, _) {
-                        final index = ordered.indexWhere(
-                          (c) => c.id == entryId,
-                        );
-                        final previous = index > 0 ? ordered[index - 1] : null;
-                        final next = (index >= 0 && index + 1 < ordered.length)
-                            ? ordered[index + 1]
-                            : null;
-                        // Equal flex on both sides is what actually centres the
-                        // percentage: whatever the two labels turn out to be,
-                        // the middle keeps the same place on screen, so the one
-                        // element that changes every frame is the one that
-                        // never moves.
-                        return Row(
-                          children: [
-                            Expanded(
-                              child: _EntryStepButton(
-                                step: _Step.previous,
-                                target: previous,
-                                onGoTo: onGoTo,
-                              ),
-                            ),
-                            Padding(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 8,
-                              ),
-                              child: _ReadingPercent(
-                                position: position,
-                                completed: completed,
-                              ),
-                            ),
-                            Expanded(
-                              child: _EntryStepButton(
-                                step: _Step.next,
-                                target: next,
-                                onGoTo: onGoTo,
-                              ),
-                            ),
-                          ],
-                        );
-                      },
-                    ),
+                    // The percentage, centred and alone. The two entry
+                    // controls that used to flank it were the read side of a
+                    // neighbour list, and neighbours are a fact about a
+                    // Collection rather than about a package on this device.
+                    _ReadingPercent(position: position, completed: completed),
                   ],
                 ),
               ),
@@ -1712,15 +1041,6 @@ class _ReaderChrome extends StatelessWidget {
     );
   }
 }
-
-const _readerMeta = TextStyle(
-  fontFamily: 'IBM Plex Mono',
-  fontSize: 10.5,
-  color: ReaderColors.inkFaint,
-);
-
-/// Which way an [_EntryStepButton] moves.
-enum _Step { previous, next }
 
 /// How far through the entry the reader is, and nothing else.
 ///
@@ -1752,127 +1072,6 @@ class _ReadingPercent extends StatelessWidget {
       );
     },
   );
-}
-
-/// One end of the bottom bar: the control that moves to the previous or the
-/// next entry.
-///
-/// It says "entry" in words. A bare arrow beside a panel counter is read as a
-/// step *within* the page — which is what the old pair of skip glyphs was, and
-/// why moving between entries was guesswork. The direction is the chevron, the
-/// unit is the label, and the destination is named underneath it.
-///
-/// [target] being null **is** the disabled state, and it comes from the live
-/// neighbour list, which only ever contains entries [readerCanOpen] accepts. So
-/// a control is lit exactly when tapping it can succeed; there is no separate
-/// enabled flag to fall out of step with the entry it points at.
-class _EntryStepButton extends StatelessWidget {
-  const _EntryStepButton({
-    required this.step,
-    required this.target,
-    required this.onGoTo,
-  });
-
-  final _Step step;
-
-  /// The entry this control opens, or null when there is no openable one in
-  /// that direction — the end of the collection, a standalone entry, or a
-  /// neighbour whose downloads have been removed.
-  final Entry? target;
-  final Future<void> Function(Entry) onGoTo;
-
-  /// Comfortable one-handed target, kept at the platform minimum even though
-  /// the label only needs about 26 of it.
-  static const double _minHeight = 48;
-
-  @override
-  Widget build(BuildContext context) {
-    final entry = target;
-    final enabled = entry != null;
-    final forward = step == _Step.next;
-    final ink = enabled ? ReaderColors.ink : ReaderColors.inkDisabled;
-    final title = forward ? 'Next entry' : 'Previous entry';
-    final name = entry == null
-        ? null
-        : (entry.sourceMarker?.trim().isNotEmpty ?? false)
-        ? entry.sourceMarker!.trim()
-        : entry.title;
-
-    final label = Column(
-      mainAxisSize: MainAxisSize.min,
-      crossAxisAlignment: forward
-          ? CrossAxisAlignment.end
-          : CrossAxisAlignment.start,
-      children: [
-        Text(
-          title,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          textAlign: forward ? TextAlign.right : TextAlign.left,
-          style: TextStyle(
-            fontSize: 12,
-            height: 1.2,
-            fontWeight: FontWeight.w600,
-            color: ink,
-          ),
-        ),
-        if (name != null) ...[
-          const SizedBox(height: 1),
-          Text(
-            name,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            textAlign: forward ? TextAlign.right : TextAlign.left,
-            style: _readerMeta,
-          ),
-        ],
-      ],
-    );
-
-    final chevron = Icon(
-      forward ? Icons.chevron_right : Icons.chevron_left,
-      size: 22,
-      color: ink,
-    );
-
-    return Tooltip(
-      // Unchanged wording: the tooltip is the long form of the same action,
-      // and it is what assistive navigation and the tests reach the control by.
-      message: forward ? 'Next saved entry' : 'Previous saved entry',
-      child: Semantics(
-        button: true,
-        enabled: enabled,
-        // One spoken phrase instead of three fragments, and it says outright
-        // when there is nowhere to go.
-        label: name == null ? '$title, unavailable' : '$title, $name',
-        excludeSemantics: true,
-        child: Material(
-          type: MaterialType.transparency,
-          borderRadius: BorderRadius.circular(12),
-          clipBehavior: Clip.antiAlias,
-          child: InkWell(
-            onTap: enabled ? () => onGoTo(entry) : null,
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(minHeight: _minHeight),
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
-                child: Row(
-                  mainAxisAlignment: forward
-                      ? MainAxisAlignment.end
-                      : MainAxisAlignment.start,
-                  children: [
-                    if (!forward) chevron,
-                    Flexible(child: label),
-                    if (forward) chevron,
-                  ],
-                ),
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
 }
 
 class _ReadPill extends StatelessWidget {
@@ -1917,40 +1116,13 @@ class _ReadPill extends StatelessWidget {
 /// What happens after the last panel: the entry is over, and the next one is
 /// one tap away. "Continue" skips ahead to the next thing actually unread.
 class _EndOfEntry extends StatelessWidget {
-  const _EndOfEntry({
-    required this.data,
-    required this.entryId,
-    required this.siblings,
-    required this.onGoTo,
-  });
+  const _EndOfEntry({required this.data});
 
   final _ReaderData data;
-  final String entryId;
-  final ValueListenable<List<Entry>> siblings;
-  final Future<void> Function(Entry) onGoTo;
 
   @override
-  Widget build(BuildContext context) => ValueListenableBuilder<List<Entry>>(
-    valueListenable: siblings,
-    builder: (context, ordered, _) => _build(context, ordered),
-  );
-
-  Widget _build(BuildContext context, List<Entry> siblings) {
-    final index = siblings.indexWhere((c) => c.id == entryId);
-    final next = (index >= 0 && index + 1 < siblings.length)
-        ? siblings[index + 1]
-        : null;
-    final nextUnread = siblings
-        .skip(index < 0 ? 0 : index + 1)
-        .where((c) => c.readStatus != ReadStatus.completed.name)
-        .firstOrNull;
-    final target = nextUnread ?? next;
-    final label =
-        data.entry?.sourceMarker ??
-        data.entry?.title ??
-        data.manifest?.sourceMarker ??
-        data.manifest?.title ??
-        '';
+  Widget build(BuildContext context) {
+    final label = data.manifest?.sourceMarker ?? data.manifest?.title ?? '';
 
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 26, 20, 110),
@@ -1966,26 +1138,6 @@ class _EndOfEntry extends StatelessWidget {
               color: ReaderColors.inkFaint,
             ),
           ),
-          if (target != null) ...[
-            const SizedBox(height: 14),
-            OutlinedButton(
-              onPressed: () => onGoTo(target),
-              style: OutlinedButton.styleFrom(
-                backgroundColor: ReaderColors.buttonSurface,
-                foregroundColor: ReaderColors.buttonInk,
-                side: const BorderSide(color: ReaderColors.buttonBorder),
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 22,
-                  vertical: 13,
-                ),
-              ),
-              child: Text(
-                'Next entry · ${target.sourceMarker ?? target.title}',
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              ),
-            ),
-          ],
         ],
       ),
     );
@@ -2159,235 +1311,6 @@ class _PartialBanner extends StatelessWidget {
   }
 }
 
-/// What the reader currently has to say, for as long as its notice lasts.
-class _ReaderNotice {
-  const _ReaderNotice({
-    required this.id,
-    required this.text,
-    required this.icon,
-    this.undo,
-  });
-
-  final int id;
-  final String text;
-  final IconData icon;
-
-  /// Present only while the removal can genuinely be taken back.
-  final Future<void> Function()? undo;
-}
-
-/// A short-lived notice that owns its own timeout and shows it draining.
-///
-/// Deliberately **not** a `SnackBar`: the messenger's queue lives above the
-/// router, outlives this screen and survives being backgrounded, so a snack bar
-/// posted here can resurface on a later page or after a resume. This lives and
-/// dies inside the reader — when the owner drops it, it is gone, and there is
-/// nowhere for it to come back from.
-///
-/// It owns exactly one controller and no timers, and the controller goes with
-/// the widget.
-///
-/// It is drawn from the same tokens as the app's snack bars — [AppPalette]'s
-/// toast surface, ink and accent, the snack bar theme's 14px radius and 13px
-/// body — because it is the same kind of object. The only thing it does not
-/// share is the messenger.
-class _TransientNotice extends StatefulWidget {
-  const _TransientNotice({
-    super.key,
-    required this.text,
-    required this.icon,
-    required this.duration,
-    required this.onDismissed,
-    this.persist = false,
-    this.actionLabel,
-    this.onAction,
-  });
-
-  final String text;
-  final IconData icon;
-  final Duration duration;
-
-  /// Wait for the Dismiss button instead of timing out. Set only for assistive
-  /// navigation, where [duration] is shorter than reaching the action takes.
-  final bool persist;
-
-  /// Called once, when the notice is finished with itself — the timeout ran
-  /// out, or the user closed it. The owner drops it from the tree.
-  final VoidCallback onDismissed;
-
-  final String? actionLabel;
-  final VoidCallback? onAction;
-
-  @override
-  State<_TransientNotice> createState() => _TransientNoticeState();
-}
-
-class _TransientNoticeState extends State<_TransientNotice>
-    with SingleTickerProviderStateMixin {
-  /// How long the notice takes to fade in, and again to fade out.
-  ///
-  /// A fixed duration rather than a fraction of [widget.duration]: the fade is
-  /// a property of the animation, not of how long the message is worth reading,
-  /// and a percentage silently re-times itself whenever the duration moves.
-  static const _fade = Duration(milliseconds: 140);
-
-  /// Both interactive boxes, at the size the rest of the app gives a tappable
-  /// glyph (`kHeaderActionSize`). Not that constant itself: it is scoped to the
-  /// screen-header row and must stay free to move with it.
-  static const _actionSize = 40.0;
-
-  late final AnimationController _timeout;
-  bool _closed = false;
-
-  @override
-  void initState() {
-    super.initState();
-    _timeout = AnimationController(vsync: this, duration: widget.duration)
-      ..addStatusListener((status) {
-        if (status == AnimationStatus.completed) _close();
-      });
-    // Left at rest when persisting, so nothing is counting down and the
-    // hairline has nothing to show.
-    if (!widget.persist) _timeout.forward();
-  }
-
-  @override
-  void dispose() {
-    _timeout.dispose();
-    super.dispose();
-  }
-
-  /// Idempotent: the timeout and the close button race by design, and the
-  /// loser must not report a second dismissal.
-  void _close() {
-    if (_closed) return;
-    _closed = true;
-    widget.onDismissed();
-  }
-
-  void _act() {
-    if (_closed) return;
-    _closed = true;
-    widget.onAction?.call();
-  }
-
-  /// Fades in over the first [_fade] and out over the last, so the notice
-  /// neither appears nor vanishes as a hard cut. Capped at a third of the
-  /// timeout each way, so a very short duration still has a moment at full
-  /// opacity rather than being one continuous fade.
-  double _opacityAt(double t) {
-    final ms = widget.duration.inMilliseconds;
-    if (ms <= 0) return 1;
-    final fade = (_fade.inMilliseconds / ms).clamp(0.001, 1 / 3);
-    final value = t < fade ? t / fade : (t > 1 - fade ? (1 - t) / fade : 1.0);
-    return value.clamp(0.0, 1.0);
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    // The reader is a permanently dark surface whatever the app appearance is,
-    // so the notice reads from the dark palette rather than the ambient one.
-    const palette = AppPalette.dark;
-
-    // The app's own transient-surface radius (`snackBarTheme`), so the reader's
-    // notice and every snack bar elsewhere read as the same object on two
-    // screens.
-    final radius = BorderRadius.circular(14);
-
-    return AnimatedBuilder(
-      animation: _timeout,
-      builder: (context, _) {
-        final t = _timeout.value;
-        return Opacity(
-          opacity: widget.persist ? 1 : _opacityAt(t),
-          child: Material(
-            color: palette.toastSurface,
-            borderRadius: radius,
-            elevation: 6,
-            shadowColor: palette.shadow,
-            clipBehavior: Clip.antiAlias,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(14, 8, 6, 8),
-                  child: Row(
-                    children: [
-                      Icon(widget.icon, size: 19, color: palette.toastAccent),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: Text(
-                          widget.text,
-                          // One line, always: the copy is two words, and a
-                          // notice that changes height between messages reads
-                          // as two different components.
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            fontSize: 13,
-                            color: palette.toastInk,
-                          ),
-                        ),
-                      ),
-                      if (widget.actionLabel != null) ...[
-                        const SizedBox(width: 6),
-                        TextButton(
-                          onPressed: _act,
-                          // Only the colour is overridden; the label's size and
-                          // weight are the app's text-button type. The shorter
-                          // the notice, the more the action has to be hit first
-                          // time.
-                          style: TextButton.styleFrom(
-                            foregroundColor: palette.toastAccent,
-                            padding: const EdgeInsets.symmetric(horizontal: 10),
-                            minimumSize: const Size(0, _actionSize),
-                            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                          ),
-                          child: Text(widget.actionLabel!),
-                        ),
-                      ],
-                      IconButton(
-                        tooltip: 'Dismiss',
-                        onPressed: _close,
-                        icon: const Icon(Icons.close, size: 18),
-                        color: palette.inkFaint,
-                        visualDensity: VisualDensity.compact,
-                        constraints: const BoxConstraints.tightFor(
-                          width: _actionSize,
-                          height: _actionSize,
-                        ),
-                        padding: EdgeInsets.zero,
-                      ),
-                    ],
-                  ),
-                ),
-                // The timeout, made visible: a hairline that empties as the
-                // notice runs out. Painted directly rather than with
-                // LinearProgressIndicator, whose Material 3 track and stop dot
-                // read as progress towards something. Absent when persisting,
-                // where there is no countdown to draw.
-                if (!widget.persist)
-                  SizedBox(
-                    height: 2,
-                    width: double.infinity,
-                    child: Align(
-                      alignment: Alignment.centerLeft,
-                      child: FractionallySizedBox(
-                        widthFactor: (1 - t).clamp(0.0, 1.0),
-                        heightFactor: 1,
-                        child: ColoredBox(color: palette.toastAccent),
-                      ),
-                    ),
-                  ),
-              ],
-            ),
-          ),
-        );
-      },
-    );
-  }
-}
-
 /// "Continue · N%" — the way back to where reading left off.
 class _JumpToSavedChip extends StatelessWidget {
   const _JumpToSavedChip({
@@ -2442,27 +1365,15 @@ class _JumpToSavedChip extends StatelessWidget {
 /// user actually hits — the row is still in the library, the position is still
 /// saved, and the only thing missing is the bytes.
 class _Unavailable extends StatelessWidget {
-  const _Unavailable({
-    required this.message,
-    this.filesGone = false,
-    this.removedByUser = false,
-    this.meta,
-    this.onSaveAgain,
-  });
+  const _Unavailable({required this.message, this.filesGone = false});
 
   final String message;
+
+  /// The copy row said where the bytes are and they are not there. Every other
+  /// refusal — no copy on this device, an unreadable package, a format a newer
+  /// build wrote — is an ordinary state of a first-class library item, so it
+  /// gets the message and none of the alarm.
   final bool filesGone;
-
-  /// The user removed the files deliberately: cloud glyph and "Not available
-  /// offline", never the alarming folder_off/"files are gone" wording.
-  final bool removedByUser;
-
-  /// One mono line of fact under the explanation ("removed 3 days ago",
-  /// "0 of 41 files present").
-  final String? meta;
-
-  /// Offered when the entry can be brought back.
-  final VoidCallback? onSaveAgain;
 
   @override
   Widget build(BuildContext context) => Center(
@@ -2472,18 +1383,14 @@ class _Unavailable extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           Icon(
-            removedByUser
-                ? Icons.cloud
-                : (filesGone ? Icons.folder_off : Icons.cloud_off),
+            filesGone ? Icons.folder_off : Icons.cloud_off,
             size: 34,
             color: ReaderColors.inkFaint,
           ),
           const SizedBox(height: 10),
           if (filesGone)
             Text(
-              removedByUser
-                  ? 'Not available offline'
-                  : 'The files for this entry are gone',
+              'The files for this entry are gone',
               textAlign: TextAlign.center,
               style: const TextStyle(
                 fontSize: 18,
@@ -2495,9 +1402,7 @@ class _Unavailable extends StatelessWidget {
           ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 280),
             child: Text(
-              removedByUser
-                  ? message
-                  : filesGone
+              filesGone
                   ? 'The entry is still listed, but its images are not on '
                         'the device any more. Your reading position is kept — '
                         'save it again to read it.'
@@ -2510,38 +1415,11 @@ class _Unavailable extends StatelessWidget {
               ),
             ),
           ),
-          if (meta != null) ...[
-            const SizedBox(height: 10),
-            Text(
-              meta!,
-              textAlign: TextAlign.center,
-              style: const TextStyle(
-                fontFamily: 'IBM Plex Mono',
-                fontSize: 11,
-                color: ReaderColors.inkFaint,
-              ),
-            ),
-          ],
           const SizedBox(height: 16),
           Builder(
             builder: (context) => Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                if (onSaveAgain != null) ...[
-                  FilledButton(
-                    onPressed: onSaveAgain,
-                    style: FilledButton.styleFrom(
-                      backgroundColor: ReaderColors.chipSurface,
-                      foregroundColor: ReaderColors.chipInk,
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 18,
-                        vertical: 12,
-                      ),
-                    ),
-                    child: const Text('Save again'),
-                  ),
-                  const SizedBox(width: 9),
-                ],
                 OutlinedButton(
                   onPressed: () => context.pop(),
                   style: OutlinedButton.styleFrom(
@@ -2579,30 +1457,21 @@ class _ReaderPage {
 
 class _ReaderData {
   const _ReaderData({
-    required this.entry,
     required this.manifest,
     required this.pages,
     this.document,
     this.entryDir,
   }) : unavailableReason = null,
-       filesGone = false,
-       removedByUser = false,
-       unavailableMeta = null,
-       unavailableEntry = null;
+       filesGone = false;
 
   const _ReaderData.unavailable(
     this.unavailableReason, {
     this.filesGone = false,
-    this.removedByUser = false,
-    this.unavailableMeta,
-    this.unavailableEntry,
-  }) : entry = null,
-       manifest = null,
+  }) : manifest = null,
        pages = const [],
        document = null,
        entryDir = null;
 
-  final Entry? entry;
   final EntryManifest? manifest;
 
   /// Image pages. Empty for a structured document.
@@ -2619,17 +1488,9 @@ class _ReaderData {
   /// files or reading extensions.
   bool get isDocument => document != null;
 
-  /// The row is intact but its images are not on the device any more.
+  /// The Entry is intact but the bytes this copy names are not on the device
+  /// any more.
   final bool filesGone;
-
-  /// …because the user removed them (not because the system lost them).
-  final bool removedByUser;
-
-  /// One line of fact for the unavailable state.
-  final String? unavailableMeta;
-
-  /// The row behind an unavailable entry, so it can be saved again.
-  final Entry? unavailableEntry;
 
   final String? unavailableReason;
 }
