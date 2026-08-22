@@ -529,7 +529,16 @@ sitting below a collection path by `collectionFingerprint` — with no hostname,
 selector or site list. Its three answers are entry page, collection index and
 *did not say*, and the third is a real answer: the user is asked which
 Collection this belongs to, rather than having the question resolved by
-writing a loose Entry. Standalone stays a first-class outcome (I3) and stays
+writing a loose Entry.
+
+The **collection index** answer is deliberately the narrowest of the three: it
+is returned only when the caller can name the Source path this address is, so
+in practice only for a site the library already holds. An address alone cannot
+separate a work's listing from an about page — both are a path with no number
+and nothing under it — and an app that guesses offers *add this collection to
+your library* over a privacy policy. Where the shape merely allows it, the
+sheet offers adding the site as a Source as one answer among three, and asserts
+nothing. Standalone stays a first-class outcome (I3) and stays
 available; it is chosen, never defaulted to. A collection index page never
 becomes an Entry at all — a listing is where a Source lives.
 

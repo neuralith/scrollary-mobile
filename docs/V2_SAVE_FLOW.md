@@ -32,12 +32,22 @@ address and the page's own words, with the helpers that already existed —
 
 - **entryPage** — a number was printed, or the address sits below a collection
   path that is not itself.
-- **collectionIndex** — the address *is* the collection path, with an identity
-  strong enough to key a Source.
+- **collectionIndex** — the address *is* a Source's own path, **as the library
+  reports it**. Nothing else produces this answer.
 - **unknownPage** — neither. A real answer: the user is asked, not guessed at.
 
 Shape is not identity. It never merges anything, and it never overrides what
 recognition found in the library.
+
+**Why a listing is never claimed from the address alone.** `example.com/about`
+and `example.com/series/quiet-harbour` have the same shape: a path with no
+entry number and nothing deeper under it. An app that reads the second as a
+listing reads the first as one too, and puts *add this collection to your
+library* in front of someone reading a privacy policy. So the claim requires
+the library's own word — the address is the `path_key` of a Source it already
+holds — and on a site nothing is known about, `PageShape.couldBeListing` marks
+the possibility and the sheet **offers** it as one answer among three instead
+of announcing it.
 
 ## 3. The matrix
 
@@ -46,15 +56,17 @@ recognition found in the library.
 | Entry in the library | `RecognisedLocation` | any | Collection · Entry · Source context; **Download this entry**; **Download entries…** (count) | queue rows only |
 | Address on a known Source | `RecognisedSource` | entryPage / unknownPage | "Adds to *Collection*"; **Add & download this entry**; **Add & download…**; Follow | Entry + Location under that Collection, through `EntryReconciler` |
 | Unknown site | `Unrecognised` | entryPage | **Add to a Collection…** → existing (adds this site as another Source) or new; then the count | Collection?/Source/Entry/Location in one transaction |
-| Unknown site, listing | `Unrecognised` | collectionIndex | **Add this collection to your library** (create or attach); optional **Download entries…** after a check | Collection?/Source; no Entry for the index itself |
-| Unknown site, ordinary page | `Unrecognised` | unknownPage | **Save as a standalone entry**; **Add to a Collection…** | standalone Entry + Location (I7) |
+| Known Source's own listing | `RecognisedSource` | collectionIndex | "there is no entry here to add"; **Check *Collection* for new entries**; Follow | nothing — the check writes what it finds |
+| Unknown site, ordinary page | `Unrecognised` | unknownPage | **Save as a standalone entry**; **Add to a Collection…**; and, when the address could be a listing, **Add this site as a collection's source** | standalone Entry + Location (I7), or — for the third — Collection?/Source and **no Entry** |
 
 Rules that bind every row:
 
 - **A serialized page never becomes standalone silently.** Standalone is
   offered, chosen, and never a fallback for "recognition could not tell".
 - **The index page is never an Entry.** A listing is where a Source lives; it
-  is not a unit of reading and no `Entry 0` is invented for it.
+  is not a unit of reading and no `Entry 0` is invented for it. Whether an
+  address *is* a listing is the library's answer or the user's — never the
+  URL's.
 - **Folder is organisation.** It is asked for when a new Collection or a
   standalone Entry needs a home, and it never stands in for Collection
   identity.

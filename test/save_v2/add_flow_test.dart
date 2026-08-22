@@ -103,6 +103,10 @@ void main() {
       url: 'https://$kHostA$kWorkPath',
       pageTitle: 'Quiet Harbour',
       newCollectionName: 'Quiet Harbour',
+      // The sheet asked; the orchestration is told. A count asked for
+      // alongside it is discarded rather than honoured, because a listing has
+      // no entry on it to download.
+      isListing: true,
       limits: count(5),
     );
 

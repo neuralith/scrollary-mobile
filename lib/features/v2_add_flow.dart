@@ -69,6 +69,11 @@ class AddToLibraryReport {
 /// means "the page is already in the library" and only the queueing runs.
 /// [limits] null queues nothing — which is what a listing gets, because a
 /// listing is not an Entry and there is nothing on it to download.
+///
+/// [isListing] is the caller's answer to *is this address a Source's own
+/// page*. It is a parameter rather than something re-derived here because
+/// only the library can answer it (`readPageShape`'s `sourcePathKey`), and
+/// the sheet has already asked.
 Future<AddToLibraryReport> v2AddAndDownload(
   WidgetRef ref, {
   required String url,
@@ -77,6 +82,7 @@ Future<AddToLibraryReport> v2AddAndDownload(
   String? newCollectionName,
   String? folderId,
   SaveLimits? limits,
+  bool isListing = false,
   CaptureMode? captureMode,
   bool captureModeIsUserSet = false,
 }) async {
@@ -95,7 +101,7 @@ Future<AddToLibraryReport> v2AddAndDownload(
 
   // The index page is never an Entry (§3). A listing is where a Source lives,
   // and what it lists is found by a check — a separate, visible, bounded act.
-  if (shape.kind == PageKind.collectionIndex) {
+  if (isListing || shape.kind == PageKind.collectionIndex) {
     return _addListing(
       ref,
       keys: keys,

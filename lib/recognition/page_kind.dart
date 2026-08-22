@@ -15,7 +15,15 @@
 ///
 /// Every answer is a real answer. [PageKind.unknownPage] is not a failure and
 /// never means "standalone": it means the page did not say, so the *user* is
-/// asked rather than guessed at (§21 of the save-flow brief, V2-D44).
+/// asked rather than guessed at (V2-D44).
+///
+/// **A listing is only ever claimed on evidence the library already holds.**
+/// An address alone cannot tell a work's listing from a site's about page —
+/// both are just a path that no entry number and no deeper segment sits under
+/// — so [readPageShape] says `collectionIndex` only when the caller can name
+/// the Source path this address *is*. Guessing it from the shape of the URL
+/// would put "add this collection to your library" in front of someone
+/// reading a privacy policy.
 library;
 
 import '../library/collection_identity.dart';
@@ -43,6 +51,7 @@ class PageShape {
     required this.detectedTitle,
     required this.collectionIndexUrl,
     required this.identityIsStrong,
+    required this.couldBeListing,
   });
 
   final PageKind kind;
@@ -66,6 +75,16 @@ class PageShape {
   /// chooses.
   final bool identityIsStrong;
 
+  /// Whether this address *could* be a work's listing: it is its own
+  /// collection path, it printed no number, and it keys a Source.
+  ///
+  /// Deliberately not a [PageKind]. The same shape describes an about page,
+  /// and the app has no way to tell them apart on a site it knows nothing
+  /// about — so this offers the user a choice rather than making a claim.
+  /// The claim is [PageKind.collectionIndex], and only the library's own
+  /// knowledge produces it.
+  final bool couldBeListing;
+
   /// Whether this page belongs to serialized content, however weakly.
   bool get isSerialized =>
       kind == PageKind.entryPage || kind == PageKind.collectionIndex;
@@ -83,13 +102,18 @@ class PageShape {
 ///      strips trailing entry-looking segments; when it strips any, this
 ///      address sits *below* a listing, which is what an entry does. It is an
 ///      entry with no number — a real state, and one that stays unplaced.
-///   3. **A collection path equal to this address**, with an identity strong
-///      enough to key a Source, is the listing itself.
+///   3. **This address is a Source's own path**, as [sourcePathKey] reports
+///      it: the listing itself. Only the library can say so.
 ///   4. Anything else did not say.
 PageShape readPageShape(
   String url, {
   String? pageTitle,
   PageHints hints = const PageHints(),
+
+  /// The `path_key` of the Source this address sits on, when the library
+  /// holds one. Null — the ordinary case for a site nothing is known about —
+  /// means no listing can be claimed.
+  String? sourcePathKey,
 }) {
   final identity = resolveCollectionIdentity(
     entryUrl: url,
@@ -112,7 +136,7 @@ PageShape readPageShape(
     kind = PageKind.entryPage;
   } else if (belowListing) {
     kind = PageKind.entryPage;
-  } else if (strong && ownPath.isNotEmpty && ownPath != '/') {
+  } else if (sourcePathKey != null && ownPath == sourcePathKey) {
     kind = PageKind.collectionIndex;
   } else {
     kind = PageKind.unknownPage;
@@ -124,6 +148,7 @@ PageShape readPageShape(
     detectedTitle: identity.detectedTitle,
     collectionIndexUrl: identity.collectionIndexUrl,
     identityIsStrong: strong,
+    couldBeListing: strong && number == null && !belowListing && ownPath != '/',
   );
 }
 

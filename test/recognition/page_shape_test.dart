@@ -34,15 +34,30 @@ void main() {
     );
   });
 
-  test('the address a work is published at is the listing itself', () {
+  test('a Source\'s own address is the listing, when the library can say '
+      'so', () {
     final shape = readPageShape(
       'https://$kHostA$kWorkPath',
       pageTitle: 'Quiet Harbour',
+      sourcePathKey: kWorkPath,
     );
 
     expect(shape.kind, PageKind.collectionIndex);
     expect(shape.identityIsStrong, isTrue);
     expect(shape.printedNumber, isNull);
+  });
+
+  test('the same address is not a listing when nothing knows it is', () {
+    // An address alone cannot tell a work's listing from an about page, and
+    // announcing "add this collection" over a privacy policy is the failure
+    // that guess produces. Without the library's word, it did not say.
+    final shape = readPageShape(
+      'https://$kHostA$kWorkPath',
+      pageTitle: 'Quiet Harbour',
+    );
+
+    expect(shape.kind, PageKind.unknownPage);
+    expect(shape.identityIsStrong, isTrue);
   });
 
   test('an ordinary page did not say, and says so', () {

@@ -385,6 +385,7 @@ typedef V2AddAndDownloadFn =
       String? newCollectionName,
       String? folderId,
       SaveLimits? limits,
+      bool isListing,
       CaptureMode? captureMode,
       bool captureModeIsUserSet,
     });
@@ -463,6 +464,8 @@ class _V2SavePanelState extends ConsumerState<V2SavePanel> {
   @override
   void initState() {
     super.initState();
+    // The shape that needs no library: enough to describe the page while
+    // recognition is still running. `_refresh` settles it.
     _shape = readPageShape(widget.url, pageTitle: widget.pageTitle);
     _refresh();
     _analyse();
@@ -489,7 +492,22 @@ class _V2SavePanelState extends ConsumerState<V2SavePanel> {
 
   Future<void> _refresh() async {
     final status = await v2PageStatusFor(ref, widget.url);
-    if (mounted) setState(() => _status = status);
+    if (!mounted) return;
+    // A listing is claimed only where the library can vouch for it — the
+    // address is a Source's own path. On a site nothing is known about there
+    // is no such evidence, and an address alone cannot tell a work's listing
+    // from an about page, so the sheet asks instead of announcing.
+    final onSource = status.result;
+    setState(() {
+      _status = status;
+      _shape = readPageShape(
+        widget.url,
+        pageTitle: widget.pageTitle,
+        sourcePathKey: onSource is RecognisedSource
+            ? onSource.source.pathKey
+            : null,
+      );
+    });
   }
 
   /// The title to suggest for a Collection: what the page named the work,
@@ -627,6 +645,10 @@ class _V2SavePanelState extends ConsumerState<V2SavePanel> {
         // Null is not "no limit" — it is *queue nothing*, which is what a
         // listing asks for.
         limits: scope?.limits,
+        // The sheet already asked the library whether this address is a
+        // Source's own page; the orchestration is told rather than guessing
+        // it a second time from the URL.
+        isListing: indexOnly,
         captureMode: _mode,
         captureModeIsUserSet: _modeIsUserSet,
       ),
@@ -970,8 +992,9 @@ class _V2SavePanelState extends ConsumerState<V2SavePanel> {
           ),
         ],
       ],
-      // An ordinary page. Standalone is the honest answer here, and it is
-      // still a choice.
+      // The page did not say. Standalone is the honest answer, and every
+      // other answer is offered rather than assumed — including the one the
+      // app cannot tell from an about page on a site it knows nothing about.
       PageKind.unknownPage => [
         if (canDownload)
           FilledButton(
@@ -985,6 +1008,28 @@ class _V2SavePanelState extends ConsumerState<V2SavePanel> {
             onPressed: () => _addToCollection(indexOnly: false),
             child: const Text('Add to a Collection…'),
           ),
+        if (_shape?.couldBeListing ?? false) ...[
+          _note(
+            palette,
+            'If this page lists a collection\'s entries rather than being '
+            'one of them, add the site itself instead — nothing is '
+            'downloaded, and checking the collection is how its entries are '
+            'found.',
+          ),
+          TextButton(
+            key: const ValueKey('v2AddCollection'),
+            onPressed: _busy ? null : () => _addToCollection(indexOnly: true),
+            child: const Text('Add this site as a collection\'s source'),
+          ),
+        ],
+        if (added != null) ...[
+          const SizedBox(height: 4),
+          FilledButton(
+            key: const ValueKey('v2CheckAfterAdd'),
+            onPressed: _busy ? null : () => _check(added.id, added.name),
+            child: Text('Check ${added.name} for new entries'),
+          ),
+        ],
       ],
     };
   }

@@ -15,7 +15,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:web_reader/browser/page_data.dart';
 import 'package:web_reader/core/config.dart';
-import 'package:web_reader/features/capture_mode_section.dart';
 // STUB IMPORT — switch to 'package:web_reader/features/v2_add_flow.dart' at
 // merge.
 import 'package:web_reader/features/v2_add_flow.dart';
@@ -49,12 +48,16 @@ class _AddCall {
     required this.collectionId,
     required this.newCollectionName,
     required this.limits,
+    this.isListing = false,
   });
 
   final String url;
   final String? collectionId;
   final String? newCollectionName;
   final SaveLimits? limits;
+
+  /// Whether the sheet told the domain this address is a Source's own page.
+  final bool isListing;
 }
 
 void main() {
@@ -79,6 +82,7 @@ void main() {
     String? newCollectionName,
     String? folderId,
     SaveLimits? limits,
+    bool isListing = false,
     CaptureMode? captureMode,
     bool captureModeIsUserSet = false,
   }) async {
@@ -88,6 +92,7 @@ void main() {
         collectionId: collectionId,
         newCollectionName: newCollectionName,
         limits: limits,
+        isListing: isListing,
       ),
     );
     return AddToLibraryReport(
@@ -369,22 +374,18 @@ void main() {
       expect(standalones, isEmpty);
     });
 
-    screenTest('a listing adds a collection, writes no entry and then offers '
-        'the check', (tester) async {
+    screenTest('a page that could be a listing offers the site itself, and '
+        'adding it writes no entry', (tester) async {
       await h.root();
       await openPanel(tester, _indexUrl, _indexTitle);
 
+      // On a site the library knows nothing about, "this is a listing" is not
+      // a claim the app can make — the same address shape describes an about
+      // page. So all three answers are offered and none is assumed: the loose
+      // save, a Collection to put it in, and the site itself.
       await pumpUntil(tester, key('v2AddCollection'));
-      expect(
-        key('v2SaveStandalone'),
-        findsNothing,
-        reason: 'a listing is not a unit of reading',
-      );
-      expect(
-        find.byType(CaptureModeSection),
-        findsNothing,
-        reason: 'nothing is captured, so there is nothing to choose',
-      );
+      expect(key('v2SaveStandalone'), findsOneWidget);
+      expect(key('v2AddToCollection'), findsOneWidget);
 
       await tapAndPump(tester, key('v2AddCollection'));
       await pumpUntil(tester, key('collectionPickerNew'));
@@ -397,6 +398,11 @@ void main() {
         adds.single.limits,
         isNull,
         reason: 'no entry is created for the index page itself',
+      );
+      expect(
+        adds.single.isListing,
+        isTrue,
+        reason: 'the sheet tells the domain what the user answered',
       );
       await pumpUntil(tester, key('v2CheckAfterAdd'));
     });
