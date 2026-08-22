@@ -5,8 +5,9 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:web_reader/browser/browser_controller.dart';
 import 'package:web_reader/browser/browser_presentation.dart';
 import 'package:web_reader/browser/favicon_service.dart';
-import 'package:web_reader/browser/history_repository.dart';
+import 'package:web_reader/data/schema.dart';
 import 'package:web_reader/features/browser_home.dart';
+import 'package:web_reader/features/v2_composition.dart';
 import 'package:web_reader/features/browser_toolbar.dart';
 import 'package:web_reader/features/browser_ui.dart';
 import 'package:web_reader/features/browser_url_editor.dart';
@@ -42,13 +43,29 @@ void browserWidgetTest(
 void main() {
   late AppDatabase db;
 
-  setUp(() => db = AppDatabase.forTesting(NativeDatabase.memory()));
-  tearDown(() => db.close());
+  /// Browsing history is the V2 `history` table; the V1 one has no writers
+  /// left. Only the store is needed here, not the whole V2 service graph.
+  late LibraryDatabase library;
+  late BrowsingHistoryStore history;
+
+  setUp(() {
+    db = AppDatabase.forTesting(NativeDatabase.memory());
+    library = LibraryDatabase.forTesting(NativeDatabase.memory());
+    history = BrowsingHistoryStore(library);
+  });
+  tearDown(() async {
+    await library.close();
+    await db.close();
+  });
+
+  Future<void> visit(String url, {required String title}) =>
+      history.recordVisit(landedUrl: url, title: title, userInitiated: true);
 
   Widget host(Widget child, {Size size = const Size(390, 844)}) =>
       ProviderScope(
         overrides: [
           databaseProvider.overrideWithValue(db),
+          historyRepositoryProvider.overrideWithValue(history),
           // Network-free, like everything under `test/`. A favicon miss
           // renders the fallback, which is the state these tests care about.
           faviconServiceProvider.overrideWithValue(
@@ -263,11 +280,7 @@ void main() {
         await SavedSitesRepository(
           db,
         ).save(url: 'https://a.example/', title: 'Example A');
-        await HistoryRepository(db).recordVisit(
-          url: 'https://example.com/guide/x/885',
-          title: 'part 885',
-          source: NavigationSource.manual,
-        );
+        await visit('https://example.com/guide/x/885', title: 'part 885');
 
         await tester.pumpWidget(home());
         await tester.pump();
@@ -357,13 +370,8 @@ void main() {
     browserWidgetTest('recently visited is bounded to four rows', (
       tester,
     ) async {
-      final history = HistoryRepository(db);
       for (var i = 0; i < 12; i++) {
-        await history.recordVisit(
-          url: 'https://a.example/$i',
-          title: 'Page $i',
-          source: NavigationSource.manual,
-        );
+        await visit('https://a.example/$i', title: 'Page $i');
       }
       await tester.pumpWidget(home());
       await tester.pump();
@@ -526,11 +534,7 @@ void main() {
     browserWidgetTest(
       'suggestions are debounced, not recomputed per keystroke',
       (tester) async {
-        await HistoryRepository(db).recordVisit(
-          url: 'https://example.com/guide/x',
-          title: 'Uzay entry',
-          source: NavigationSource.manual,
-        );
+        await visit('https://example.com/guide/x', title: 'Uzay entry');
         await tester.pumpWidget(
           host(
             BrowserUrlEditor(

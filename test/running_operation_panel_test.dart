@@ -23,8 +23,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:web_reader/browser/browser_controller.dart';
+import 'package:web_reader/capability/foreground_multitasking.dart';
 import 'package:web_reader/data/collection_repository.dart';
 import 'package:web_reader/data/entry_repository.dart';
+import 'package:web_reader/data/reading_state_repository.dart';
 import 'package:web_reader/data/recognition_index.dart';
 import 'package:web_reader/data/schema.dart';
 import 'package:web_reader/domain/collection.dart';
@@ -37,6 +39,7 @@ import 'package:web_reader/library_ui/providers.dart' as libui;
 import 'package:web_reader/providers.dart';
 import 'package:web_reader/recognition/check.dart';
 import 'package:web_reader/save/capture_mode.dart';
+import 'package:web_reader/recognition/recognise.dart';
 import 'package:web_reader/save/entry_capture.dart';
 import 'package:web_reader/save/page_capture_source.dart';
 import 'package:web_reader/save/page_hint.dart';
@@ -397,11 +400,28 @@ class _Harness {
     observations: observations,
   );
 
+  late final ForegroundMultitasking capability = ForegroundMultitasking();
+
+  late final SyncComposition sync = SyncComposition(
+    db: library,
+    queue: ui.queue,
+    cloudSyncAvailable: () => capability.cloudSyncAvailable,
+    capabilityChanges: capability,
+    transport: null,
+  );
+
   late final V2Services services = V2Services(
     library: library,
     ui: ui,
     runner: runner,
     check: check,
+    recogniser: Recogniser(
+      index: RecognitionIndex(library),
+      collections: CollectionRepository(library),
+      reading: ReadingStateRepository(library),
+    ),
+    history: BrowsingHistoryStore(library),
+    sync: sync,
   );
 
   String _collectionId = '';

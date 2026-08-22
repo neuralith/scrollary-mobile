@@ -221,4 +221,37 @@ void main() {
     expect(row.placement, Placement.unplaced.name);
     expect(row.ordinal, isNull);
   });
+
+  screenTest('with no service in the picture the position is an ordinary '
+      'local write', (tester) async {
+    // The default submitter, not the harness's recorder: this is the app a
+    // user runs for a week with no backend, and placement is a local write
+    // (V2-D7). Server arbitration exists for a contradiction between devices,
+    // and with one device there is none.
+    h.placement = localPlacementSubmit;
+    final before = await h.outboxRows();
+    final s = await seed();
+    final seeded = (await h.outboxRows()) - before;
+
+    await openScreen(tester, s.collection.id);
+    await openPlacement(tester, s.unplaced.id);
+    await typePosition(tester, '3');
+    await tapAndPump(tester, find.byKey(const ValueKey('confirmPlacement')));
+    await pumpUntil(tester, find.text('Placed at 3.'));
+
+    final row = (await h.entries.byId(s.unplaced.id))!;
+    expect(row.ordinal, 3);
+    expect(
+      row.placement,
+      Placement.userPlaced.name,
+      reason: 'the user chose this position, and the row records that',
+    );
+    expect(
+      (await h.outboxRows()) - before - seeded,
+      1,
+      reason:
+          'one write, one intent — waiting in the journal for a service that '
+          'may never arrive',
+    );
+  });
 }

@@ -32,7 +32,7 @@ import 'providers.dart';
 
 // ─── collection ─────────────────────────────────────────────────────────────
 
-enum _CollectionAction { check, archive, follow, move }
+enum _CollectionAction { check, archive, follow, move, remove }
 
 Future<void> showCollectionMenu(
   BuildContext context,
@@ -100,6 +100,16 @@ Future<void> showCollectionMenu(
             subtitle: const Text('How you organise your library.'),
             onTap: () => Navigator.of(sheetContext).pop(_CollectionAction.move),
           ),
+          // Last, and never worded as a tidier archive: the two removals in
+          // this app are different sizes and the labels have to say so.
+          ListTile(
+            key: const ValueKey('collectionRemove'),
+            leading: const Icon(Icons.playlist_remove),
+            title: const Text('Remove from library'),
+            subtitle: const Text('Your library, on every device you use.'),
+            onTap: () =>
+                Navigator.of(sheetContext).pop(_CollectionAction.remove),
+          ),
           const SizedBox(height: 8),
         ],
       ),
@@ -114,12 +124,25 @@ Future<void> showCollectionMenu(
       if (checker != null) await checker(view.collection.id, view.name);
     case _CollectionAction.archive:
       final violation = await repository.archive(view.collection.id);
+      if (violation != null) {
+        if (!context.mounted) return;
+        showLibraryMessage(context, violation.message);
+        return;
+      }
+      // Archiving is "stop keeping this current", so downloads that have not
+      // started yet are work nobody is waiting for any more. A run already in
+      // flight is left to finish — stopping is cooperative everywhere in this
+      // app, and killing a task mid-write is not something archiving asked
+      // for.
+      final stopped = await cancelWaitingDownloadsOf(ref, view.collection.id);
       if (!context.mounted) return;
       showLibraryMessage(
         context,
-        violation != null
-            ? violation.message
-            : 'Archived. Nothing was removed.',
+        stopped == 0
+            ? 'Archived. Nothing was removed.'
+            : 'Archived. Nothing was removed, and '
+                  '${stopped == 1 ? '1 waiting download was' : '$stopped waiting downloads were'} '
+                  'cancelled.',
       );
     case _CollectionAction.follow:
       final violation = await repository.follow(view.collection.id);
@@ -141,7 +164,82 @@ Future<void> showCollectionMenu(
       );
       if (!context.mounted || violation == null) return;
       showLibraryMessage(context, violation.message);
+    case _CollectionAction.remove:
+      await _removeCollectionFromLibrary(context, ref, view);
   }
+}
+
+/// Cancel the Collection's **waiting** save tasks, and say how many there
+/// were.
+///
+/// Queued only. A running task is asked to stop nowhere here: archiving is not
+/// a stop, and the one thing this app never does is offer a stop that does not
+/// stop — so a row already claimed by the queue keeps its own outcome.
+Future<int> cancelWaitingDownloadsOf(WidgetRef ref, String collectionId) async {
+  final entries = await ref.read(entryRepoProvider).entriesOf(collectionId);
+  if (entries.isEmpty) return 0;
+  final ids = {for (final entry in entries) entry.id};
+  final queue = ref.read(saveQueueRepoProvider);
+  var stopped = 0;
+  for (final task in await queue.pending()) {
+    if (task.state != SaveTaskState.queued) continue;
+    if (!ids.contains(task.entryId)) continue;
+    // One conditional UPDATE, so a row the pump claimed in the same instant
+    // loses cleanly here rather than being reported as cancelled.
+    final outcome = await queue.cancel(task.id);
+    if (outcome == SaveCancelOutcome.cancelledBeforeStart) stopped += 1;
+  }
+  return stopped;
+}
+
+/// *Remove from library* for a whole Collection.
+///
+/// The blast radius, stated: the Collection, its Entries and the addresses
+/// they were read at leave the library **on every device**. Bytes already on
+/// this device are not touched — an OfflineCopy has no foreign key and
+/// survives the cascade (I14), which is exactly why the confirmation says so
+/// rather than leaving the user to find out.
+Future<void> _removeCollectionFromLibrary(
+  BuildContext context,
+  WidgetRef ref,
+  CollectionView view,
+) async {
+  final confirmed = await showDialog<bool>(
+    context: context,
+    builder: (dialogContext) => AlertDialog(
+      title: Text('Remove “${view.name}” from your library?'),
+      content: const Text(
+        'Its entries, and the addresses they were read at, leave your library '
+        'on every device you use. Anything this device has already downloaded '
+        'stays until you remove it here.',
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(dialogContext).pop(false),
+          child: const Text('Cancel'),
+        ),
+        TextButton(
+          key: const ValueKey('confirmCollectionRemove'),
+          onPressed: () => Navigator.of(dialogContext).pop(true),
+          child: const Text('Remove'),
+        ),
+      ],
+    ),
+  );
+  if (confirmed != true) return;
+  // Waiting work first: a task whose Entry is about to go would be cascaded
+  // away as a row rather than cancelled as a decision.
+  await cancelWaitingDownloadsOf(ref, view.collection.id);
+  final violation = await ref
+      .read(collectionRepoProvider)
+      .removeCollection(view.collection.id);
+  if (!context.mounted) return;
+  showLibraryMessage(
+    context,
+    violation != null
+        ? violation.message
+        : 'Removed from your library. Downloads on this device were kept.',
+  );
 }
 
 // ─── entry ──────────────────────────────────────────────────────────────────

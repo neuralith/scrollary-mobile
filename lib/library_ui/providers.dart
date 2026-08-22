@@ -126,12 +126,13 @@ final saveQueueStarterProvider = Provider<SaveQueueStarter?>((ref) => null);
 
 /// How a placement leaves this device (roadmap D6).
 ///
-/// Unimplemented by default, in the same spirit as [libraryUiServicesProvider]:
-/// the transport is a lane of its own, and this one consumes the interface.
+/// The default is [localPlacementSubmit] — the ordinary local write, which is
+/// what a placement *is* on a device with no service to arbitrate against
+/// (V2-D7). The composition overrides it with a submitter over the service
+/// when this device both has one and may use it; that is the only difference
+/// between the two, and it is not a difference in what the user may do.
 final placementSubmitProvider = Provider<PlacementSubmit>(
-  (ref) => throw UnimplementedError(
-    'placement submission is not wired yet — override this provider',
-  ),
+  (ref) => localPlacementSubmit,
 );
 
 /// The root Folder, created on first use. "At the library root" means "in the

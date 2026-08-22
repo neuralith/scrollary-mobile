@@ -421,6 +421,10 @@ void main() {
     const allowed = <String>{
       'lib/library_ui/sync_status_section.dart',
       'lib/features/settings_screen.dart',
+      // The composition, which is what *attaches* the scheduler. It names the
+      // provider once, in an override, and draws nothing: attaching a source
+      // is the opposite of putting sync on a screen.
+      'lib/main.dart',
     };
     final offenders = <String>[];
     for (final file in Directory('lib').listSync(recursive: true)) {

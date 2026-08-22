@@ -15,6 +15,7 @@ import 'package:web_reader/domain/entry.dart';
 import 'package:web_reader/domain/reading_state.dart';
 import 'package:web_reader/library_ui/collection_screen.dart';
 import 'package:web_reader/library_ui/library_widgets.dart';
+import 'package:web_reader/save/queue_task.dart';
 
 import 'support/ui_harness.dart';
 
@@ -269,5 +270,130 @@ void main() {
     expect(row!.lifecycle, CollectionLifecycle.archived.name);
     // Nothing else moved.
     expect(find.byType(EntryRowTile), findsNWidgets(3));
+  });
+
+  screenTest('archiving cancels the waiting downloads and leaves the running '
+      'one alone', (tester) async {
+    final s = await seed();
+    // One waiting, one already claimed by the queue, and one belonging to
+    // another collection entirely.
+    final source = await h.source(s.collection.id);
+    await h.location(
+      s.plain.id,
+      'https://reading.example.com/one',
+      sourceId: source.id,
+    );
+    await h.location(
+      s.unplaced.id,
+      'https://reading.example.com/two',
+      sourceId: source.id,
+    );
+    final waiting = await h.queue.enqueue(
+      entryId: s.plain.id,
+      locationUrl: 'https://reading.example.com/one',
+    );
+    final running = await h.queue.enqueue(
+      entryId: s.unplaced.id,
+      locationUrl: 'https://reading.example.com/two',
+    );
+    h.queue.authoriseStart();
+    await h.queue.claim(running.task!.id);
+
+    final root = await h.root();
+    final other = await h.collection('Serial Beta', folderId: root.id);
+    final elsewhere = await h.entryIn(other.id, title: 'Elsewhere', ordinal: 1);
+    final otherSource = await h.source(other.id, pathKey: 'serial-beta');
+    await h.location(
+      elsewhere.id,
+      'https://reading.example.com/three',
+      sourceId: otherSource.id,
+    );
+    final untouched = await h.queue.enqueue(
+      entryId: elsewhere.id,
+      locationUrl: 'https://reading.example.com/three',
+    );
+
+    await tester.pumpWidget(
+      h.app(CollectionScreen(collectionId: s.collection.id)),
+    );
+    await pumpUntil(tester, find.text('The first one'));
+    await tapAndPump(tester, find.byTooltip('Collection actions'));
+    await tapAndPump(tester, find.text('Archive'));
+    await pumpUntil(tester, find.textContaining('Archived.'));
+
+    expect(
+      (await h.queue.byId(waiting.task!.id))!.state,
+      SaveTaskState.cancelled,
+      reason: 'it had not started, so nobody is waiting for it any more',
+    );
+    expect(
+      (await h.queue.byId(running.task!.id))!.state,
+      SaveTaskState.running,
+      reason:
+          'a run already in flight finishes; archiving is not a stop, and '
+          'this app never kills a task mid-write',
+    );
+    expect(
+      (await h.queue.byId(untouched.task!.id))!.state,
+      SaveTaskState.queued,
+      reason: 'another collection\'s work is not this collection\'s to cancel',
+    );
+  });
+
+  screenTest('removing the collection takes its entries and leaves this '
+      'device\'s bytes', (tester) async {
+    final s = await seed();
+
+    await tester.pumpWidget(
+      h.app(CollectionScreen(collectionId: s.collection.id)),
+    );
+    await pumpUntil(tester, find.text('The first one'));
+    await tapAndPump(tester, find.byTooltip('Collection actions'));
+
+    // The blast radius, stated before anything happens.
+    expect(find.text('Remove from library'), findsOneWidget);
+    await tapAndPump(tester, find.text('Remove from library'));
+    expect(
+      find.textContaining('leave your library on every device you use'),
+      findsOneWidget,
+    );
+    expect(
+      find.textContaining('already downloaded stays until you remove it here'),
+      findsOneWidget,
+    );
+    await tapAndPump(
+      tester,
+      find.byKey(const ValueKey('confirmCollectionRemove')),
+    );
+    await pumpUntil(tester, find.textContaining('Removed from your library'));
+
+    expect(await h.collections.byId(s.collection.id), isNull);
+    for (final id in [s.held.id, s.plain.id, s.unplaced.id]) {
+      expect(
+        await h.entries.byId(id),
+        isNull,
+        reason: 'the schema cascades the collection\'s rows',
+      );
+    }
+    // I14: the offline copy has no foreign key and survives, and so do the
+    // bytes it names. Removing a library row is never a way to delete a file.
+    expect(await h.offlineCopyRows(s.held.id), 1);
+    expect(h.bytesOnDisk(s.held.id), isTrue);
+  });
+
+  screenTest('cancelling the removal changes nothing', (tester) async {
+    final s = await seed();
+
+    await tester.pumpWidget(
+      h.app(CollectionScreen(collectionId: s.collection.id)),
+    );
+    await pumpUntil(tester, find.text('The first one'));
+    await tapAndPump(tester, find.byTooltip('Collection actions'));
+    await tapAndPump(tester, find.text('Remove from library'));
+    await tapAndPump(tester, find.text('Cancel'));
+    await pumpUntil(tester, find.text('The first one'));
+
+    expect(await h.collections.byId(s.collection.id), isNotNull);
+    expect(await h.entries.byId(s.held.id), isNotNull);
   });
 }

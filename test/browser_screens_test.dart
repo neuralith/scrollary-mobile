@@ -6,8 +6,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:web_reader/browser/browser_controller.dart';
 import 'package:web_reader/browser/favicon_service.dart';
-import 'package:web_reader/browser/history_repository.dart';
 import 'package:web_reader/browser/saved_sites_repository.dart';
+import 'package:web_reader/features/v2_composition.dart';
 import 'package:web_reader/features/browser_data_dialogs.dart';
 import 'package:web_reader/features/browser_history_screen.dart';
 import 'package:web_reader/features/saved_site_sheets.dart';
@@ -34,29 +34,35 @@ void browserWidgetTest(
 void main() {
   late AppDatabase db;
   late Directory root;
-  late HistoryRepository history;
+  late FileStore store;
+  late BrowserController browser;
+
+  /// The clearing dialogs ask the V2 runner and check whether the Browser is
+  /// busy before they wipe its session, so both get inert instances. It also
+  /// carries the history these screens read: browsing history is the V2
+  /// `history` table now, and the V1 one has no writers left.
+  late V2Harness v2;
+  late BrowsingHistoryStore history;
   late SavedSitesRepository saved;
 
   setUp(() {
     db = AppDatabase.forTesting(NativeDatabase.memory());
     root = Directory.systemTemp.createTempSync('webread_browser_screens');
-    history = HistoryRepository(db);
+    store = FileStore(root);
+    browser = BrowserController();
+    v2 = V2Harness(browser: browser, fileStore: store);
+    history = v2.history;
     saved = SavedSitesRepository(db);
   });
 
   tearDown(() async {
+    await v2.close();
+    browser.dispose();
     await db.close();
     if (root.existsSync()) root.deleteSync(recursive: true);
   });
 
   Widget host(Widget child) {
-    final store = FileStore(root);
-    final browser = BrowserController();
-    addTearDown(browser.dispose);
-    // The clearing dialogs ask the V2 runner and check whether the Browser is
-    // busy before they wipe its session, so both get inert instances.
-    final v2 = V2Harness(browser: browser, fileStore: store);
-    addTearDown(v2.close);
     return ProviderScope(
       overrides: [
         databaseProvider.overrideWithValue(db),
@@ -71,25 +77,34 @@ void main() {
     );
   }
 
+  Future<void> visit(
+    String url, {
+    required String title,
+    DateTime? at,
+    bool userInitiated = true,
+  }) => history.recordVisit(
+    landedUrl: url,
+    title: title,
+    userInitiated: userInitiated,
+    at: at,
+  );
+
   Future<void> seedVisits({DateTime? now}) async {
     final at = now ?? DateTime.now();
-    await history.recordVisit(
-      url: 'https://a.example/guide/long-guide/885',
+    await visit(
+      'https://a.example/guide/long-guide/885',
       title: 'The Long Guide',
-      source: NavigationSource.manual,
-      now: at.subtract(const Duration(minutes: 4)),
+      at: at.subtract(const Duration(minutes: 4)),
     );
-    await history.recordVisit(
-      url: 'https://a.example/guide/long-guide',
+    await visit(
+      'https://a.example/guide/long-guide',
       title: 'Contents',
-      source: NavigationSource.manual,
-      now: at.subtract(const Duration(minutes: 12)),
+      at: at.subtract(const Duration(minutes: 12)),
     );
-    await history.recordVisit(
-      url: 'https://b.example/notes/field/137',
+    await visit(
+      'https://b.example/notes/field/137',
       title: 'Field Notes 137',
-      source: NavigationSource.manual,
-      now: at.subtract(const Duration(days: 1, hours: 3)),
+      at: at.subtract(const Duration(days: 1, hours: 3)),
     );
   }
 
@@ -106,15 +121,17 @@ void main() {
     });
 
     browserWidgetTest('shows nothing from save automation', (tester) async {
-      await history.recordVisit(
-        url: 'https://a.example/guide/long-guide/886',
+      // Not user-initiated: the store refuses it outright, so there is no row
+      // to filter out of the screen later.
+      await visit(
+        'https://a.example/guide/long-guide/886',
         title: 'Saved entry',
-        source: NavigationSource.saveAutomation,
+        userInitiated: false,
       );
-      await history.recordVisit(
-        url: 'https://a.example/guide/long-guide',
+      await visit(
+        'https://a.example/guide/long-guide',
         title: 'Checked list',
-        source: NavigationSource.updateCheck,
+        userInitiated: false,
       );
       await tester.pumpWidget(host(const BrowserHistoryScreen()));
       await tester.pump();
@@ -191,7 +208,7 @@ void main() {
       await tester.tap(find.byKey(const ValueKey('historyRemoveVisit')));
       await tester.pumpAndSettle();
 
-      expect(await db.visits(), hasLength(2));
+      expect(await history.recent(), hasLength(2));
     });
 
     browserWidgetTest('the empty state explains where history comes from', (
@@ -226,7 +243,7 @@ void main() {
       await tester.tap(find.byKey(const ValueKey('confirmClearHistory')));
       await tester.pumpAndSettle();
 
-      final left = await db.visits();
+      final left = await history.recent();
       expect(left, hasLength(1), reason: 'only yesterday survives');
       // Yesterday's visit is the one on the second host.
       expect(left.single.host, 'b.example');
@@ -247,7 +264,7 @@ void main() {
       await tester.tap(find.byKey(const ValueKey('confirmClearHistory')));
       await tester.pumpAndSettle();
 
-      expect(await db.visits(), isEmpty);
+      expect(await history.recent(), isEmpty);
       // The saved site the test put there is untouched. Nothing is seeded, so
       // the row has to be created for the assertion to mean anything.
       expect(
@@ -348,10 +365,9 @@ void main() {
     ) async {
       // Only ever seen one deep page on this host, on a non-default port —
       // so no homepage can be derived and the flow must not invent one.
-      await history.recordVisit(
-        url: 'https://oldmirror.example:8443/steel-peony/28',
+      await visit(
+        'https://oldmirror.example:8443/steel-peony/28',
         title: 'Steel Peony 28',
-        source: NavigationSource.manual,
       );
       await tester.pumpWidget(
         host(

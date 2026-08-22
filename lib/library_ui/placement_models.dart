@@ -94,12 +94,26 @@ class PlacementOutcome {
 
 /// How a placement leaves this device.
 ///
-/// Injected, and deliberately unimplemented until something is attached: this
-/// lane draws the dialog and applies the answer, and inventing a local-only
-/// success while the transport is absent would be a placement the rest of the
-/// library never hears about.
+/// Injected: this lane draws the dialog and applies the answer, and where a
+/// placement travels belongs to the lane that owns the transport.
 typedef PlacementSubmit =
     Future<PlacementOutcome> Function(PlacementRequest request);
+
+/// The answer with no service in the picture: the position stands.
+///
+/// **Placement is a local write** (docs/DECISIONS.md V2-D7). Central
+/// arbitration exists because two devices placing the same Entry differently is
+/// a contradiction that a clock cannot settle — and with no second device there
+/// is no contradiction to settle. A device with no service therefore applies
+/// the number the user typed, exactly as it applies every other library
+/// mutation, and journals the one intent that carries it.
+///
+/// It writes nothing itself. The caller applies the position through the same
+/// local `placeEntry` a synced device applies a won placement with, so one row
+/// is written and one intent is journalled — and a position this device can
+/// already see is taken is refused there, by the schema, as it always was.
+Future<PlacementOutcome> localPlacementSubmit(PlacementRequest request) async =>
+    PlacementOutcome.applied(request.ordinal);
 
 /// `3`, `3.5`, `12` — never `3.0`.
 ///
