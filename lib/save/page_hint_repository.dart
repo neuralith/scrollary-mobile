@@ -3,18 +3,16 @@ import 'package:uuid/uuid.dart';
 
 import '../browser/browser_controller.dart';
 import '../data/schema.dart';
-import '../storage/database.dart';
 import 'page_hint.dart';
 
 const _uuid = Uuid();
 
 /// Where the rules a person taught are kept.
 ///
-/// Two implementations, because the V1 and V2 schemas coexist until the V1
-/// cleanup points and must never share a database. The rule-building above
-/// this — what signals a tapped element yields, how widely a rule applies,
-/// which of several rules wins — is the same in both and lives once, in
-/// [PageHintRepository].
+/// An interface rather than a direct query for the reason the rule-building
+/// above it is separate too: what signals a tapped element yields, how widely
+/// a rule applies and which of several rules wins are decisions, and where the
+/// row is kept is storage. There is one implementation.
 abstract interface class PageHintStore {
   Future<List<UserPageHint>> forHost(String host);
   Stream<List<UserPageHint>> watchAll();
@@ -26,11 +24,8 @@ abstract interface class PageHintStore {
 /// Reads and writes user-created site rules, and turns a tapped element into
 /// one.
 class PageHintRepository {
-  /// Over the V1 database, which is where the retired save run kept them.
-  PageHintRepository(AppDatabase db) : store = _V1PageHintStore(db);
-
-  /// Over the V2 library's `page_hints` table — what the V2 capture path
-  /// reads, and the only table a hint is written to from here on.
+  /// Over the library's `page_hints` table — what the capture path reads, and
+  /// the only table a hint is ever written to.
   PageHintRepository.forLibrary(LibraryDatabase db)
     : store = _LibraryPageHintStore(db);
 
@@ -143,68 +138,11 @@ class PageHintRepository {
     HintScope.pathPattern => pathShape(Uri.tryParse(url)?.path ?? ''),
     HintScope.host => null,
   };
-
-  static UserPageHint toModel(UserPageHintRow row) => UserPageHint(
-    id: row.id,
-    host: row.host,
-    hintPath: row.hintPath,
-    scope: hintScopeFromName(row.scope),
-    kind: hintKindFromName(row.kind),
-    locator: DomLocator.decode(row.locatorJson),
-    exampleSourceUrl: row.exampleSourceUrl,
-    exampleTargetUrl: row.exampleTargetUrl,
-    sameHostOnly: row.sameHostOnly,
-    createdAt: row.createdAt,
-    lastUsedAt: row.lastUsedAt,
-    successCount: row.successCount,
-    failureCount: row.failureCount,
-  );
 }
 
-class _V1PageHintStore implements PageHintStore {
-  _V1PageHintStore(this.db);
-
-  final AppDatabase db;
-
-  @override
-  Future<List<UserPageHint>> forHost(String host) async =>
-      (await db.hintsForHost(host)).map(PageHintRepository.toModel).toList();
-
-  @override
-  Stream<List<UserPageHint>> watchAll() => db.watchAllHints().map(
-    (rows) => rows.map(PageHintRepository.toModel).toList(),
-  );
-
-  @override
-  Future<void> upsert(UserPageHint hint) => db.upsertHint(
-    UserPageHintRow(
-      id: hint.id,
-      host: hint.host,
-      hintPath: hint.hintPath,
-      scope: hint.scope.name,
-      kind: hint.kind.name,
-      locatorJson: hint.locator.encode(),
-      exampleSourceUrl: hint.exampleSourceUrl,
-      exampleTargetUrl: hint.exampleTargetUrl,
-      sameHostOnly: hint.sameHostOnly,
-      createdAt: hint.createdAt,
-      lastUsedAt: hint.lastUsedAt,
-      successCount: hint.successCount,
-      failureCount: hint.failureCount,
-    ),
-  );
-
-  @override
-  Future<void> delete(String id) => db.deleteHint(id);
-
-  @override
-  Future<void> recordUse(String id, {required bool success}) =>
-      db.recordHintUse(id, success: success);
-}
-
-/// The V2 store. The queries live here rather than on [LibraryDatabase]
-/// because a rule is a save-lane concept: the library knows nothing about it
-/// beyond holding the row.
+/// The queries live here rather than on [LibraryDatabase] because a rule is a
+/// save-lane concept: the library knows nothing about it beyond holding the
+/// row.
 class _LibraryPageHintStore implements PageHintStore {
   _LibraryPageHintStore(this.db);
 

@@ -5,11 +5,11 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../browser/browser_url.dart';
-import '../browser/history_repository.dart';
+import '../browser/browsing_history.dart';
 import '../browser/saved_sites_repository.dart';
 import '../core/url_utils.dart';
 import '../providers.dart';
-import '../storage/database.dart';
+import '../data/schema.dart' show HistoryRow, SavedSiteRow;
 import '../ui/palette.dart';
 import '../ui/status_style.dart';
 import '../ui/theme.dart';
@@ -70,8 +70,8 @@ int matchScore(String text, String query) {
 /// bottom of the sheet promises exactly that.
 List<(String, List<UrlSuggestion>)> buildSuggestions({
   required String query,
-  required List<SavedSite> saved,
-  required List<BrowsingHistoryData> visits,
+  required List<SavedSiteRow> saved,
+  required List<HistoryRow> visits,
   int perGroup = 4,
 }) {
   final trimmed = query.trim();
@@ -168,7 +168,7 @@ List<(String, List<UrlSuggestion>)> buildSuggestions({
     ));
   }
 
-  final hosts = HistoryRepository.groupByHost(
+  final hosts = groupVisitsByHost(
     visits,
   ).where((h) => matchScore(h.host, trimmed) > 0).take(3).toList();
   if (hosts.isNotEmpty) {

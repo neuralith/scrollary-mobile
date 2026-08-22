@@ -1,6 +1,3 @@
-import 'dart:async';
-
-import 'package:collection/collection.dart';
 import 'package:flutter/foundation.dart' show ValueNotifier;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -9,37 +6,30 @@ import 'capability/foreground_multitasking.dart';
 import 'browser/browser_navigator.dart';
 import 'browser/browser_presentation.dart';
 import 'browser/favicon_service.dart';
-import 'browser/history_repository.dart';
+import 'browser/browsing_history.dart';
 import 'browser/saved_sites_repository.dart';
+import 'data/local_settings.dart';
+import 'data/schema.dart' show HistoryRow, SavedSiteRow;
 import 'features/check_controller.dart';
-import 'features/resume_point.dart';
 import 'features/v2_composition.dart';
+import 'library_ui/providers.dart'
+    show libraryDatabaseProvider, libraryUiServicesProvider;
 import 'save/queue_runner.dart';
-import 'features/library_formats.dart';
-import 'library/library_sort.dart';
-import 'library/collection_repository.dart';
-import 'reading/reading_repository.dart';
 import 'storage/cleanup.dart';
-import 'storage/database.dart';
 import 'storage/file_store.dart';
 import 'ui/theme.dart';
 
 /// Set once during bootstrap, before `runApp`.
 class AppServices {
   AppServices({
-    required this.db,
     required this.fileStore,
     required this.browser,
-    CleanupService? cleanup,
     ForegroundMultitasking? foregroundMultitasking,
   }) : foregroundMultitasking =
-           foregroundMultitasking ?? ForegroundMultitasking(),
-       cleanup = cleanup ?? CleanupService(db: db, fileStore: fileStore);
+           foregroundMultitasking ?? ForegroundMultitasking();
 
-  final AppDatabase db;
   final FileStore fileStore;
   final BrowserController browser;
-  final CleanupService cleanup;
 
   /// The one place that answers whether an operation may keep running while
   /// the user is elsewhere in the app.
@@ -48,10 +38,6 @@ class AppServices {
 
 final appServicesProvider = Provider<AppServices>(
   (ref) => throw UnimplementedError('overridden in main()'),
-);
-
-final databaseProvider = Provider<AppDatabase>(
-  (ref) => ref.watch(appServicesProvider).db,
 );
 
 final fileStoreProvider = Provider<FileStore>(
@@ -75,254 +61,60 @@ final foregroundMultitaskingProvider = Provider<ForegroundMultitasking>((ref) {
   }
 });
 
-/// Falls back to a locally-built service when [appServicesProvider] is not
-/// overridden — widget tests override the database and file store only, and
-/// nothing here needs the whole service graph.
+/// Freeing what this device is holding: the copy rows and the packages behind
+/// them.
+///
+/// Built from the V2 services rather than held on [AppServices], because every
+/// input it has — the copies, the entries, the reading state and the file
+/// store — belongs to the library composition, and a second holder is a second
+/// answer waiting to disagree.
 final cleanupProvider = Provider<CleanupService>((ref) {
-  try {
-    return ref.watch(appServicesProvider).cleanup;
-  } catch (_) {
-    // Widget tests override the database and file store only; the save
-    // run is genuinely absent there, and cleanup degrades to "no running
-    // save" rather than demanding the whole service graph.
-    return CleanupService(
-      db: ref.watch(databaseProvider),
-      fileStore: ref.watch(fileStoreProvider),
-    );
-  }
+  final services = ref.watch(libraryUiServicesProvider);
+  return CleanupService(
+    offlineCopies: services.offline,
+    entries: services.entries,
+    collections: services.collections,
+    reading: services.reading,
+    fileStore: services.fileStore,
+  );
+});
+
+/// The device's small key-value settings.
+final localSettingsProvider = Provider<LocalSettingsStore>(
+  (ref) => LocalSettingsStore(ref.watch(libraryDatabaseProvider)),
+);
+
+/// What this device is holding, from the copy rows alone.
+///
+/// Cheap and reactive, and deliberately *not* the storage survey: the survey
+/// also walks the library tree to find where the rows and the disk disagree,
+/// and no screen but Storage may wait on a recursive listing to draw a line
+/// of text. The two can differ, and where they do the Storage screen is the
+/// one that says so.
+final offlineHoldingsProvider = StreamProvider<({int bytes, int entries})>((
+  ref,
+) {
+  final db = ref.watch(libraryDatabaseProvider);
+  final query = db.select(db.offlineCopies)
+    ..where((c) => c.active.equals(true));
+  return query.watch().map(
+    (rows) => (
+      bytes: rows.fold<int>(0, (sum, row) => sum + row.byteSize),
+      entries: rows.length,
+    ),
+  );
 });
 
 /// The persisted appearance preference (default: follow the system).
 final appearanceProvider = StreamProvider<AppearanceMode>(
   (ref) => ref
-      .watch(databaseProvider)
-      .watchSetting(kAppearanceSettingKey)
+      .watch(localSettingsProvider)
+      .watch(kAppearanceSettingKey)
       .map(appearanceFromName),
 );
 
 Future<void> setAppearance(WidgetRef ref, AppearanceMode mode) =>
-    ref.read(databaseProvider).setSetting(kAppearanceSettingKey, mode.name);
-
-/// Reactive library: the list updates the moment an entry commits, with no
-/// manual invalidation.
-final entriesStreamProvider = StreamProvider<List<Entry>>(
-  (ref) => ref.watch(databaseProvider).watchAllEntries(),
-);
-
-final collectionsStreamProvider = StreamProvider<List<Collection>>(
-  (ref) => ref.watch(databaseProvider).watchCollections(),
-);
-
-final readingRepositoryProvider = Provider<ReadingRepository>(
-  (ref) => ReadingRepository(ref.watch(databaseProvider)),
-);
-
-final collectionRepositoryProvider = Provider<CollectionRepository>(
-  (ref) => CollectionRepository(ref.watch(databaseProvider)),
-);
-
-/// The persisted All Collection sort (Q26: defaults to last-read).
-final librarySortProvider = StreamProvider<LibrarySort>(
-  (ref) => ref
-      .watch(databaseProvider)
-      .watchSetting(kLibrarySortSettingKey)
-      .map(librarySortFromName),
-);
-
-/// Change and persist the sort; the groups provider reacts through the
-/// settings stream — no imperative refresh anywhere.
-Future<void> setLibrarySort(WidgetRef ref, LibrarySort sort) =>
-    ref.read(databaseProvider).setSetting(kLibrarySortSettingKey, sort.name);
-
-/// Collection groups with their entries, recomputed whenever either table
-/// changes — so a save that commits mid-run shows up immediately.
-/// Ordered by the persisted [LibrarySort].
-/// Every collection with entries, archived included — the source both the
-/// library (active) and the Archived screen filter from, so a collection can
-/// never fall through the gap between them.
-final allLibraryCollectionsProvider = StreamProvider<List<LibraryCollection>>((
-  ref,
-) {
-  final db = ref.watch(databaseProvider);
-  final sort = ref.watch(librarySortProvider).value ?? LibrarySort.lastRead;
-  // BOTH tables, genuinely. Drift invalidates per table, so watching only
-  // `collections` missed entry-only writes — removing an entry's offline files
-  // left the shelf and the Storage screen showing stale sizes until something
-  // happened to touch a collection row.
-  return _mergeTicks([db.watchCollections(), db.watchAllEntries()]).asyncMap((
-    _,
-  ) async {
-    final collections = await db.allCollections();
-    final entries = await db.allEntries();
-
-    final byCollection = <String, List<Entry>>{};
-    final standalone = <Entry>[];
-    for (final entry in entries) {
-      final id = entry.collectionId;
-      if (id == null) {
-        standalone.add(entry);
-      } else {
-        byCollection.putIfAbsent(id, () => []).add(entry);
-      }
-    }
-
-    final shelf = <LibraryCollection>[
-      for (final collection in collections)
-        LibraryCollection(
-          collection: collection,
-          entries: byCollection[collection.id] ?? const [],
-        ),
-      // Standalone entries are shelf items in their own right, listed beside
-      // collections rather than hidden inside one. This is the read side of the
-      // nullable `entries.collection_id`.
-      for (final entry in standalone) LibraryCollection(entries: [entry]),
-    ]..removeWhere((g) => g.entries.isEmpty);
-
-    return sortLibraryCollections(shelf, sort);
-  });
-});
-
-/// Emit a tick whenever ANY of [sources] emits.
-///
-/// A hand-rolled merge rather than `package:async`'s StreamGroup: that
-/// package is only a transitive dependency here, and this is a few lines.
-///
-/// `sync: true` matters. Drift delivers each query stream's first value in a
-/// microtask; forwarding it through an async controller adds another event-
-/// loop hop, which a widget test's fake clock never turns — the library
-/// screen simply never left its loading state.
-Stream<void> _mergeTicks(List<Stream<Object?>> sources) {
-  final subscriptions = <StreamSubscription<Object?>>[];
-  late final StreamController<void> controller;
-  controller = StreamController<void>.broadcast(
-    sync: true,
-    onListen: () {
-      for (final source in sources) {
-        subscriptions.add(
-          source.listen(
-            (_) => controller.add(null),
-            onError: controller.addError,
-          ),
-        );
-      }
-    },
-    onCancel: () {
-      for (final s in subscriptions) {
-        unawaited(s.cancel());
-      }
-      subscriptions.clear();
-    },
-  );
-  return controller.stream;
-}
-
-/// The library: active collection only (M16 — archived ones live on their own
-/// screen and are excluded from checks).
-final libraryCollectionsProvider =
-    Provider<AsyncValue<List<LibraryCollection>>>(
-      (ref) => ref
-          .watch(allLibraryCollectionsProvider)
-          .whenData(
-            (groups) => groups.where((g) => g.lifecycle != 'archived').toList(),
-          ),
-    );
-
-/// Archived collection, most recently archived first.
-final archivedGroupsProvider = Provider<AsyncValue<List<LibraryCollection>>>(
-  (ref) => ref
-      .watch(allLibraryCollectionsProvider)
-      .whenData(
-        (groups) =>
-            groups.where((g) => g.lifecycle == 'archived').toList()..sort(
-              (a, b) => (b.archivedAt ?? DateTime(0)).compareTo(
-                a.archivedAt ?? DateTime(0),
-              ),
-            ),
-      ),
-);
-
-/// One collection's entries, deduplicated by value.
-///
-/// Drift invalidates streams per table, so every entry write re-emits every
-/// per-collection stream; `.distinct` on row equality stops the ripple — a
-/// progress write for collection A produces no new emission for collection B. This is
-/// what per-collection widgets watch so one entry's change cannot rebuild the
-/// whole library (M13 backend; the M17 acceptance test rides on it).
-final collectionEntriesProvider = StreamProvider.family<List<Entry>, String>(
-  (ref, collectionId) => ref
-      .watch(databaseProvider)
-      .watchEntriesForCollection(collectionId)
-      .distinct(const ListEquality<Entry>().equals),
-);
-
-/// One group, derived from the same stream so the two never disagree.
-/// Looks across active AND archived: the detail screen must keep working for
-/// a collection the user just archived.
-final libraryCollectionProvider =
-    Provider.family<AsyncValue<LibraryCollection?>, String>(
-      (ref, collectionId) => ref
-          .watch(allLibraryCollectionsProvider)
-          .whenData(
-            (groups) => groups.where((g) => g.id == collectionId).firstOrNull,
-          ),
-    );
-
-/// Collection with an unfinished or next-unread local entry, most recently read
-/// first. Derived from the same stream as the library, so the two can never
-/// disagree and a save or a page turn updates both without a restart.
-final continueReadingProvider = Provider<AsyncValue<List<ResumePoint>>>(
-  (ref) => ref.watch(libraryCollectionsProvider).whenData((groups) {
-    final entries = <ResumePoint>[];
-    for (final group in groups) {
-      final state = computeCollectionReadingState(group.entries);
-      final entry = state.continueEntry;
-      if (entry == null) continue;
-      entries.add(ResumePoint(group: group, entry: entry, state: state));
-    }
-    entries.sort((a, b) {
-      final at = a.state.lastReadAt;
-      final bt = b.state.lastReadAt;
-      if (at != null && bt != null) return bt.compareTo(at);
-      // Never opened sorts after anything actually read.
-      if (at != null) return -1;
-      if (bt != null) return 1;
-      return a.group.displayName.toLowerCase().compareTo(
-        b.group.displayName.toLowerCase(),
-      );
-    });
-    return entries;
-  }),
-);
-
-/// Anything ever opened, most recent first — including collection that are fully
-/// completed and so no longer appear under Continue Reading.
-final recentlyReadProvider = Provider<AsyncValue<List<ResumePoint>>>(
-  (ref) => ref.watch(libraryCollectionsProvider).whenData((groups) {
-    final entries = <ResumePoint>[];
-    for (final group in groups) {
-      final state = computeCollectionReadingState(group.entries);
-      if (state.lastReadAt == null) continue;
-      // Reopen where they were: the entry to continue, else the last one
-      // they finished.
-      final entry = state.continueEntry ?? state.lastCompleted;
-      if (entry == null) continue;
-      entries.add(ResumePoint(group: group, entry: entry, state: state));
-    }
-    entries.sort((a, b) => b.state.lastReadAt!.compareTo(a.state.lastReadAt!));
-    return entries;
-  }),
-);
-
-final collectionReadingStateProvider =
-    Provider.family<AsyncValue<CollectionReadingState>, String>(
-      (ref, collectionId) => ref
-          .watch(libraryCollectionProvider(collectionId))
-          .whenData(
-            (group) => group == null
-                ? const CollectionReadingState(entries: [])
-                : computeCollectionReadingState(group.entries),
-          ),
-    );
+    ref.read(localSettingsProvider).set(kAppearanceSettingKey, mode.name);
 
 /// One-shot requests to switch the shell's bottom tab (0 = Library,
 /// 1 = Browser). Written by widgets that live inside a tab (the activity
@@ -448,25 +240,20 @@ final readerChromeVisibleProvider = Provider<ReaderChromeVisibility>((ref) {
 ///
 // --- browser (M18) ---------------------------------------------------------
 
-/// Browsing history: the **V2** `history` table, which is the one the
-/// recognition pipeline reads too.
-///
-/// The V1 `browsing_history` table has no writers left. Two tables holding the
-/// same fact is how they come to disagree, so the screens written against V1's
-/// repository read this instead; the row shape they were given is a view model
-/// and nothing constructed from it reaches the V1 table.
+/// Browsing history: the V2 `history` table, which is the one the recognition
+/// pipeline reads too. There is no second one.
 final historyRepositoryProvider = Provider<BrowsingHistoryStore>(
   (ref) => ref.watch(v2ServicesProvider).history,
 );
 
 final savedSitesRepositoryProvider = Provider<SavedSitesRepository>(
-  (ref) => SavedSitesRepository(ref.watch(databaseProvider)),
+  (ref) => SavedSitesRepository(ref.watch(libraryDatabaseProvider)),
 );
 
 /// One instance per app, so the icon a list fetched is the icon every other
 /// list already has.
 final faviconServiceProvider = Provider<FaviconService>((ref) {
-  final service = FaviconService(db: ref.watch(databaseProvider));
+  final service = FaviconService(db: ref.watch(libraryDatabaseProvider));
   ref.onDispose(service.dispose);
   return service;
 });
@@ -491,14 +278,14 @@ final browserNavigatorProvider = Provider<BrowserNavigator>((ref) {
 });
 
 /// The saved-site grid, hand-ordered.
-final savedSitesProvider = StreamProvider<List<SavedSite>>(
-  (ref) => ref.watch(databaseProvider).watchSavedSites(),
+final savedSitesProvider = StreamProvider<List<SavedSiteRow>>(
+  (ref) => ref.watch(savedSitesRepositoryProvider).watchAll(),
 );
 
 /// Manual browsing history, newest first and bounded — the History screen
 /// and Browser Home's "recently visited" both read this one stream, so a
 /// cleared range disappears from both at once with no cache to invalidate.
-final browsingHistoryProvider = StreamProvider<List<BrowsingHistoryData>>(
+final browsingHistoryProvider = StreamProvider<List<HistoryRow>>(
   (ref) => ref
       .watch(historyRepositoryProvider)
       .watchRecent(limit: kHistoryStreamLimit),
@@ -513,9 +300,7 @@ const int kHistoryStreamLimit = 500;
 
 /// Hostnames with visit counts, derived from the same stream.
 final visitedHostsProvider = Provider<AsyncValue<List<VisitedHost>>>(
-  (ref) => ref
-      .watch(browsingHistoryProvider)
-      .whenData(HistoryRepository.groupByHost),
+  (ref) => ref.watch(browsingHistoryProvider).whenData(groupVisitsByHost),
 );
 
 // --- V2 composition --------------------------------------------------------

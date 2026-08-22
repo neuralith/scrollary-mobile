@@ -5,7 +5,7 @@ import '../browser/browser_presentation.dart';
 import '../browser/browser_url.dart';
 import '../browser/saved_sites_repository.dart';
 import '../providers.dart';
-import '../storage/database.dart';
+import '../data/schema.dart' show SavedSiteRow;
 import '../ui/palette.dart';
 import '../ui/status_style.dart';
 import '../ui/theme.dart';
@@ -39,7 +39,7 @@ class BrowserHome extends ConsumerWidget {
   final void Function(String url, String title) onOpenUrl;
   final VoidCallback onOpenHistory;
   final VoidCallback onAddSite;
-  final void Function(SavedSite site) onEditSite;
+  final void Function(SavedSiteRow site) onEditSite;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -223,7 +223,7 @@ class _SavedSitesSection extends ConsumerStatefulWidget {
 
   final void Function(String url, String title) onOpenUrl;
   final VoidCallback onAddSite;
-  final void Function(SavedSite site) onEditSite;
+  final void Function(SavedSiteRow site) onEditSite;
 
   @override
   ConsumerState<_SavedSitesSection> createState() => _SavedSitesSectionState();
@@ -310,12 +310,12 @@ class _SavedSitesSectionState extends ConsumerState<_SavedSitesSection> {
     );
   }
 
-  void _open(SavedSite site) {
+  void _open(SavedSiteRow site) {
     unawaitedMarkOpened(ref, site.id);
     widget.onOpenUrl(site.url, savedSiteDisplayTitle(site));
   }
 
-  Future<void> _remove(SavedSite site) async {
+  Future<void> _remove(SavedSiteRow site) async {
     final messenger = ScaffoldMessenger.maybeOf(context);
     await ref.read(savedSitesRepositoryProvider).remove(site.id);
     if (!mounted) return;
@@ -361,7 +361,7 @@ class _SavedSiteTile extends StatelessWidget {
     required this.onRemove,
   });
 
-  final SavedSite site;
+  final SavedSiteRow site;
   final bool reordering;
   final bool canMoveUp;
   final bool canMoveDown;

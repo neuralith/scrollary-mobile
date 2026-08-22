@@ -12,7 +12,6 @@ library;
 import 'dart:async';
 import 'dart:io';
 
-import 'package:drift/native.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -22,12 +21,14 @@ import 'package:web_reader/capability/entitlement.dart';
 import 'package:web_reader/capability/foreground_multitasking.dart';
 import 'package:web_reader/features/foreground_gate_sheet.dart';
 import 'package:web_reader/features/settings_screen.dart';
+import 'package:web_reader/library_ui/providers.dart' as libui;
 import 'package:web_reader/library_ui/sync_status_section.dart';
 import 'package:web_reader/providers.dart';
-import 'package:web_reader/storage/database.dart';
 import 'package:web_reader/storage/file_store.dart';
 import 'package:web_reader/sync/status.dart';
 import 'package:web_reader/ui/theme.dart';
+
+import 'helpers/v2_harness.dart';
 
 /// The closing note's three states, quoted so a rewrite of any of them is a
 /// deliberate act rather than a passing edit. The first two must stay exactly
@@ -70,13 +71,21 @@ class _FakeSource implements SyncStatusSource {
 }
 
 void main() {
-  late AppDatabase db;
   late Directory root;
+  late FileStore store;
+  late BrowserController browser;
+
+  /// Settings reads the V2 library for everything it counts — the offline
+  /// holdings line, the saved rules, the saved sites and the browsing
+  /// history — so the whole V2 stack stands behind the screen.
+  late V2Harness v2;
   late _FakeSource source;
 
   setUp(() {
-    db = AppDatabase.forTesting(NativeDatabase.memory());
     root = Directory.systemTemp.createTempSync('scrollary_settings_sync');
+    store = FileStore(root);
+    browser = BrowserController();
+    v2 = V2Harness(browser: browser, fileStore: store);
     // Three changes waiting and a healthy service: everything the live section
     // would have to say, so a Free device staying silent is a real result.
     source = _FakeSource(
@@ -92,7 +101,8 @@ void main() {
 
   tearDown(() async {
     await source.close();
-    await db.close();
+    await v2.close();
+    browser.dispose();
     if (root.existsSync()) root.deleteSync(recursive: true);
   });
 
@@ -102,16 +112,13 @@ void main() {
     required ForegroundMultitasking capability,
     bool attached = true,
   }) {
-    final store = FileStore(root);
-    final browser = BrowserController();
-    addTearDown(browser.dispose);
     return ProviderScope(
       overrides: [
-        databaseProvider.overrideWithValue(db),
-        fileStoreProvider.overrideWithValue(store),
+        v2ServicesProvider.overrideWithValue(v2.services),
+        libui.libraryUiServicesProvider.overrideWithValue(v2.ui),
         browserProvider.overrideWithValue(browser),
         faviconServiceProvider.overrideWithValue(
-          FaviconService(db: db, allowNetwork: false),
+          FaviconService(db: v2.library, allowNetwork: false),
         ),
         foregroundMultitaskingProvider.overrideWithValue(capability),
         if (attached) syncStatusSourceProvider.overrideWithValue(source),

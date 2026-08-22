@@ -4,6 +4,7 @@ import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../core/local_reset.dart';
+import '../library_ui/providers.dart' show libraryDatabaseProvider;
 import '../providers.dart';
 import '../ui/palette.dart';
 import '../ui/status_style.dart';
@@ -12,7 +13,7 @@ import '../ui/status_style.dart';
 final localResetProvider = Provider<LocalResetService>((ref) {
   final services = ref.watch(appServicesProvider);
   return LocalResetService(
-    db: services.db,
+    db: ref.watch(libraryDatabaseProvider),
     fileStore: services.fileStore,
     browser: services.browser,
     clearCookies: () => CookieManager.instance().deleteAllCookies(),

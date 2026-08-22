@@ -6,11 +6,13 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:web_reader/capability/entitlement.dart';
 import 'package:web_reader/capability/foreground_gate.dart';
 import 'package:web_reader/capability/foreground_multitasking.dart';
+import 'package:web_reader/data/local_settings.dart';
+import 'package:web_reader/data/schema.dart';
 import 'package:web_reader/features/foreground_gate_sheet.dart';
 import 'package:web_reader/features/settings_screen.dart'
     show KeepWorkingSettingRow;
+import 'package:web_reader/library_ui/providers.dart' as libui;
 import 'package:web_reader/providers.dart';
-import 'package:web_reader/storage/database.dart';
 
 /// What the gate looks like, and what a screen reader is told about it.
 ///
@@ -20,21 +22,26 @@ import 'package:web_reader/storage/database.dart';
 /// what or why. Every locked control here is tappable and says "Requires Pro"
 /// out loud before it is tapped.
 void main() {
-  late AppDatabase db;
+  late LibraryDatabase library;
+
+  /// Where the keep-working preference is actually written: the V2 `settings`
+  /// table, through the store the app itself uses.
+  late LocalSettingsStore settings;
   late ForegroundMultitasking capability;
 
   setUp(() {
-    db = AppDatabase.forTesting(NativeDatabase.memory());
+    library = LibraryDatabase.forTesting(NativeDatabase.memory());
+    settings = LocalSettingsStore(library);
     capability = ForegroundMultitasking();
   });
   tearDown(() async {
-    await db.close();
+    await library.close();
     capability.dispose();
   });
 
   Widget harness(Widget child) => ProviderScope(
     overrides: [
-      databaseProvider.overrideWithValue(db),
+      libui.libraryDatabaseProvider.overrideWithValue(library),
       foregroundMultitaskingProvider.overrideWithValue(capability),
     ],
     child: MaterialApp(home: Scaffold(body: child)),
@@ -304,7 +311,7 @@ void main() {
 
       expect(capability.preference, isTrue);
       expect(
-        await db.setting(ForegroundMultitasking.settingKey),
+        await settings.get(ForegroundMultitasking.settingKey),
         'true',
         reason: 'applied and persisted, in one place',
       );
@@ -407,7 +414,7 @@ void main() {
 
       expect(capability.preference, isTrue);
       expect(capability.enabled, isTrue);
-      expect(await db.setting(ForegroundMultitasking.settingKey), 'true');
+      expect(await settings.get(ForegroundMultitasking.settingKey), 'true');
       expect(
         find.textContaining('Nothing runs in the background'),
         findsWidgets,

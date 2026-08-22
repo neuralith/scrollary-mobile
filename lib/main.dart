@@ -7,13 +7,13 @@ import 'app.dart';
 import 'browser/browser_controller.dart';
 import 'capability/entitlement.dart';
 import 'capability/foreground_multitasking.dart';
-import 'browser/history_repository.dart';
+import 'browser/browsing_history.dart';
 import 'core/device_storage.dart';
 import 'core/startup.dart';
 import 'features/splash_screen.dart';
 import 'providers.dart';
-import 'storage/database.dart';
 import 'storage/file_store.dart';
+import 'data/local_settings.dart';
 import 'data/recognition_index.dart';
 import 'data/schema.dart' show LibraryDatabase;
 import 'data/reading_state_repository.dart';
@@ -31,7 +31,6 @@ import 'save/page_hint_repository.dart';
 import 'save/queue_runner.dart';
 import 'save/save_engine.dart';
 import 'core/config.dart';
-import 'storage/recovery.dart';
 import 'ui/palette.dart';
 
 /// Renders on the first frame. The startup work then runs *inside* the tree,
@@ -219,7 +218,7 @@ class _AppBootState extends State<AppBoot> with WidgetsBindingObserver {
 /// and with these semantics — only the first is fatal, and the rest are
 /// best-effort maintenance that must never keep the user out of their library.
 class AppStartup {
-  AppDatabase? _db;
+  LibraryDatabase? _library;
   FileStore? _fileStore;
   AppServices? _services;
   V2Services? _v2;
@@ -238,12 +237,18 @@ class AppStartup {
   /// Storage, the controllers built on it, and the wiring between them.
   /// Critical: there is no app without these.
   Future<void> _open() async {
-    // Reused across a retry: a second AppDatabase over the same file would be
-    // a second connection, and the first one is already open.
-    final db = _db ??= AppDatabase();
+    // Reused across a retry: a second LibraryDatabase over the same file
+    // would be a second connection, and the first one is already open.
+    //
+    // A device that ran an older build still has V1's `webread` database file
+    // beside this one. Nothing opens it, nothing reads it and nothing deletes
+    // it: there is no migration (V2-D26), and deleting a file this build
+    // cannot interpret would be destroying data on the strength of its name.
+    final library = _library ??= LibraryDatabase();
     final fileStore = _fileStore ??= await FileStore.open();
 
     final browser = BrowserController();
+    final settings = LocalSettingsStore(library);
 
     // Read before the app builds, not watched: the shell decides how to
     // composite the Browser on its first frame, and a capability that arrived
@@ -251,27 +256,24 @@ class AppStartup {
     final multitasking =
         ForegroundMultitasking(
             ForegroundMultitasking.parse(
-              await db.setting(ForegroundMultitasking.settingKey),
+              await settings.get(ForegroundMultitasking.settingKey),
             ),
           )
           // The internal entitlement override. Read here so it is in force
           // before the first frame decides what the shell paints; in a
           // production build nothing can ever have written it.
           ..override = EntitlementOverride.parse(
-            await db.setting(ForegroundMultitasking.overrideSettingKey),
+            await settings.get(ForegroundMultitasking.overrideSettingKey),
           );
 
     _services = AppServices(
-      db: db,
       fileStore: fileStore,
       browser: browser,
       foregroundMultitasking: multitasking,
     );
 
-    // The V2 stack, beside the V1 services it is replacing piecewise. One
-    // LibraryDatabase, the repositories over it, the queue worker and the
-    // check controller — all sharing the one Browser and FileStore.
-    final library = LibraryDatabase();
+    // The repositories over the library, the queue worker and the check
+    // controller — all sharing the one Browser and FileStore.
     final ui = libui.LibraryUiServices(library, fileStore: fileStore);
     // The one assist host, built here because the queue's worker and the save
     // sheet must hold the *same* one: a capture that stops to ask has to hold
@@ -381,13 +383,21 @@ class AppStartup {
     }
   }
 
-  /// Startup recovery, before the UI is interactive.
+  /// File-level recovery, before the UI is interactive.
   ///
-  /// The invariant this protects: an entry is never promoted to `complete` by
-  /// recovery. Anything left mid-flight is reset and re-capturable; anything
-  /// whose files vanished is demoted, keeping its row.
+  /// Both halves are the FileStore's, and both are device-validated: a kill
+  /// between *step the old entry aside* and *move the new one in* leaves a
+  /// `.previous` directory, and an interrupted capture leaves a staging tree.
+  ///
+  /// What is deliberately **not** here any more is V1's row reconciliation.
+  /// That pass rebuilt library rows from the packages on disk, and V2 must not
+  /// do it: an Entry is a synced library fact, and a package on one device is
+  /// not evidence for one (V2-D22, I14) — a rebuild here would resurrect
+  /// entries another device deleted. A package with no copy row is now
+  /// reported by the storage survey as space the user can free, and a copy row
+  /// with no package as a record they can forget
+  /// (`lib/storage/cleanup.dart`). Nothing is decided at boot.
   Future<void> _recover() async {
-    final db = _db!;
     final fileStore = _fileStore!;
 
     // A kill between "step the old entry aside" and "move the new one in"
@@ -399,28 +409,6 @@ class AppStartup {
 
     final swept = await fileStore.sweepStaging();
     if (swept > 0) debugPrint('[recovery] swept $swept staging dir(s)');
-
-    final reset = await db.resetInFlightEntries();
-    if (reset > 0) debugPrint('[recovery] reset $reset in-flight entry(s)');
-
-    // Files on disk with no usable database row: finish the record from the
-    // manifest, which describes itself.
-    for (final relative in fileStore.listCommittedEntryPaths()) {
-      final manifest = await fileStore.readManifest(relative);
-      if (manifest == null) continue;
-      final existing = await db.entryById(manifest.entryId);
-      if (existing != null && existing.contentPath != null) continue;
-      if (!isRecoverable(manifest)) continue;
-      debugPrint('[recovery] reconciling ${manifest.entryId} from manifest');
-      await db.upsertEntry(
-        entryFromManifest(
-          manifest: manifest,
-          relativePath: relative,
-          byteSize: await fileStore.entryByteSize(relative),
-          prior: existing,
-        ),
-      );
-    }
   }
 
   /// Browsing-data retention.

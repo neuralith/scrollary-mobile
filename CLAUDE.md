@@ -348,7 +348,7 @@ rebuilds library rows from packages of either version.
 dart format lib test integration_test tool
 flutter analyze
 flutter test
-dart run build_runner build          # after touching lib/storage/database.dart
+dart run build_runner build          # after touching lib/data/schema.dart
 ```
 
 Deterministic tests are network-free and gate everything. Fixture integration

@@ -1,308 +1,269 @@
-import 'dart:async';
-import 'dart:io';
+/// What this device is holding, and what it can honestly free.
+///
+/// **Removing a copy is never deleting an Entry.** The Entry, its Locations,
+/// its reading state and every other device are untouched: an Entry is in the
+/// library because somebody wants to read it, not because bytes were
+/// downloaded (PRODUCT.md §2.4). Nothing here may be offered as a way to
+/// remove anything from the library.
+///
+/// ### Two sources, and where they disagree
+///
+/// The rows say which packages this device holds; the disk says which packages
+/// are actually there. V1's storage screen only ever asked the rows, because
+/// the rows *were* the library. V2's `offline_copies` is device state beside a
+/// library that syncs, so the two can genuinely diverge — a package survives a
+/// database that was reset, and a row survives files a restore did not carry —
+/// and a cleanup surface that only reads one of them either hides bytes it
+/// could free or offers bytes that are not there.
+///
+/// So [survey] reads both and reports the disagreement as itself:
+///
+///  * **held** — an active copy whose package is on disk. The ordinary case,
+///    and the only one whose bytes are counted as *this app's usage*.
+///  * **orphans** — a committed package with no active copy row. Real bytes,
+///    freeable, and nothing in the library refers to them. This is the half
+///    of the retired startup recovery that still has a job: V1 rebuilt an
+///    Entry row from a package like this, and V2 must not — an Entry is a
+///    synced library fact and a package on one device is not evidence for one
+///    (V2-D22, I14). What was a silent rebuild is now an offer to free.
+///  * **missing** — an active copy row whose package is gone. Not an error and
+///    not a demotion: the Entry stays listed with its reading history, and the
+///    stale row is dropped so the figure stops counting bytes that do not
+///    exist.
+///
+/// Byte lifecycles themselves — the atomic commit, the `.previous` restore,
+/// the staging sweep — belong to the ported [FileStore] and are untouched.
+/// This file only decides *who asks*.
+library;
 
-import 'package:drift/drift.dart' show Value;
 import 'package:flutter/foundation.dart';
-import 'package:path/path.dart' as p;
 
-import 'database.dart';
+import '../data/collection_repository.dart';
+import '../data/entry_repository.dart';
+import '../data/offline_copy_repository.dart';
+import '../data/reading_state_repository.dart';
+import '../domain/offline_copy.dart';
+import '../domain/reading_state.dart';
+import '../save/entry_capture.dart' show removeOfflineCopies;
 import 'file_store.dart';
 
-/// Removing offline files is NOT deletion. The entry row survives with its
-/// source URL, ordering, reading progress, read marks, timestamps and
-/// discovery metadata — only the bytes under `library/…` go, and
-/// `offlineRemovedAt` records that the *user* chose this (unlike files the
-/// system lost, which stay an error state).
-///
-/// Two paths:
-///  - [removeOffline] — soft: the entry directory is renamed into
-///    `tmp/undo-<id>` and can be restored until [UndoHandle.finalize] runs
-///    (a few seconds later, or at next startup via the existing staging
-///    sweep). This is what the reader flow and manual selection use, and
-///    what makes the toast's Undo honest.
-///  - [removeOfflineNow] — hard: for queued bulk work, where an undo window
-///    per entry would be theatre.
-class CleanupService {
-  CleanupService({
-    required this.db,
-    required this.fileStore,
-    this.undoWindow = const Duration(seconds: 6),
-  });
-
-  final AppDatabase db;
-  final FileStore fileStore;
-
-  final Duration undoWindow;
-
-  /// The entry currently open in the reader, if any. Set by the reader
-  /// screen; cleanup refuses to touch it.
-  final ValueNotifier<String?> openReaderEntryId = ValueNotifier(null);
-
-  /// Bumped once per removal batch that actually freed something.
-  ///
-  /// Removal happens from five places (collection selection, whole collection, the
-  /// Storage screen, the finished-entry flow, the queue). Anything showing
-  /// a storage figure listens here instead of every one of those call sites
-  /// remembering to refresh it.
-  final ValueNotifier<int> removals = ValueNotifier(0);
-
-  void _noteRemoval(int removed) {
-    if (removed > 0) removals.value++;
-  }
-
-  /// Why an entry cannot be removed right now, or null when it can.
-  ///
-  /// Locked entries are *kept*, never errors: bulk operations skip them and
-  /// say so, selection UI shows them as locked.
-  Future<String?> lockReasonFor(Entry entry) async {
-    if (entry.id == openReaderEntryId.value) {
-      return 'open in the reader';
-    }
-    if (entry.saveStatus == 'saving') {
-      return 'being saved';
-    }
-    // The V1 run controller is gone; V2 saves write V2 rows, so the two
-    // remaining locks — the open reader and a mid-save V1 row — say it all.
-    return null;
-  }
-
-  bool isRemovable(Entry c) =>
-      c.contentPath != null &&
-      (c.saveStatus == 'complete' || c.saveStatus == 'partial');
-
-  /// Soft-remove [entryIds]; locked/non-offline entries are skipped and
-  /// reported. Returns a handle carrying freed bytes and the undo.
-  Future<CleanupResult> removeOffline(List<String> entryIds) async {
-    final undoable = <_UndoEntry>[];
-    var freed = 0;
-    var removed = 0;
-    final kept = <String>[];
-
-    for (final id in entryIds) {
-      final entry = await db.entryById(id);
-      if (entry == null || !isRemovable(entry)) continue;
-      final lock = await lockReasonFor(entry);
-      if (lock != null) {
-        kept.add('${entry.sourceMarker ?? entry.title} ($lock)');
-        continue;
-      }
-
-      final srcDir = Directory(fileStore.resolve(entry.contentPath!));
-      if (!srcDir.existsSync()) {
-        // Files already gone: just record the state honestly.
-        await _writeRemoved(entry);
-        removed++;
-        continue;
-      }
-      final undoDir = Directory(
-        p.join(fileStore.rootDir.path, FileStore.tmpFolderName, 'undo-$id'),
-      );
-      if (undoDir.existsSync()) undoDir.deleteSync(recursive: true);
-      undoDir.parent.createSync(recursive: true);
-      final bytes = entry.byteSize;
-      srcDir.renameSync(undoDir.path);
-      await _writeRemoved(entry);
-      undoable.add(_UndoEntry(entry: entry, undoDir: undoDir, bytes: bytes));
-      freed += bytes;
-      removed++;
-    }
-
-    final handle = UndoHandle._(this, undoable);
-    if (undoable.isNotEmpty) {
-      handle._timer = Timer(undoWindow, handle.finalize);
-    }
-    _noteRemoval(removed);
-    return CleanupResult(
-      removed: removed,
-      freedBytes: freed,
-      keptLocked: kept,
-      undo: handle,
-    );
-  }
-
-  /// Hard-remove, for bulk queue work. [onProgress] fires per entry with
-  /// (processed, freedBytes so far).
-  ///
-  /// [shouldContinue] is asked **between entries** and is the only place this
-  /// loop can be stopped. Each entry's removal — delete the directory, then
-  /// clear the row's file fields — is atomic from the outside: an entry is
-  /// either still offline or cleanly marked removed, never half of both. So a
-  /// stop at an entry boundary is genuinely safe, which is what lets the
-  /// Activity screen offer Cancel on a running cleanup and mean it (D64).
-  /// Everything already removed stays removed; removal is not a transaction
-  /// and was never presented as one.
-  Future<CleanupResult> removeOfflineNow(
-    List<String> entryIds, {
-    void Function(int processed, int freedBytes)? onProgress,
-    bool Function()? shouldContinue,
-  }) async {
-    var freed = 0;
-    var removed = 0;
-    var processed = 0;
-    var stoppedEarly = false;
-    final kept = <String>[];
-    for (final id in entryIds) {
-      if (shouldContinue != null && !shouldContinue()) {
-        stoppedEarly = true;
-        break;
-      }
-      processed++;
-      final entry = await db.entryById(id);
-      if (entry == null || !isRemovable(entry)) continue;
-      final lock = await lockReasonFor(entry);
-      if (lock != null) {
-        kept.add('${entry.sourceMarker ?? entry.title} ($lock)');
-        continue;
-      }
-      try {
-        await fileStore.deleteEntryContent(entry.contentPath!);
-        await _writeRemoved(entry);
-        freed += entry.byteSize;
-        removed++;
-      } catch (e) {
-        kept.add('${entry.sourceMarker ?? entry.title} ($e)');
-      }
-      onProgress?.call(processed, freed);
-    }
-    _noteRemoval(removed);
-    return CleanupResult(
-      removed: removed,
-      freedBytes: freed,
-      keptLocked: kept,
-      undo: UndoHandle._(this, const []),
-      stoppedEarly: stoppedEarly,
-    );
-  }
-
-  /// Everything the row must keep is untouched by construction: the write
-  /// names ONLY the fields that change.
-  Future<void> _writeRemoved(Entry entry) => db.writeEntryReading(
-    entry.id,
-    EntriesCompanion(
-      contentPath: const Value(null),
-      byteSize: const Value(0),
-      offlineRemovedAt: Value(DateTime.now()),
-    ),
-  );
-
-  Future<void> _restore(_UndoEntry entry) async {
-    final target = Directory(fileStore.resolve(entry.entry.contentPath!));
-    if (entry.undoDir.existsSync() && !target.existsSync()) {
-      target.parent.createSync(recursive: true);
-      entry.undoDir.renameSync(target.path);
-    }
-    await db.writeEntryReading(
-      entry.entry.id,
-      EntriesCompanion(
-        contentPath: Value(entry.entry.contentPath),
-        byteSize: Value(entry.bytes),
-        offlineRemovedAt: const Value(null),
-      ),
-    );
-  }
-}
-
-class CleanupResult {
-  const CleanupResult({
-    required this.removed,
-    required this.freedBytes,
-    required this.keptLocked,
-    required this.undo,
-    this.stoppedEarly = false,
-  });
-
-  final int removed;
-  final int freedBytes;
-
-  /// Human lines for entries skipped because they were in use.
-  final List<String> keptLocked;
-  final UndoHandle undo;
-
-  /// The batch was asked to stop and did, at an entry boundary. The entries
-  /// it never reached still have their files — the summary must say so rather
-  /// than read like a completed sweep.
-  final bool stoppedEarly;
-
-  bool get canUndo => undo._entries.isNotEmpty && !undo._finalized;
-}
-
-/// Restores the renamed-away directories, or lets them die. Idempotent both
-/// ways; a crash inside the window leaves `tmp/undo-*`, which the existing
-/// startup staging sweep removes.
-class UndoHandle {
-  UndoHandle._(this._service, this._entries);
-
-  final CleanupService _service;
-  final List<_UndoEntry> _entries;
-  Timer? _timer;
-  bool _finalized = false;
-  bool _undone = false;
-
-  Future<void> undo() async {
-    if (_finalized || _undone) return;
-    _undone = true;
-    _timer?.cancel();
-    for (final entry in _entries) {
-      await _service._restore(entry);
-    }
-  }
-
-  Future<void> finalize() async {
-    if (_finalized || _undone) return;
-    _finalized = true;
-    _timer?.cancel();
-    for (final entry in _entries) {
-      try {
-        if (entry.undoDir.existsSync()) {
-          entry.undoDir.deleteSync(recursive: true);
-        }
-      } catch (_) {
-        // The startup sweep owns anything a crash leaves behind.
-      }
-    }
-  }
-}
-
-class _UndoEntry {
-  const _UndoEntry({
-    required this.entry,
-    required this.undoDir,
+/// One copy this device's rows claim, with what the library knows about it.
+class HeldCopy {
+  const HeldCopy({
+    required this.copy,
+    required this.title,
+    required this.collectionId,
+    required this.collectionName,
+    required this.finished,
     required this.bytes,
   });
 
-  final Entry entry;
-  final Directory undoDir;
+  final OfflineCopy copy;
+
+  /// The Entry's own title. Never derived from the package: the manifest
+  /// records what a save saw, and the Entry records what the library calls it.
+  final String title;
+
+  /// Null for a standalone Entry, which is a first-class library item and not
+  /// a collection of one.
+  final String? collectionId;
+  final String collectionName;
+
+  /// Read to the end. The only set the bulk offer targets.
+  final bool finished;
+
+  /// Bytes on disk, measured rather than taken from the row: the row records
+  /// what a capture wrote, and this is what is there now.
+  final int bytes;
+
+  String get entryId => copy.entryId;
+}
+
+/// A committed package with no active copy row behind it.
+class OrphanPackage {
+  const OrphanPackage({required this.relativePath, required this.bytes});
+
+  final String relativePath;
   final int bytes;
 }
 
-/// What a collection does with a finished entry's downloaded files when the
-/// reader moves forward (D37).
-///
-/// Persisted on the library item itself — `collections.cleanup_preference` —
-/// because the decision belongs to the collection being read. There is no global
-/// default: a collection that has not been asked stores null, and null is a
-/// question, not a value.
-enum CollectionCleanupPreference { remove, keep }
+/// Storage this device holds, grouped the way the screen shows it.
+class CollectionStorage {
+  const CollectionStorage({
+    required this.id,
+    required this.name,
+    required this.copies,
+  });
 
-/// Parses a stored value. Null, empty and anything unrecognised all read as
-/// "not decided yet", so the user is asked instead of a wrong guess being
-/// applied to their files.
-CollectionCleanupPreference? collectionCleanupFromName(String? name) {
-  for (final value in CollectionCleanupPreference.values) {
-    if (value.name == name) return value;
-  }
-  return null;
+  /// Null for the standalone group.
+  final String? id;
+  final String name;
+  final List<HeldCopy> copies;
+
+  int get bytes => copies.fold(0, (sum, c) => sum + c.bytes);
+  int get entryCount => copies.length;
 }
 
-/// The finished-and-still-offline set the global cleanup targets: read to the
-/// end, bytes still on this device. The V1 queue used to enqueue this walk;
-/// the storage screen now runs it directly.
-extension FinishedOfflineCleanup on CleanupService {
-  Future<List<String>> finishedOfflineEntryIds() async {
-    final entries = await db.allEntries();
-    return [
-      for (final entry in entries)
-        if (entry.readStatus == 'read' && isRemovable(entry)) entry.id,
-    ];
+/// Everything the storage surface needs, read once.
+class StorageSurvey {
+  const StorageSurvey({
+    required this.held,
+    required this.missing,
+    required this.orphans,
+  });
+
+  static const empty = StorageSurvey(held: [], missing: [], orphans: []);
+
+  final List<HeldCopy> held;
+  final List<HeldCopy> missing;
+  final List<OrphanPackage> orphans;
+
+  int get heldBytes => held.fold(0, (sum, c) => sum + c.bytes);
+  int get orphanBytes => orphans.fold(0, (sum, o) => sum + o.bytes);
+
+  List<HeldCopy> get finished => [
+    for (final copy in held)
+      if (copy.finished) copy,
+  ];
+
+  int get finishedBytes => finished.fold(0, (sum, c) => sum + c.bytes);
+
+  /// Held copies by Collection, largest first.
+  List<CollectionStorage> get byCollection {
+    final groups = <String, List<HeldCopy>>{};
+    final names = <String, String>{};
+    for (final copy in held) {
+      final key = copy.collectionId ?? '';
+      groups.putIfAbsent(key, () => []).add(copy);
+      names[key] = copy.collectionName;
+    }
+    final rows = [
+      for (final entry in groups.entries)
+        CollectionStorage(
+          id: entry.key.isEmpty ? null : entry.key,
+          name: names[entry.key] ?? '',
+          copies: entry.value,
+        ),
+    ]..sort((a, b) => b.bytes.compareTo(a.bytes));
+    return rows;
+  }
+}
+
+/// Freeing what this device is holding.
+class CleanupService {
+  CleanupService({
+    required this.offlineCopies,
+    required this.entries,
+    required this.collections,
+    required this.reading,
+    required this.fileStore,
+  });
+
+  final OfflineCopyRepository offlineCopies;
+  final EntryRepository entries;
+  final CollectionRepository collections;
+  final ReadingStateRepository reading;
+  final FileStore fileStore;
+
+  /// Bumped once per batch that actually freed something.
+  ///
+  /// Removal happens from more than one place, and anything showing a storage
+  /// figure listens here rather than every call site remembering to refresh
+  /// it.
+  final ValueNotifier<int> removals = ValueNotifier(0);
+
+  /// Read the rows and the disk, and report where they disagree.
+  Future<StorageSurvey> survey() async {
+    final copies = await offlineCopies.allCopies();
+    final onDisk = fileStore.listCommittedEntryPaths().toSet();
+    final claimed = <String>{};
+
+    final held = <HeldCopy>[];
+    final missing = <HeldCopy>[];
+    final collectionNames = <String, String>{};
+
+    for (final copy in copies) {
+      if (!copy.active) continue;
+      claimed.add(copy.contentPath);
+      final entry = await entries.byId(copy.entryId);
+      final collectionId = entry?.collectionId;
+      if (collectionId != null && !collectionNames.containsKey(collectionId)) {
+        collectionNames[collectionId] =
+            (await collections.byId(collectionId))?.name ?? '';
+      }
+      final present = fileStore.entryExists(copy.contentPath);
+      final row = HeldCopy(
+        copy: copy,
+        title: entry?.title ?? '',
+        collectionId: collectionId,
+        collectionName: collectionId == null
+            ? 'Standalone'
+            : collectionNames[collectionId] ?? '',
+        finished:
+            (await reading.stateOf(copy.entryId)).status ==
+            ReadStatus.completed,
+        bytes: present ? await fileStore.entryByteSize(copy.contentPath) : 0,
+      );
+      (present ? held : missing).add(row);
+    }
+
+    final orphans = <OrphanPackage>[];
+    for (final relative in onDisk) {
+      if (claimed.contains(relative)) continue;
+      orphans.add(
+        OrphanPackage(
+          relativePath: relative,
+          bytes: await fileStore.entryByteSize(relative),
+        ),
+      );
+    }
+
+    return StorageSurvey(held: held, missing: missing, orphans: orphans);
+  }
+
+  /// Free the bytes for [entryIds]: the packages, then the rows.
+  ///
+  /// The order is the capture lane's and is not this surface's to change —
+  /// rows first would leave a package under `library/` that the next survey
+  /// would report as an orphan. Returns how many entries were freed.
+  Future<int> removeCopiesOf(List<String> entryIds) async {
+    var freed = 0;
+    for (final id in entryIds) {
+      final removed = await removeOfflineCopies(
+        entryId: id,
+        offlineCopies: offlineCopies,
+        fileStore: fileStore,
+      );
+      if (removed > 0) freed++;
+    }
+    if (freed > 0) removals.value++;
+    return freed;
+  }
+
+  /// Discard packages nothing refers to. Files only — there are no rows.
+  Future<int> discardOrphans(List<OrphanPackage> orphans) async {
+    var removed = 0;
+    for (final orphan in orphans) {
+      try {
+        await fileStore.deleteEntryContent(orphan.relativePath);
+        removed++;
+      } catch (e) {
+        debugPrint('[cleanup] orphan ${orphan.relativePath}: $e');
+      }
+    }
+    if (removed > 0) removals.value++;
+    return removed;
+  }
+
+  /// Drop copy rows whose package is gone.
+  ///
+  /// Rows only, and nothing else: the Entry stays in the library with its
+  /// reading state, exactly as it does when a copy is removed on purpose.
+  Future<int> forgetMissing(List<HeldCopy> rows) async {
+    var removed = 0;
+    for (final row in rows) {
+      removed += await offlineCopies.removeCopies(row.entryId);
+    }
+    return removed;
   }
 }

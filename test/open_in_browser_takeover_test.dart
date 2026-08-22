@@ -4,7 +4,6 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
 import 'package:web_reader/browser/browser_navigator.dart';
 import 'package:web_reader/core/connectivity.dart';
-import 'package:web_reader/features/entry_source_state.dart';
 import 'package:web_reader/features/open_in_browser.dart';
 import 'package:web_reader/providers.dart';
 import 'package:web_reader/storage/file_store.dart';

@@ -21,7 +21,7 @@
 ///   get to hold the high-water mark (V1 `update_checker.dart:614-637`).
 /// * A re-listed address is judged for **fill-in only** — a blank the source
 ///   has now filled, never an overwrite of something already established
-///   (V1 `AppDatabase.refreshDiscoveredEntry`, `storage/database.dart:1106`).
+///   (V1's `refreshDiscoveredEntry`, retired with that schema).
 /// * **"Finished" and "the reading was cut short" are different outcomes.** A
 ///   check may only say `upToDate` after a reading it can vouch for; anything
 ///   else is `stopped` with a named reason.

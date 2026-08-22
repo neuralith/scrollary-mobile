@@ -1,9 +1,10 @@
 /// The V2 local store. **Schema version 1, created whole** (V2-D26).
 ///
 /// Designed from the domain in docs/V2_ARCHITECTURE.md §6.4 — not from the V1
-/// tables, and not migrated from anything. The V1 database
-/// (`lib/storage/database.dart`) keeps running beside this one until its
-/// cleanup points; the two never share a file.
+/// tables, and not migrated from anything. The V1 database it replaced ran
+/// beside it until the retirement cutover and never shared a file with it; a
+/// device that ran an older build still has that file, and nothing here opens
+/// it.
 ///
 /// Two boundaries this schema is built around:
 ///

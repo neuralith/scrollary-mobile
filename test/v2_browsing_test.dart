@@ -17,7 +17,6 @@ library;
 
 import 'dart:io';
 
-import 'package:drift/native.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -29,8 +28,8 @@ import 'package:web_reader/domain/collection.dart';
 import 'package:web_reader/domain/entry.dart';
 import 'package:web_reader/features/settings_screen.dart';
 import 'package:web_reader/features/v2_composition.dart';
+import 'package:web_reader/library_ui/providers.dart' as libui;
 import 'package:web_reader/providers.dart';
-import 'package:web_reader/storage/database.dart';
 import 'package:web_reader/storage/file_store.dart';
 import 'package:web_reader/ui/theme.dart';
 
@@ -96,7 +95,7 @@ void main() {
     userInitiated: userInitiated,
   );
 
-  Future<List<BrowsingHistoryData>> historyRows() => v2.history.recent();
+  Future<List<HistoryRow>> historyRows() => v2.history.recent();
 
   Future<ReadingStateRow?> readingOf(String entryId) => (v2.library.select(
     v2.library.readingStates,
@@ -224,16 +223,13 @@ void main() {
   });
 
   group('Settings', () {
-    late AppDatabase v1;
     late Directory root;
 
     setUp(() {
-      v1 = AppDatabase.forTesting(NativeDatabase.memory());
       root = Directory.systemTemp.createTempSync('scrollary_v2_browsing');
     });
 
     tearDown(() async {
-      await v1.close();
       if (root.existsSync()) root.deleteSync(recursive: true);
     });
 
@@ -248,12 +244,12 @@ void main() {
       await tester.pumpWidget(
         ProviderScope(
           overrides: [
-            databaseProvider.overrideWithValue(v1),
             fileStoreProvider.overrideWithValue(FileStore(root)),
             browserProvider.overrideWithValue(browser),
             v2ServicesProvider.overrideWithValue(v2.services),
+            libui.libraryUiServicesProvider.overrideWithValue(v2.ui),
             faviconServiceProvider.overrideWithValue(
-              FaviconService(db: v1, allowNetwork: false),
+              FaviconService(db: v2.library, allowNetwork: false),
             ),
           ],
           child: MaterialApp(theme: appTheme(), home: const SettingsScreen()),

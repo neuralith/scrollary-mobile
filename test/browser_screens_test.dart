@@ -1,19 +1,19 @@
 import 'dart:io';
 
-import 'package:drift/native.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:web_reader/browser/browser_controller.dart';
 import 'package:web_reader/browser/favicon_service.dart';
 import 'package:web_reader/browser/saved_sites_repository.dart';
+import 'package:web_reader/data/local_settings.dart';
 import 'package:web_reader/features/v2_composition.dart';
 import 'package:web_reader/features/browser_data_dialogs.dart';
 import 'package:web_reader/features/browser_history_screen.dart';
 import 'package:web_reader/features/saved_site_sheets.dart';
 import 'package:web_reader/features/settings_screen.dart';
+import 'package:web_reader/library_ui/providers.dart' as libui;
 import 'package:web_reader/providers.dart';
-import 'package:web_reader/storage/database.dart';
 import 'package:web_reader/storage/file_store.dart';
 import 'package:web_reader/ui/theme.dart';
 
@@ -32,7 +32,6 @@ void browserWidgetTest(
 }
 
 void main() {
-  late AppDatabase db;
   late Directory root;
   late FileStore store;
   late BrowserController browser;
@@ -44,33 +43,33 @@ void main() {
   late V2Harness v2;
   late BrowsingHistoryStore history;
   late SavedSitesRepository saved;
+  late LocalSettingsStore settings;
 
   setUp(() {
-    db = AppDatabase.forTesting(NativeDatabase.memory());
     root = Directory.systemTemp.createTempSync('webread_browser_screens');
     store = FileStore(root);
     browser = BrowserController();
     v2 = V2Harness(browser: browser, fileStore: store);
     history = v2.history;
-    saved = SavedSitesRepository(db);
+    saved = SavedSitesRepository(v2.library);
+    settings = LocalSettingsStore(v2.library);
   });
 
   tearDown(() async {
     await v2.close();
     browser.dispose();
-    await db.close();
     if (root.existsSync()) root.deleteSync(recursive: true);
   });
 
   Widget host(Widget child) {
     return ProviderScope(
       overrides: [
-        databaseProvider.overrideWithValue(db),
         fileStoreProvider.overrideWithValue(store),
         browserProvider.overrideWithValue(browser),
         v2ServicesProvider.overrideWithValue(v2.services),
+        libui.libraryUiServicesProvider.overrideWithValue(v2.ui),
         faviconServiceProvider.overrideWithValue(
-          FaviconService(db: db, allowNetwork: false),
+          FaviconService(db: v2.library, allowNetwork: false),
         ),
       ],
       child: MaterialApp(theme: appTheme(), home: child),
@@ -91,20 +90,34 @@ void main() {
 
   Future<void> seedVisits({DateTime? now}) async {
     final at = now ?? DateTime.now();
+    final startOfToday = DateTime(at.year, at.month, at.day);
+
+    /// Two visits that are both *today* and *inside the last hour* — the two
+    /// facts the day grouping and the clear ranges read. A bare offset from
+    /// `now` is only one of them: run a few minutes after midnight and
+    /// "12 minutes ago" is yesterday, which is how this fixture used to
+    /// disagree with itself once a day.
+    DateTime today(Duration ago) {
+      final candidate = at.subtract(ago);
+      return candidate.isBefore(startOfToday) ? startOfToday : candidate;
+    }
+
     await visit(
       'https://a.example/guide/long-guide/885',
       title: 'The Long Guide',
-      at: at.subtract(const Duration(minutes: 4)),
+      at: today(const Duration(minutes: 4)),
     );
     await visit(
       'https://a.example/guide/long-guide',
       title: 'Contents',
-      at: at.subtract(const Duration(minutes: 12)),
+      at: today(const Duration(minutes: 12)),
     );
     await visit(
       'https://b.example/notes/field/137',
       title: 'Field Notes 137',
-      at: at.subtract(const Duration(days: 1, hours: 3)),
+      // Yesterday by the calendar, and never inside the last hour, whatever
+      // time of day the suite runs at.
+      at: startOfToday.subtract(const Duration(hours: 1)),
     );
   }
 
@@ -251,9 +264,7 @@ void main() {
 
     browserWidgetTest('clearing all time keeps saved sites', (tester) async {
       await seedVisits();
-      await SavedSitesRepository(
-        db,
-      ).save(url: 'https://kept.example/', title: 'Kept');
+      await saved.save(url: 'https://kept.example/', title: 'Kept');
       await tester.pumpWidget(host(const BrowserHistoryScreen()));
       await tester.pump();
 
@@ -268,7 +279,7 @@ void main() {
       // The saved site the test put there is untouched. Nothing is seeded, so
       // the row has to be created for the assertion to mean anything.
       expect(
-        (await db.allSavedSites()).map((s) => s.title),
+        (await saved.all()).map((s) => s.title),
         ['Kept'],
         reason: 'clearing history must not reach the saved-sites list',
       );
@@ -355,7 +366,7 @@ void main() {
       await tester.tap(find.byKey(const ValueKey('savedSiteSaveButton')));
       await tester.pumpAndSettle();
 
-      final sites = await db.allSavedSites();
+      final sites = await saved.all();
       expect(sites, hasLength(1));
       expect(sites.single.url, 'https://a.example/guide/long-guide/885');
     });
@@ -431,7 +442,7 @@ void main() {
       await tester.tap(find.byKey(const ValueKey('savedSiteSaveButton')));
       await tester.pumpAndSettle();
 
-      expect(await db.allSavedSites(), hasLength(1));
+      expect(await saved.all(), hasLength(1));
     });
 
     browserWidgetTest('a duplicate is explained and offers to update', (
@@ -467,7 +478,7 @@ void main() {
       await tester.tap(find.byKey(const ValueKey('savedSiteSaveButton')));
       await tester.pumpAndSettle();
 
-      final sites = await db.allSavedSites();
+      final sites = await saved.all();
       expect(sites, hasLength(1), reason: 'never a second row');
       expect(savedSiteDisplayTitle(sites.single), 'Second attempt');
     });
@@ -511,7 +522,7 @@ void main() {
       await tester.pump();
       await tester.tap(find.text('Dark'));
       await tester.pumpAndSettle();
-      expect(await db.setting(kAppearanceSettingKey), 'dark');
+      expect(await settings.get(kAppearanceSettingKey), 'dark');
     });
   });
 }

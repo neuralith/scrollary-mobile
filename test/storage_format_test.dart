@@ -1,14 +1,14 @@
 import 'dart:io';
 
-import 'package:drift/native.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:web_reader/core/device_capacity_provider.dart';
 import 'package:web_reader/core/device_storage.dart';
+import 'package:web_reader/domain/offline_copy.dart';
 import 'package:web_reader/features/storage_screen.dart';
 import 'package:web_reader/providers.dart';
-import 'package:web_reader/storage/database.dart';
+import 'package:web_reader/storage/cleanup.dart';
 import 'package:web_reader/storage/file_store.dart';
 
 /// How Storage words a size.
@@ -96,78 +96,62 @@ void main() {
   });
 
   group('the Storage screen', () {
-    late AppDatabase db;
     late Directory root;
     late _FakeDeviceStorage device;
 
     setUp(() {
-      db = AppDatabase.forTesting(NativeDatabase.memory());
       root = Directory.systemTemp.createTempSync('webread_storage_format');
       device = _FakeDeviceStorage(
         const DeviceCapacity(totalBytes: 250 * _gb, freeBytes: 173 * _gb),
       );
     });
     tearDown(() async {
-      await db.close();
       if (root.existsSync()) root.deleteSync(recursive: true);
     });
 
-    Future<void> seed(int bytes) async {
-      await db.upsertCollection(
-        Collection(
-          contentKind: 'unknownWebContent',
-          sequenceKind: 'none',
-          orderingBasis: 'discoveryOrder',
-          shapeConfidence: 'low',
-          lifecycle: 'active',
-          id: 's1',
-          title: 'A collection',
-          sourceUrl: 'https://x.example/guide/s1',
-          host: 'x.example',
-          collectionKey: '/guide/s1',
-          createdAt: DateTime(2026, 7, 1),
-        ),
-      );
-      await db.upsertEntry(
-        Entry(
-          host: '',
-          contentKind: 'unknownWebContent',
-          contentKindConfidence: 'low',
-          contentKindIsUserSet: false,
-          id: 's1-c1',
-          collectionId: 's1',
+    /// A library of exactly [bytes], handed to the screen as the survey.
+    ///
+    /// The survey measures the packages on disk rather than reading a column,
+    /// so a gigabyte-scale library is stated here instead of written — which
+    /// is what the V1 row's `byteSize` was doing too. What is under test is
+    /// how the screen words the figure it is given.
+    StorageSurvey seed(int bytes) => StorageSurvey(
+      held: [
+        HeldCopy(
+          copy: OfflineCopy(
+            id: 'copy-1',
+            entryId: 's1-c1',
+            locationUrl: 'https://x.example/guide/s1/1',
+            capturedAt: DateTime(2026, 7, 20),
+            artifactFormat: 'imageSequence',
+            contentPath: 'library/s1/entries/s1-c1',
+            byteSize: bytes,
+          ),
           title: 'Entry 1',
-          sourceUrl: 'https://x.example/guide/s1/1',
-          urlKey: 'https://x.example/guide/s1/1',
-          artifactFormat: 'imageSequence',
-          saveStatus: 'complete',
-          contentPath: 'library/s1/entries/s1-c1',
-          savedAt: DateTime(2026, 7, 20),
-          detectedAssetCount: 3,
-          storedAssetCount: 3,
-          entryOrder: 1,
-          byteSize: bytes,
-          entryNumber: 1,
-          sourceMarker: 'Entry 1',
-          readStatus: 'unread',
-          progressFraction: 0,
-          progressPageIndex: 0,
-          progressOffsetInPage: 0,
+          collectionId: 's1',
+          collectionName: 'A collection',
+          finished: false,
+          bytes: bytes,
         ),
-      );
-    }
+      ],
+      missing: const [],
+      orphans: const [],
+    );
 
-    Future<void> show(WidgetTester tester) async {
-      await tester.pumpWidget(
-        ProviderScope(
-          overrides: [
-            databaseProvider.overrideWithValue(db),
-            fileStoreProvider.overrideWithValue(FileStore(root)),
-            deviceStorageProvider.overrideWithValue(device),
-          ],
-          child: const MaterialApp(home: StorageScreen()),
-        ),
-      );
+    Widget host(StorageSurvey survey) => ProviderScope(
+      overrides: [
+        storageSurveyProvider.overrideWith((ref) async => survey),
+        fileStoreProvider.overrideWithValue(FileStore(root)),
+        deviceStorageProvider.overrideWithValue(device),
+      ],
+      child: const MaterialApp(home: StorageScreen()),
+    );
+
+    Future<void> show(
+      WidgetTester tester, {
+      StorageSurvey survey = StorageSurvey.empty,
+    }) async {
+      await tester.pumpWidget(host(survey));
       for (var i = 0; i < 60; i++) {
         await tester.pump(const Duration(milliseconds: 20));
         if (find.text('WEB READER USES').evaluate().isNotEmpty &&
@@ -177,7 +161,7 @@ void main() {
       }
     }
 
-    /// Unmount inside the body so drift's disposal timers run.
+    /// Unmount inside the body so the screen's futures are drained.
     Future<void> drain(WidgetTester tester) async {
       await tester.pumpWidget(const SizedBox.shrink());
       await tester.pump(const Duration(milliseconds: 10));
@@ -186,8 +170,7 @@ void main() {
     testWidgets('quotes a gigabyte library in GB, the device in whole GB', (
       tester,
     ) async {
-      await seed(1536 * _mb);
-      await show(tester);
+      await show(tester, survey: seed(1536 * _mb));
 
       expect(find.text('1.5 GB'), findsWidgets, reason: 'web reader uses');
       expect(find.text('173 GB'), findsOneWidget, reason: 'available tile');
@@ -201,8 +184,7 @@ void main() {
     });
 
     testWidgets('a megabyte-sized library is left in MB', (tester) async {
-      await seed(240 * _mb);
-      await show(tester);
+      await show(tester, survey: seed(240 * _mb));
 
       expect(find.text('240.0 MB'), findsWidgets);
       expect(find.text('173 GB'), findsOneWidget);
@@ -223,17 +205,7 @@ void main() {
       tester,
     ) async {
       device.capacityValue = DeviceCapacity.unknown;
-      await seed(240 * _mb);
-      await tester.pumpWidget(
-        ProviderScope(
-          overrides: [
-            databaseProvider.overrideWithValue(db),
-            fileStoreProvider.overrideWithValue(FileStore(root)),
-            deviceStorageProvider.overrideWithValue(device),
-          ],
-          child: const MaterialApp(home: StorageScreen()),
-        ),
-      );
+      await tester.pumpWidget(host(seed(240 * _mb)));
       for (var i = 0; i < 60; i++) {
         await tester.pump(const Duration(milliseconds: 20));
         if (find.text('240.0 MB').evaluate().isNotEmpty) break;

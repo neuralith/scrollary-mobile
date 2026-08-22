@@ -1,17 +1,17 @@
 import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:web_reader/browser/browser_controller.dart';
+import 'package:web_reader/data/schema.dart';
 import 'package:web_reader/save/page_hint_repository.dart';
 import 'package:web_reader/save/page_hint.dart';
-import 'package:web_reader/storage/database.dart';
 
 void main() {
-  late AppDatabase db;
+  late LibraryDatabase db;
   late PageHintRepository repo;
 
   setUp(() {
-    db = AppDatabase.forTesting(NativeDatabase.memory());
-    repo = PageHintRepository(db);
+    db = LibraryDatabase.forTesting(NativeDatabase.memory());
+    repo = PageHintRepository.forLibrary(db);
   });
   tearDown(() => db.close());
 
