@@ -1,8 +1,17 @@
 # V2 architecture — domain, ownership, local model
 
-> **Status: built and merged on `master`.** This document owns the V2 domain
-> model, its invariants, the state-ownership matrix and the local (device)
-> architecture — `lib/domain` and `lib/data` implement it as described below.
+> **Status: built, merged and composed on `master`.** This document owns the
+> V2 domain model, its invariants, the state-ownership matrix and the local
+> (device) architecture — `lib/domain` and `lib/data` implement it as
+> described below, and `lib/features/v2_composition.dart` plus `lib/app.dart`
+> wire it up as the app a user runs; the V1 library screens, queue, update
+> checker and `CollectionDeletionService` have been retired.
+>
+> **The real-system harness proves this design against a real service.**
+> `tool/e2e/run.sh` and `test/e2e/` run the suite over a real Go service and a
+> real PostgreSQL, through the app's real repositories, including the
+> no-outbound invariant (`test/e2e/h4_download_to_mobile_test.dart`,
+> `test/e2e/support/e2e_support.dart`).
 >
 > Product intent: [PRODUCT.md](./PRODUCT.md) · Sync, backend boundary and client
 > contract: [V2_SYNC.md](./V2_SYNC.md) · Sequencing:
@@ -10,11 +19,9 @@
 > [V2_PRODUCTIZATION.md](./V2_PRODUCTIZATION.md) · Decisions:
 > [DECISIONS.md](./DECISIONS.md).
 >
-> [ARCHITECTURE.md](./ARCHITECTURE.md) remains the record of **V1 as built** —
-> the app a user runs today. The composition that makes the screens over this
-> domain the running app in place of V1's has not yet merged
-> ([V2_ROADMAP.md](./V2_ROADMAP.md) §12); until it does, ARCHITECTURE.md is the
-> authority on current running behaviour.
+> [ARCHITECTURE.md](./ARCHITECTURE.md) remains the record of V1 as it was
+> built, for historical reference; it is no longer the authority on current
+> running behaviour.
 
 ## 1. The axiom being replaced
 
@@ -63,6 +70,10 @@ A **Folder** is user organisation and nothing else. It carries no source
 identity, no content relationship, and no Sources are ever attached to it.
 
 - One **system root Folder** per library. `parent_id` is NULL only for the root.
+  A device mints its own root locally (`FolderRepository.ensureRoot`) with no
+  outbox intent — there is nothing to negotiate about a fact the library has
+  only one of — and the first pull that meets the server's root maps it onto
+  that local row rather than treating it as an unrelated create (V2-D39).
 - User Folders nest via `parent_id`. Hierarchy is supported by the schema from
   day one; a nested-folder UI is not required to ship with it.
 - Folders contain **Collections** and **standalone Entries**. Nothing else.

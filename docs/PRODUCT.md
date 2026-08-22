@@ -208,6 +208,12 @@ platform offers it. It promises durable local state and reliable continuation.
 *This split replaces the earlier blanket rule. See
 [DECISIONS.md](./DECISIONS.md) V2-D20.*
 
+Reaching the network for this is a **Pro capability**: the library keeps
+working identically without it — everything commits locally and nothing is
+gated on recording, reading or organising — but a Free device's own mutations
+stay on that device until it is entitled ([DECISIONS.md](./DECISIONS.md)
+V2-D37).
+
 ## 7. What Scrollary is not
 
 Not a bulk fetcher, an automated harvester, a site archiver, a client for
