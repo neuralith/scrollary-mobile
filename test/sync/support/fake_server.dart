@@ -68,12 +68,34 @@ class FakeBackend {
         'observed_at': updatedAt.toIso8601String(),
     };
     kindRows(kind)[id] = stamped;
-    feed.add({
-      'type': 'entity',
-      'entity_type': kind,
-      'revision': stamped['revision'],
-      'entity': stamped,
-    });
+    _publish(kind, id, stamped);
+    return stamped;
+  }
+
+  /// Re-stamps a stored row at a fresh revision, exactly as a rename or a
+  /// lifecycle change does. The row keeps its single place on the feed — the
+  /// new one, at the end — which is how a parent comes to sort *after* its own
+  /// children.
+  Map<String, Object?> touch(
+    String kind,
+    String id, {
+    DateTime? updatedAt,
+    Map<String, Object?> fields = const {},
+  }) {
+    final row = kindRows(kind)[id]!;
+    final stamped = {
+      ...row,
+      ...fields,
+      'revision': ++revision,
+      if (kind != 'measurement' &&
+          kind != 'downloadRequest' &&
+          updatedAt != null)
+        'updated_at': updatedAt.toIso8601String(),
+      if (kind == 'measurement' && updatedAt != null)
+        'observed_at': updatedAt.toIso8601String(),
+    };
+    kindRows(kind)[id] = stamped;
+    _publish(kind, id, stamped);
     return stamped;
   }
 
@@ -85,6 +107,7 @@ class FakeBackend {
     DateTime? deletedAt,
   }) {
     kindRows(kind).remove(entityId);
+    _forget(kind, sourceId == null ? entityId : '$entityId|$sourceId');
     final t = {
       'kind': kind,
       'entity_id': entityId,
@@ -93,6 +116,32 @@ class FakeBackend {
       'deleted_at': (deletedAt ?? DateTime.now().toUtc()).toIso8601String(),
     };
     feed.add({'type': 'tombstone', 'revision': t['revision'], 'tombstone': t});
+  }
+
+  /// Puts a row on the feed at its current revision, replacing the entry it
+  /// had. **The feed carries each row once**, like the service's own
+  /// revision-ordered query — a row that changes moves, it does not
+  /// accumulate history (contracts/openapi.yaml `GET /changes`).
+  void _publish(String kind, String key, Map<String, Object?> row) {
+    _forget(kind, key);
+    feed.add({
+      'type': 'entity',
+      'entity_type': kind,
+      'revision': row['revision'],
+      'entity': row,
+    });
+  }
+
+  void _forget(String kind, String key) => feed.removeWhere(
+    (item) =>
+        item['type'] == 'entity' &&
+        item['entity_type'] == kind &&
+        _feedKey(kind, item['entity']! as Map<String, Object?>) == key,
+  );
+
+  String _feedKey(String kind, Map<String, Object?> entity) {
+    final id = (entity['id'] ?? entity['entry_id'])! as String;
+    return kind == 'measurement' ? '$id|${entity['source_id']}' : id;
   }
 
   Future<void> start() async {
@@ -225,6 +274,7 @@ class FakeBackend {
     final store = kindRows(kind);
     if (op == 'delete') {
       final existing = store.remove(key);
+      _forget(kind, key);
       if (kind == 'folder' && existing?['parent_id'] != null) {
         _reparentChildrenOf(
           entityId,
@@ -280,12 +330,7 @@ class FakeBackend {
       if (kind != 'measurement') 'updated_at': clientTime.toIso8601String(),
     };
     store[key] = row;
-    feed.add({
-      'type': 'entity',
-      'entity_type': kind,
-      'revision': row['revision'],
-      'entity': row,
-    });
+    _publish(kind, key, row);
     return {
       'mutation_id': mutationId,
       'outcome': 'applied',
@@ -302,12 +347,7 @@ class FakeBackend {
           row[field] = target;
           row['revision'] = ++revision;
           row['updated_at'] = at.toIso8601String();
-          feed.add({
-            'type': 'entity',
-            'entity_type': kind,
-            'revision': row['revision'],
-            'entity': Map<String, Object?>.from(row),
-          });
+          _publish(kind, row['id']! as String, Map<String, Object?>.from(row));
         }
       }
     }
@@ -358,12 +398,7 @@ class FakeBackend {
     row['claimed_by_device'] = body['device'];
     row['claimed_at'] = DateTime.now().toUtc().toIso8601String();
     row['revision'] = ++revision;
-    feed.add({
-      'type': 'entity',
-      'entity_type': 'downloadRequest',
-      'revision': row['revision'],
-      'entity': Map<String, Object?>.from(row),
-    });
+    _publish('downloadRequest', id, Map<String, Object?>.from(row));
     return (200, Map<String, Object?>.from(row));
   }
 
@@ -403,12 +438,7 @@ class FakeBackend {
     row['failure_reason'] = body['failure_reason'] ?? '';
     row['resolved_at'] = DateTime.now().toUtc().toIso8601String();
     row['revision'] = ++revision;
-    feed.add({
-      'type': 'entity',
-      'entity_type': 'downloadRequest',
-      'revision': row['revision'],
-      'entity': Map<String, Object?>.from(row),
-    });
+    _publish('downloadRequest', id, Map<String, Object?>.from(row));
     return (200, Map<String, Object?>.from(row));
   }
 

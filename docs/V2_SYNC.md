@@ -121,6 +121,24 @@ every tombstone carries the revision at which it last changed. A client's cursor
 is the highest revision it has seen. `GET /changes?cursor=<revision>` returns
 creates, updates and tombstones in revision order.
 
+**Revision order is not referential order.** The feed carries each row once, at
+the revision it *currently* holds, so a Collection renamed after its Entries
+were placed sorts behind its own children and a client bootstrapping from zero
+meets the children first. The puller therefore **defers** a row whose parent is
+not local yet and retries everything deferred after each later page and again
+at the end of the run, to a fixpoint. Two rules keep that durable
+(`lib/sync/pull.dart`):
+
+- **The persisted cursor never moves past an unapplied row.** A page commits
+  `min(page's last revision, lowest deferred revision − 1)`, so an interrupted
+  run re-fetches from the first unresolved row and converges on the next one.
+- **At head, what is still waiting is an orphan.** `has_more=false` and a
+  stalled fixpoint mean the parent exists nowhere in the feed: those rows are
+  dropped, counted in the pull result, and the cursor commits at
+  `latest_revision` — a dead row must not pin it forever. A tombstone for a
+  parent takes its deferred children with it, the same cascade the local schema
+  applies to rows that did land.
+
 ### 4.4 Order of operations
 
 **Pull before push**, then pull again if the push produced server-assigned
