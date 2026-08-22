@@ -29,11 +29,10 @@ import '../data/entry_repository.dart';
 import '../data/recognition_index.dart';
 import '../data/schema.dart';
 import '../domain/collection.dart';
-import '../domain/entry.dart';
-import '../domain/equivalence.dart';
 import '../domain/invariants.dart';
 import '../domain/location.dart';
 import 'entry_identity.dart';
+import 'reconcile.dart';
 
 /// How a Location found by reading a Source's own listing says it was found.
 ///
@@ -276,6 +275,13 @@ class SourceDiscovery {
   final CollectionRepository _collections;
   final RecognitionIndex _index;
 
+  /// The one implementation of V2-D16, shared with every other path an
+  /// address enters the library by (`recognition/reconcile.dart`).
+  late final EntryReconciler _reconciler = EntryReconciler(
+    entries: _entries,
+    index: _index,
+  );
+
   /// Record what the window showed, then retract what it showed to be gone.
   Future<DiscoveryOutcome> apply(ObservedEntryWindow window) async {
     final source = await _collections.sourceById(window.sourceId);
@@ -305,22 +311,30 @@ class SourceDiscovery {
         continue;
       }
 
-      final (entryId, violation) = await _entryFor(
+      final reconciled = await _reconciler.entryFor(
         collectionId: collection.id,
         basis: basis,
-        listing: listing,
-        created: created,
-        unplaced: unplaced,
-        merged: merged,
+        printedNumber: listing.printedNumber,
+        title: listing.label,
       );
-      if (violation != null || entryId == null) {
+      final entryId = reconciled.entryId;
+      if (entryId == null) {
         refusals.add(
           DiscoveryRefusal(
             urlKey: listing.urlKey,
-            violation: violation ?? unknownRow,
+            violation: reconciled.violation ?? unknownRow,
           ),
         );
         continue;
+      }
+      switch (reconciled.action!) {
+        case ReconcileAction.mergedExisting:
+          merged.add(entryId);
+        case ReconcileAction.createdPlaced:
+          created.add(entryId);
+        case ReconcileAction.createdUnplaced:
+          created.add(entryId);
+          unplaced.add(entryId);
       }
 
       final (location, locationViolation) = await _entries.addLocation(
@@ -355,50 +369,6 @@ class SourceDiscovery {
       refusals: refusals,
       alreadyHeld: alreadyHeld,
     );
-  }
-
-  /// Which Entry this listing belongs to, creating one when it is new.
-  ///
-  /// The decision is the domain's ([crossSourceEquivalence]) and the gate is
-  /// V2-D16's: a position is written only when the Collection's ordering basis
-  /// supports it *and* the source printed a number. Otherwise the Entry is
-  /// unplaced, which is an answer.
-  Future<(String?, InvariantViolation?)> _entryFor({
-    required String collectionId,
-    required OrderingBasis basis,
-    required ObservedEntryListing listing,
-    required List<String> created,
-    required List<String> unplaced,
-    required List<String> merged,
-  }) async {
-    final printed = listing.printedNumber;
-    final placeable = basis.supportsCrossSourceMerge && printed != null;
-    final candidate = placeable
-        ? await _index.lookupOrdinal(collectionId, printed)
-        : null;
-
-    final decision = crossSourceEquivalence(
-      basis: basis,
-      existingOrdinal: candidate?.ordinal,
-      observedOrdinal: printed,
-    );
-
-    if (decision == EquivalenceDecision.sameEntry && candidate != null) {
-      merged.add(candidate.id);
-      return (candidate.id, null);
-    }
-
-    final place = placeable && decision == EquivalenceDecision.distinctEntries;
-    final (entry, violation) = await _entries.createInCollection(
-      collectionId: collectionId,
-      ordinal: place ? printed : null,
-      placement: place ? Placement.placed : Placement.unplaced,
-      title: listing.label,
-    );
-    if (violation != null || entry == null) return (null, violation);
-    created.add(entry.id);
-    if (!place) unplaced.add(entry.id);
-    return (entry.id, null);
   }
 
   /// Retract this Source's own Locations that the reading covered and did not

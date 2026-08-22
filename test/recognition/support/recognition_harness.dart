@@ -13,9 +13,11 @@ library;
 import 'package:drift/drift.dart' show QueryExecutor;
 import 'package:web_reader/data/schema.dart';
 import 'package:web_reader/domain/collection.dart';
+import 'package:web_reader/recognition/adopt.dart';
 import 'package:web_reader/recognition/discovery.dart';
 import 'package:web_reader/recognition/history.dart';
 import 'package:web_reader/recognition/recognise.dart';
+import 'package:web_reader/save/save_scope.dart';
 
 import '../../data/support/repo_harness.dart';
 
@@ -60,6 +62,23 @@ class RecognitionHarness {
 
   final RepoHarness repos;
   late final Recogniser recogniser;
+
+  /// The user-assisted half of recognition, over the same repositories.
+  late final LibraryAdoption adoption = LibraryAdoption(
+    folders: repos.folders,
+    collections: repos.collections,
+    entries: repos.entries,
+    index: repos.recognition,
+    db: repos.db,
+    now: repos.tick,
+  );
+
+  /// A scope plus a starting Entry, against the library as it stands.
+  late final SaveScopePlanner planner = LibrarySaveScopePlanner(
+    db: repos.db,
+    entries: repos.entries,
+  );
+
   late final SourceDiscovery discovery;
   late final HistoryStore history;
   late final LibraryPromotion promotion;
