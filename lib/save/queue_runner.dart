@@ -11,6 +11,34 @@ import 'queue_repository.dart';
 import 'queue_task.dart';
 import 'stop_conditions.dart';
 
+/// How one claimed row is captured.
+///
+/// The loop owns the row — the claim, the cooperative stop and the terminal
+/// verdict — and nothing else. Whether a capture may *ask the user* to point
+/// at the reading area is a composition decision, not a queue rule, so it is
+/// injected: the app passes the assist-aware capture, and the default is the
+/// bare call the queue's own tests drive.
+typedef TaskCapture =
+    Future<EntryCaptureResult> Function(
+      EntryCaptureService capture,
+      SaveTask task, {
+      bool Function()? shouldContinue,
+    });
+
+/// The default: capture the row exactly as it stands, asking nothing.
+Future<EntryCaptureResult> captureTaskDirectly(
+  EntryCaptureService capture,
+  SaveTask task, {
+  bool Function()? shouldContinue,
+}) => capture.capture(
+  entryId: task.entryId,
+  locationId: task.locationId,
+  locationUrl: task.locationUrl,
+  captureMode: task.captureMode,
+  captureModeIsUserSet: task.captureModeIsUserSet,
+  shouldContinue: shouldContinue,
+);
+
 /// Drives the V2 save queue: claims eligible rows one at a time and runs each
 /// through [EntryCaptureService].
 ///
@@ -25,11 +53,14 @@ class QueueRunner extends ChangeNotifier {
     required this._captureServiceFor,
     this._cancelPoll = const Duration(milliseconds: 400),
     DeviceStorage? deviceStorage,
+    TaskCapture? capture,
     this.config = kDefaultSaveConfig,
-  }) : _deviceStorage = deviceStorage ?? DeviceStorage();
+  }) : _deviceStorage = deviceStorage ?? DeviceStorage(),
+       _capture = capture ?? captureTaskDirectly;
 
   final SaveQueueRepository queue;
   final EntryCaptureService Function() _captureServiceFor;
+  final TaskCapture _capture;
   final Duration _cancelPoll;
   final DeviceStorage _deviceStorage;
 
@@ -138,12 +169,9 @@ class QueueRunner extends ChangeNotifier {
     });
 
     try {
-      final result = await _captureServiceFor().capture(
-        entryId: task.entryId,
-        locationId: task.locationId,
-        locationUrl: task.locationUrl,
-        captureMode: task.captureMode,
-        captureModeIsUserSet: task.captureModeIsUserSet,
+      final result = await _capture(
+        _captureServiceFor(),
+        task,
         shouldContinue: () => !cancelled && !_disposed,
       );
       switch (result.status) {

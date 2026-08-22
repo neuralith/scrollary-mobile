@@ -35,6 +35,7 @@ import 'package:web_reader/domain/reading_state.dart';
 import 'package:web_reader/features/check_controller.dart';
 import 'package:web_reader/features/running_operation_panel.dart';
 import 'package:web_reader/features/v2_composition.dart';
+import 'package:web_reader/features/v2_save_flow.dart';
 import 'package:web_reader/library_ui/providers.dart' as libui;
 import 'package:web_reader/providers.dart';
 import 'package:web_reader/recognition/check.dart';
@@ -43,6 +44,7 @@ import 'package:web_reader/recognition/recognise.dart';
 import 'package:web_reader/save/entry_capture.dart';
 import 'package:web_reader/save/page_capture_source.dart';
 import 'package:web_reader/save/page_hint.dart';
+import 'package:web_reader/save/page_hint_repository.dart';
 import 'package:web_reader/save/queue_runner.dart';
 import 'package:web_reader/save/queue_task.dart';
 import 'package:web_reader/save/stop_conditions.dart';
@@ -421,6 +423,10 @@ class _Harness {
       reading: ReadingStateRepository(library),
     ),
     history: BrowsingHistoryStore(library),
+    assist: V2AssistController(
+      browser: browser,
+      hints: PageHintRepository.forLibrary(library),
+    ),
     sync: sync,
   );
 

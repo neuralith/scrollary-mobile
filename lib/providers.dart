@@ -11,7 +11,6 @@ import 'browser/browser_presentation.dart';
 import 'browser/favicon_service.dart';
 import 'browser/history_repository.dart';
 import 'browser/saved_sites_repository.dart';
-import 'save/page_hint_repository.dart';
 import 'features/check_controller.dart';
 import 'features/resume_point.dart';
 import 'features/v2_composition.dart';
@@ -20,7 +19,6 @@ import 'features/library_formats.dart';
 import 'library/library_sort.dart';
 import 'library/collection_repository.dart';
 import 'reading/reading_repository.dart';
-import 'save/page_hint.dart';
 import 'storage/cleanup.dart';
 import 'storage/database.dart';
 import 'storage/file_store.dart';
@@ -325,13 +323,6 @@ final collectionReadingStateProvider =
                 : computeCollectionReadingState(group.entries),
           ),
     );
-
-final pageHintsStreamProvider = StreamProvider<List<UserPageHint>>(
-  (ref) => ref
-      .watch(databaseProvider)
-      .watchAllHints()
-      .map((rows) => rows.map(PageHintRepository.toModel).toList()),
-);
 
 /// One-shot requests to switch the shell's bottom tab (0 = Library,
 /// 1 = Browser). Written by widgets that live inside a tab (the activity

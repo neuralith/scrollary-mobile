@@ -41,6 +41,7 @@ import '../sync/scheduler.dart';
 import '../sync/session.dart';
 import '../sync/transport.dart';
 import 'check_controller.dart';
+import 'v2_save_flow.dart' show V2AssistController;
 
 /// Visits closer together than this to the same page are one visit.
 ///
@@ -58,6 +59,7 @@ class V2Services {
     required this.check,
     required this.recogniser,
     required this.history,
+    required this.assist,
     required this.sync,
   });
 
@@ -72,6 +74,12 @@ class V2Services {
 
   /// Device-local browsing history, over the V2 table.
   final BrowsingHistoryStore history;
+
+  /// The one user-assist host. A capture that cannot find the reading area
+  /// holds here and asks; the save sheet renders the request. One per app,
+  /// because two would mean a capture could hold on a controller nothing is
+  /// watching.
+  final V2AssistController assist;
 
   /// The one sync stack. Never null: an unconfigured or unentitled device has
   /// a scheduler that resolves no transport and does nothing, which is a state
@@ -94,6 +102,7 @@ class V2Services {
   Future<void> dispose() async {
     runner.dispose();
     check.dispose();
+    assist.dispose();
     await sync.dispose();
     await library.close();
   }

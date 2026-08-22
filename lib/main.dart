@@ -20,12 +20,14 @@ import 'data/reading_state_repository.dart';
 import 'features/check_controller.dart';
 import 'features/source_observation_browser.dart';
 import 'features/v2_composition.dart';
+import 'features/v2_save_flow.dart';
 import 'library_ui/providers.dart' as libui;
 import 'library_ui/sync_status_section.dart' show syncStatusSourceProvider;
 import 'recognition/recognise.dart';
 import 'save/asset_fetcher.dart';
 import 'save/entry_capture.dart';
 import 'save/page_capture_source.dart';
+import 'save/page_hint_repository.dart';
 import 'save/queue_runner.dart';
 import 'save/save_engine.dart';
 import 'core/config.dart';
@@ -178,6 +180,9 @@ class _AppBootState extends State<AppBoot> with WidgetsBindingObserver {
                 syncStatusSourceProvider.overrideWithValue(
                   _startup.v2.sync.scheduler,
                 ),
+                // The same controller the queue's worker holds — see
+                // `AppStartup._open`.
+                v2AssistProvider.overrideWithValue(_startup.v2.assist),
               ],
               child: const WebReaderApp(),
             ),
@@ -268,8 +273,29 @@ class AppStartup {
     // check controller — all sharing the one Browser and FileStore.
     final library = LibraryDatabase();
     final ui = libui.LibraryUiServices(library, fileStore: fileStore);
+    // The one assist host, built here because the queue's worker and the save
+    // sheet must hold the *same* one: a capture that stops to ask has to hold
+    // on the controller the sheet is watching, or the question is asked into
+    // a controller nobody renders.
+    final assist = V2AssistController(
+      browser: browser,
+      hints: PageHintRepository.forLibrary(library),
+    );
     final runner = QueueRunner(
       queue: ui.queue,
+      // Routed through the assist path, which is the difference between a
+      // capture that cannot find the reading area *asking* and one that simply
+      // fails. The order, the counters and the re-run are v2_save_flow's.
+      capture: (capture, task, {shouldContinue}) => v2CaptureWithAssist(
+        capture: capture,
+        assist: assist,
+        entryId: task.entryId,
+        locationId: task.locationId,
+        locationUrl: task.locationUrl,
+        captureMode: task.captureMode,
+        captureModeIsUserSet: task.captureModeIsUserSet,
+        shouldContinue: shouldContinue,
+      ),
       captureServiceFor: () => EntryCaptureService(
         entries: ui.entries,
         collections: ui.collections,
@@ -309,6 +335,7 @@ class AppStartup {
       check: check,
       recogniser: recogniser,
       history: history,
+      assist: assist,
       sync: SyncComposition(
         db: library,
         queue: ui.queue,

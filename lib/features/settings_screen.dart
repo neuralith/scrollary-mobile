@@ -14,6 +14,7 @@ import 'appearance_selector.dart';
 import 'browser_data_dialogs.dart';
 import 'foreground_gate_sheet.dart';
 import 'library_formats.dart';
+import 'page_hints_screen.dart' show libraryPageHintsProvider;
 import '../library/entry_labels.dart';
 
 /// Settings is a list of doors, not a control panel. Everything that changes
@@ -52,7 +53,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final rules = ref.watch(pageHintsStreamProvider).value;
+    final rules = ref.watch(libraryPageHintsProvider).value;
     final entries = ref.watch(entriesStreamProvider).value;
     final storedBytes =
         entries?.fold<int>(0, (sum, c) => sum + c.byteSize) ?? 0;

@@ -265,13 +265,11 @@ final v2AssistProvider = Provider<V2AssistController>((ref) {
 /// produced a copy counts a success, a rule the page stopped matching counts
 /// a failure, and a capture that failed for some other reason counts neither.
 ///
-/// **Blocked state, recorded here so the next lane finds it.** The queue's
-/// worker still calls [EntryCaptureService.capture] directly: the capture
-/// service is built inside `main.dart`'s composition and the shell's hooks
-/// are attached in `app.dart`, neither of which this lane may edit. Routing
-/// `QueueRunner` through this function — handing it the [V2AssistController]
-/// from [v2AssistProvider] — is the one composition step left, and until it
-/// is taken a capture that needs the reading area fails instead of asking.
+/// **Wired.** `main.dart` builds the one [V2AssistController], hands it to
+/// `QueueRunner` as its capture hook and publishes it through
+/// [v2AssistProvider], so a queued capture that cannot find the reading area
+/// holds and asks rather than failing — and the sheet that renders the request
+/// is watching the same controller the worker is holding on.
 Future<EntryCaptureResult> v2CaptureWithAssist({
   required EntryCaptureService capture,
   required V2AssistController assist,

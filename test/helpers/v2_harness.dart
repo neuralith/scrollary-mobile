@@ -14,10 +14,12 @@ import 'package:web_reader/data/recognition_index.dart';
 import 'package:web_reader/data/schema.dart';
 import 'package:web_reader/features/check_controller.dart';
 import 'package:web_reader/features/v2_composition.dart';
+import 'package:web_reader/features/v2_save_flow.dart';
 import 'package:web_reader/library_ui/providers.dart' as libui;
 import 'package:web_reader/recognition/check.dart';
 import 'package:web_reader/recognition/recognise.dart';
 import 'package:web_reader/save/entry_capture.dart';
+import 'package:web_reader/save/page_hint_repository.dart';
 import 'package:web_reader/save/queue_runner.dart';
 import 'package:web_reader/storage/file_store.dart';
 
@@ -62,6 +64,10 @@ class V2Harness {
       observations: const _NoObservations(),
     );
     history = BrowsingHistoryStore(library);
+    assist = V2AssistController(
+      browser: browser,
+      hints: PageHintRepository.forLibrary(library),
+    );
     // Unconfigured, which is what a widget test is: no transport is built, so
     // the scheduler resolves nothing and every opportunity is a no-op.
     sync = SyncComposition(
@@ -82,6 +88,7 @@ class V2Harness {
         reading: ReadingStateRepository(library),
       ),
       history: history,
+      assist: assist,
       sync: sync,
     );
   }
@@ -92,6 +99,7 @@ class V2Harness {
   late final QueueRunner runner;
   late final CheckController check;
   late final BrowsingHistoryStore history;
+  late final V2AssistController assist;
   late final SyncComposition sync;
   late final V2Services services;
 
