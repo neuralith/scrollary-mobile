@@ -3,7 +3,7 @@ import 'dart:io';
 import 'package:drift/drift.dart' show Value;
 import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:web_reader/features/entry_actions.dart';
+import 'package:web_reader/features/entry_source_state.dart';
 import 'package:web_reader/reading/reading_position.dart';
 import 'package:web_reader/reading/reading_repository.dart';
 import 'package:web_reader/storage/cleanup.dart';

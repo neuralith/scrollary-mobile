@@ -347,10 +347,10 @@ stop sentence must state the user's own number.
 
 ### 6.3 What to save
 
-**Built.** Shown at the top of the save sheet, above the range options. The
-heading is **What to save**, with one line of what was detected beneath it.
-Verbatim from `_CaptureSection._summary` in
-`lib/features/save_scope_sheet.dart`:
+**Built.** Shown in the save sheet, above the save control. The heading is
+**What to save**, with one line of what was detected beneath it. Verbatim from
+`captureDetectionSummary` in `lib/features/capture_mode_section.dart`, and
+pinned sentence-by-sentence by `test/capture_mode_section_test.dart`:
 
 | Detection | Line |
 |---|---|
@@ -374,7 +374,10 @@ in place of the description:
 | **Text and images** | Save the readable text with the images that sit inside it. | No images were found inside the readable text. |
 
 Optional, when the page belongs to a collection:
-**Use "<mode>" for this collection from now on**
+**Use "<mode>" for this collection from now on** — **not built.** The V2
+schema carries no per-Collection capture-mode preference, so there is
+nothing for this toggle to write. The rest of §6.3 is built and verbatim;
+this line alone is held for a column that does not exist yet.
 
 ### 6.4 Save-scope review
 

@@ -1,807 +1,62 @@
+/// The compact background-activity indicator, over the V2 save queue.
+///
+/// One sentence under test: **it says that work is outstanding and how much,
+/// and nothing else.** Every word of detail — progress, logs, failures, stop,
+/// retry — is one tap away on the surface that already owns those controls, so
+/// this one is a pill, it never claims more motion than is true, and it leaves
+/// whenever the Browser or the Reader is already speaking for the same run.
+///
+/// The counting itself is a pure function over [SaveTask] rows, and it is
+/// tested as one: what a failure marker weighs is *when* one row finished
+/// against *when* another was asked for, and that is a property of the list,
+/// not of a widget.
+library;
+
 import 'dart:io';
 
-import 'package:drift/native.dart';
+import 'package:drift/drift.dart' show Value;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:go_router/go_router.dart';
 import 'package:web_reader/browser/browser_controller.dart';
-import 'package:web_reader/capability/foreground_multitasking.dart';
-import 'package:web_reader/features/activity_screen.dart';
+import 'package:web_reader/data/schema.dart';
 import 'package:web_reader/features/operation_indicator.dart';
-import 'package:web_reader/library/update_checker.dart';
 import 'package:web_reader/providers.dart';
-import 'package:web_reader/queue/task_queue.dart';
-import 'package:web_reader/save/save_run.dart';
-import 'package:web_reader/save/save_state.dart';
-import 'package:web_reader/storage/database.dart';
+import 'package:web_reader/save/queue_task.dart';
 import 'package:web_reader/storage/file_store.dart';
+import 'package:web_reader/ui/palette.dart';
 import 'package:web_reader/ui/status_style.dart';
+import 'package:web_reader/ui/theme.dart';
 
-/// The compact background-activity indicator.
-///
-/// One sentence under test: **it says that work is outstanding and how much,
-/// and nothing else.** Everything in words — progress, logs, failures, stop,
-/// retry, the way back to the Browser — is one tap away on Activity, which is
-/// the surface that already owns those controls. A panel that follows the user
-/// onto the page they are reading is a panel they learn to ignore, so this one
-/// is a pill and it leaves with the Reader's bars.
+import 'helpers/v2_harness.dart';
+
 void main() {
-  late AppDatabase db;
-  late Directory root;
-  late FileStore store;
-  late BrowserController browser;
-  late SaveRunController run;
-  late UpdateChecker checker;
-  late TaskQueueController queue;
-  late ValueNotifier<bool> browserOnScreen;
-  late ReaderChromeVisibility readerChrome;
-  late ForegroundMultitasking capability;
-
-  setUp(() {
-    db = AppDatabase.forTesting(NativeDatabase.memory());
-    root = Directory.systemTemp.createTempSync('webread_activity_pill');
-    store = FileStore(root);
-    browser = BrowserController();
-    run = SaveRunController(browser: browser, db: db, fileStore: store);
-    checker = UpdateChecker(browser: browser, db: db);
-    browserOnScreen = ValueNotifier<bool>(false);
-    readerChrome = ReaderChromeVisibility();
-    capability = ForegroundMultitasking();
-    queue = TaskQueueController(
-      db: db,
-      browser: browser,
-      saveRun: run,
-      checker: checker,
-      saveRunner: (task) async => const QueueOutcome.success('saved'),
-    );
-    queue.ensureBrowserVisible = ({url}) async => true;
-  });
-
-  tearDown(() async {
-    browserOnScreen.dispose();
-    readerChrome.dispose();
-    capability.dispose();
-    await db.close();
-    if (root.existsSync()) root.deleteSync(recursive: true);
-  });
-
-  // --- the widget ----------------------------------------------------------
-
-  var opened = 0;
-  var browserOpened = 0;
-  double textScale = 1.0;
-
-  Widget harness() {
-    opened = 0;
-    browserOpened = 0;
-    final router = GoRouter(
-      initialLocation: '/',
-      routes: [
-        GoRoute(
-          path: '/',
-          builder: (_, _) =>
-              const Scaffold(body: Center(child: Text('some screen'))),
-        ),
-        GoRoute(path: '/activity', builder: (_, _) => const ActivityScreen()),
-      ],
-    );
-    return ProviderScope(
-      overrides: [
-        databaseProvider.overrideWithValue(db),
-        fileStoreProvider.overrideWithValue(store),
-        browserProvider.overrideWithValue(browser),
-        saveRunProvider.overrideWithValue(run),
-        updateCheckerProvider.overrideWithValue(checker),
-        taskQueueProvider.overrideWithValue(queue),
-        browserOnScreenProvider.overrideWithValue(browserOnScreen),
-        readerChromeVisibleProvider.overrideWithValue(readerChrome),
-        foregroundMultitaskingProvider.overrideWithValue(capability),
-      ],
-      // The same placement the app uses: above the router, so the pill is
-      // reachable from every screen the router pushes over the shell.
-      child: MaterialApp.router(
-        routerConfig: router,
-        builder: (context, child) => MediaQuery(
-          // Wrapped rather than set on the view, so a test can ask for a
-          // reader's text size without the pill's own geometry being the only
-          // thing that changes.
-          data: MediaQuery.of(
-            context,
-          ).copyWith(textScaler: TextScaler.linear(textScale)),
-          child: Stack(
-            fit: StackFit.expand,
-            children: [
-              ?child,
-              OperationIndicator(
-                onOpenDetails: () {
-                  opened++;
-                  router.push('/activity');
-                },
-                onOpenBrowser: () => browserOpened++,
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  final pill = find.byKey(const ValueKey('operationIndicator'));
-
-  Future<void> show(
-    WidgetTester tester, {
-    Size size = const Size(430, 900),
-  }) async {
-    tester.view.physicalSize = size;
-    tester.view.devicePixelRatio = 1.0;
-    addTearDown(tester.view.reset);
-    await tester.pumpWidget(harness());
-    await settle(tester);
-  }
-
-  /// Unmount inside the body, then let drift's stream teardown timers run —
-  /// the fake clock only turns while the test body is still going.
-  void indicatorTest(String name, Future<void> Function(WidgetTester) body) {
-    testWidgets(name, (tester) async {
-      await body(tester);
-      await tester.pumpWidget(const SizedBox.shrink());
-      await tester.pump(const Duration(milliseconds: 10));
-    });
-  }
-
-  Future<void> queueSave(String url) =>
-      queue.enqueueSave(startUrl: url, entryLimit: 1);
-
-  /// A queue row with its timestamps stated, which `enqueueSave` cannot give
-  /// — it stamps `DateTime.now()`, and what the failure marker weighs is when
-  /// one thing finished against when another was asked for.
-  Future<void> putTask({
-    required String id,
-    required QueueTaskState state,
-    required DateTime queuedAt,
-    DateTime? finishedAt,
-    int orderIndex = 0,
-  }) => db.upsertQueueTask(
-    QueueTask(
-      id: id,
-      taskType: QueueTaskType.entrySave.name,
-      startUrl: 'https://x.example/guide/foo/$id',
-      captureModeIsUserSet: false,
-      state: state.name,
-      origin: kQueueOriginQueue,
-      orderIndex: orderIndex,
-      queuedAt: queuedAt,
-      finishedAt: finishedAt,
-    ),
-  );
-
-  /// Read the count the pill is showing.
-  String countOn(WidgetTester tester) => tester
-      .widgetList<Text>(find.descendant(of: pill, matching: find.byType(Text)))
-      .first
-      .data!;
-
-  bool spinning(WidgetTester tester) => find
-      .descendant(of: pill, matching: find.byType(CircularProgressIndicator))
-      .evaluate()
-      .isNotEmpty;
-
-  bool hasIcon(WidgetTester tester, IconData icon) =>
-      find
-          .descendant(of: pill, matching: find.byIcon(icon))
-          .evaluate()
-          .length ==
-      1;
-
-  group('when it is there at all', () {
-    indicatorTest('nothing outstanding shows nothing', (tester) async {
-      await show(tester);
-      expect(pill, findsNothing);
-    });
-
-    indicatorTest('queued work brings it up with its count', (tester) async {
-      await queueSave('https://x.example/guide/foo/1');
-      await queueSave('https://x.example/guide/foo/2');
-      await show(tester);
-
-      expect(pill, findsOneWidget);
-      expect(countOn(tester), '2');
-    });
-
-    indicatorTest('waiting work never claims to be moving', (tester) async {
-      await queueSave('https://x.example/guide/foo/1');
-      await show(tester);
-
-      expect(
-        spinning(tester),
-        isFalse,
-        reason: 'a save waiting for an explicit Start is not running',
-      );
-      expect(hasIcon(tester, Icons.schedule), isTrue);
-    });
-
-    indicatorTest('a running save spins and counts itself', (tester) async {
-      run.debugSetRunning(true);
-      run.debugSetProgress(const SaveProgress(state: SaveState.scrolling));
-      await show(tester);
-
-      expect(pill, findsOneWidget);
-      expect(countOn(tester), '1');
-      expect(spinning(tester), isTrue);
-    });
-
-    indicatorTest('a direct run and its queue row are one job, not two', (
-      tester,
-    ) async {
-      await db.upsertQueueTask(
-        QueueTask(
-          id: 'running-1',
-          taskType: QueueTaskType.entrySave.name,
-          captureModeIsUserSet: false,
-          state: QueueTaskState.running.name,
-          origin: kQueueOriginQueue,
-          orderIndex: 0,
-          queuedAt: DateTime(2026, 8, 1),
-        ),
-      );
-      run.debugSetRunning(true);
-      run.debugSetProgress(const SaveProgress(state: SaveState.scrolling));
-      await show(tester);
-
-      expect(countOn(tester), '1');
-    });
-
-    indicatorTest('it stays out of the Browser, which says it all already', (
-      tester,
-    ) async {
-      await queueSave('https://x.example/guide/foo/1');
-      await show(tester);
-      expect(pill, findsOneWidget);
-
-      browserOnScreen.value = true;
-      await settle(tester);
-      expect(pill, findsNothing);
-    });
-  });
-
-  group('as work moves', () {
-    indicatorTest('the count falls as rows leave the queue', (tester) async {
-      await queueSave('https://x.example/guide/foo/1');
-      await queueSave('https://x.example/guide/foo/2');
-      await queueSave('https://x.example/guide/foo/3');
-      await show(tester);
-      expect(countOn(tester), '3');
-
-      final first = (await queue.queuedSaves()).first;
-      await queue.cancelTask(first.id);
-      await settle(tester);
-
-      expect(countOn(tester), '2');
-    });
-
-    indicatorTest('it goes when the last of the work is cancelled', (
-      tester,
-    ) async {
-      await queueSave('https://x.example/guide/foo/1');
-      await show(tester);
-      expect(pill, findsOneWidget);
-
-      for (final task in await queue.queuedSaves()) {
-        await queue.cancelTask(task.id);
-      }
-      await settle(tester);
-
-      expect(
-        pill,
-        findsNothing,
-        reason: 'a cancelled row is history, and history is not activity',
-      );
-    });
-
-    indicatorTest('a finished run leaves nothing floating', (tester) async {
-      run.debugSetRunning(true);
-      run.debugSetProgress(const SaveProgress(state: SaveState.scrolling));
-      await show(tester);
-      expect(pill, findsOneWidget);
-
-      run.debugSetRunning(false);
-      run.debugSetProgress(const SaveProgress());
-      await settle(tester);
-
-      expect(pill, findsNothing);
-    });
-  });
-
-  group('states that are not progress', () {
-    indicatorTest('a paused run says paused rather than spinning', (
-      tester,
-    ) async {
-      run.debugSetRunning(true);
-      run.debugSetProgress(const SaveProgress(state: SaveState.paused));
-      await show(tester);
-
-      expect(pill, findsOneWidget);
-      expect(spinning(tester), isFalse);
-      expect(hasIcon(tester, Icons.pause_circle_outline), isTrue);
-    });
-
-    indicatorTest('a run holding for the user is marked, not spun', (
-      tester,
-    ) async {
-      run.debugSetRunning(true);
-      run.debugSetProgress(
-        const SaveProgress(state: SaveState.waitingForBrowser),
-      );
-      await show(tester);
-
-      expect(spinning(tester), isFalse);
-      expect(hasIcon(tester, Icons.error_outline), isTrue);
-    });
-
-    indicatorTest('failed history on its own is not an activity indicator', (
-      tester,
-    ) async {
-      await putTask(
-        id: 'failed-1',
-        state: QueueTaskState.failed,
-        queuedAt: DateTime(2026, 8, 1),
-        finishedAt: DateTime(2026, 8, 1, 0, 5),
-      );
-      await show(tester);
-
-      expect(
-        pill,
-        findsNothing,
-        reason: 'an indicator that never leaves is one nobody reads',
-      );
-    });
-  });
-
-  // --- which failures are this run's ---------------------------------------
+  // ─── the counting itself ──────────────────────────────────────────────────
   //
   // A `failed` row is terminal history and it is kept, for up to the whole
   // history limit. The question the marker has to answer is not "has anything
   // ever failed" — something always has — but "did the work I am watching lose
   // one".
 
-  group('the failure marker', () {
-    final wave = DateTime(2026, 8, 5, 12);
-
-    indicatorTest('marks a casualty of the batch still running', (
-      tester,
-    ) async {
-      // Three queued together; the second died thirty seconds in.
-      await putTask(
-        id: 'q-1',
-        state: QueueTaskState.queued,
-        queuedAt: wave,
-        orderIndex: 1,
-      );
-      await putTask(
-        id: 'q-2',
-        state: QueueTaskState.queued,
-        queuedAt: wave,
-        orderIndex: 2,
-      );
-      await putTask(
-        id: 'f-1',
-        state: QueueTaskState.failed,
-        queuedAt: wave,
-        finishedAt: wave.add(const Duration(seconds: 30)),
-        orderIndex: 3,
-      );
-      await show(tester);
-
-      expect(countOn(tester), '2', reason: 'a failed row is not outstanding');
-      expect(
-        hasIcon(tester, Icons.error_outline),
-        isTrue,
-        reason: 'the batch being watched lost one, and that is worth saying',
-      );
-    });
-
-    indicatorTest('leaves an unrelated older failure out of it', (
-      tester,
-    ) async {
-      // Failed days ago and never cleared; Activity still lists it.
-      await putTask(
-        id: 'f-old',
-        state: QueueTaskState.failed,
-        queuedAt: wave.subtract(const Duration(days: 3)),
-        finishedAt: wave.subtract(const Duration(days: 3, minutes: -2)),
-        orderIndex: 1,
-      );
-      // …and a perfectly healthy save queued today.
-      await putTask(
-        id: 'q-new',
-        state: QueueTaskState.queued,
-        queuedAt: wave,
-        orderIndex: 2,
-      );
-      await show(tester);
-
-      expect(pill, findsOneWidget);
-      expect(countOn(tester), '1');
-      expect(
-        hasIcon(tester, Icons.error_outline),
-        isFalse,
-        reason: 'last week is not this run, and a badge always lit is ignored',
-      );
-    });
-
-    indicatorTest('a failure it cannot place in time is not claimed', (
-      tester,
-    ) async {
-      await putTask(
-        id: 'f-undated',
-        state: QueueTaskState.failed,
-        queuedAt: wave,
-        orderIndex: 1,
-      );
-      await putTask(
-        id: 'q-1',
-        state: QueueTaskState.queued,
-        queuedAt: wave,
-        orderIndex: 2,
-      );
-      await show(tester);
-
-      expect(pill, findsOneWidget);
-      expect(
-        hasIcon(tester, Icons.error_outline),
-        isFalse,
-        reason: 'silence is the safe answer for a marker meant to be believed',
-      );
-    });
-
-    indicatorTest('every failure stays reachable on Activity regardless', (
-      tester,
-    ) async {
-      await putTask(
-        id: 'f-old',
-        state: QueueTaskState.failed,
-        queuedAt: wave.subtract(const Duration(days: 3)),
-        finishedAt: wave.subtract(const Duration(days: 3)),
-        orderIndex: 1,
-      );
-      await putTask(
-        id: 'q-new',
-        state: QueueTaskState.queued,
-        queuedAt: wave,
-        orderIndex: 2,
-      );
-      await show(tester);
-
-      await tester.tap(pill);
-      await settle(tester);
-
-      expect(find.text('FAILED'), findsOneWidget);
-      expect(
-        find.text('1 needs you'),
-        findsOneWidget,
-        reason: 'scoping the marker must not hide the row it stopped marking',
-      );
-    });
-  });
-
-  group('the way to the detail', () {
-    indicatorTest('tapping it opens Activity, with its controls intact', (
-      tester,
-    ) async {
-      await queueSave('https://x.example/guide/foo/1');
-      await show(tester);
-
-      await tester.tap(pill);
-      await settle(tester);
-
-      expect(opened, 1);
-      expect(find.byType(ActivityScreen), findsOneWidget);
-      expect(find.text('WAITING TO START'), findsOneWidget);
-      expect(find.byKey(const ValueKey('startAllQueued')), findsOneWidget);
-      expect(find.byTooltip('Remove from queue'), findsOneWidget);
-    });
-
-    indicatorTest('a direct run is stoppable from where the pill sends you', (
-      tester,
-    ) async {
-      run.debugSetRunning(true);
-      run.debugSetProgress(const SaveProgress(state: SaveState.scrolling));
-      await show(tester);
-
-      await tester.tap(pill);
-      await settle(tester);
-
-      // The run holds no queue row while it runs (D58) — Activity presents it
-      // from the controller, and the stop is still one tap from the pill.
-      expect(find.byKey(const ValueKey('directSaveRow')), findsOneWidget);
-      expect(find.byKey(const ValueKey('directSaveStop')), findsOneWidget);
-      expect(
-        find.byKey(const ValueKey('directSaveOpenBrowser')),
-        findsOneWidget,
-      );
-    });
-  });
-
-  // --- where a "Needs you" goes --------------------------------------------
-  //
-  // "Needs you" is one action, and it is the same one every time: the sign-in,
-  // the CAPTCHA, the consent dialog and the ambiguous next-Entry control are
-  // all answered on the Browser, because the selection overlay is drawn on
-  // that screen and nowhere else (docs/FOREGROUND_MULTITASKING.md §9).
-
-  group('a held operation', () {
-    indicatorTest('sends the user to the Browser, not to a list', (
-      tester,
-    ) async {
-      run.debugSetRunning(true);
-      run.debugSetProgress(
-        const SaveProgress(state: SaveState.waitingForBrowser),
-      );
-      await show(tester);
-
-      await tester.tap(pill);
-      await settle(tester);
-
-      expect(browserOpened, 1);
-      expect(
-        opened,
-        0,
-        reason:
-            'a list whose only live control opens the Browser is a '
-            'tap spent on nothing',
-      );
-      expect(find.byType(ActivityScreen), findsNothing);
-    });
-
-    indicatorTest('a run holding on a hidden Browser goes there too', (
-      tester,
-    ) async {
-      run.debugSetRunning(true);
-      run.debugSetProgress(const SaveProgress(state: SaveState.scrolling));
-      run.pauseForBrowserHidden();
-      await show(tester);
-
-      expect(hasIcon(tester, Icons.error_outline), isTrue);
-      await tester.tap(pill);
-      await settle(tester);
-
-      expect(browserOpened, 1);
-      expect(opened, 0);
-    });
-
-    indicatorTest('a page selection is answered where it is drawn', (
-      tester,
-    ) async {
-      run.debugSetRunning(true);
-      run.debugSetProgress(
-        const SaveProgress(state: SaveState.awaitingSelection),
-      );
-      await show(tester);
-
-      await tester.tap(pill);
-      await settle(tester);
-      expect(browserOpened, 1);
-    });
-
-    indicatorTest('everything else still goes to Activity', (tester) async {
-      await queueSave('https://x.example/guide/foo/1');
-      await show(tester);
-
-      await tester.tap(pill);
-      await settle(tester);
-
-      expect(opened, 1);
-      expect(browserOpened, 0);
-    });
-
-    indicatorTest('and the button says which, out loud', (tester) async {
-      final semantics = tester.ensureSemantics();
-      run.debugSetRunning(true);
-      run.debugSetProgress(
-        const SaveProgress(state: SaveState.waitingForBrowser),
-      );
-      await show(tester);
-
-      expect(
-        find.bySemanticsLabel(RegExp('Opens the Browser')),
-        findsOneWidget,
-      );
-      expect(find.bySemanticsLabel(RegExp('needs you')), findsOneWidget);
-      semantics.dispose();
-    });
-  });
-
-  group('reader chrome', () {
-    indicatorTest('hiding the reader bars hides it too', (tester) async {
-      await queueSave('https://x.example/guide/foo/1');
-      await show(tester);
-      expect(pill, findsOneWidget);
-
-      readerChrome.publish(false);
-      await settle(tester);
-      expect(pill, findsNothing);
-    });
-
-    indicatorTest('bringing the bars back brings it back', (tester) async {
-      await queueSave('https://x.example/guide/foo/1');
-      await show(tester);
-      readerChrome.publish(false);
-      await settle(tester);
-
-      readerChrome.publish(true);
-      await settle(tester);
-      expect(pill, findsOneWidget);
-    });
-
-    indicatorTest('and it does not come back if the work finished meanwhile', (
-      tester,
-    ) async {
-      await queueSave('https://x.example/guide/foo/1');
-      await show(tester);
-      readerChrome.publish(false);
-      await settle(tester);
-
-      for (final task in await queue.queuedSaves()) {
-        await queue.cancelTask(task.id);
-      }
-      readerChrome.publish(true);
-      await settle(tester);
-
-      expect(pill, findsNothing);
-    });
-  });
-
-  group('accessibility and entitlement', () {
-    indicatorTest('it is one button, described in words', (tester) async {
-      final semantics = tester.ensureSemantics();
-      await queueSave('https://x.example/guide/foo/1');
-      await queueSave('https://x.example/guide/foo/2');
-      await show(tester);
-
-      expect(
-        find.bySemanticsLabel(RegExp('2 waiting')),
-        findsOneWidget,
-        reason: 'a bare "2" tells a screen reader nothing',
-      );
-      expect(find.bySemanticsLabel(RegExp('Opens Activity')), findsOneWidget);
-      semantics.dispose();
-    });
-
-    indicatorTest('a large count cannot overflow the pill', (tester) async {
-      for (var i = 0; i < 120; i++) {
-        await db.upsertQueueTask(
-          QueueTask(
-            id: 'q$i',
-            taskType: QueueTaskType.entrySave.name,
-            captureModeIsUserSet: false,
-            state: QueueTaskState.queued.name,
-            origin: kQueueOriginQueue,
-            orderIndex: i,
-            queuedAt: DateTime(2026, 8, 1),
-          ),
-        );
-      }
-      await show(tester);
-
-      expect(countOn(tester), '99+');
-      expect(tester.takeException(), isNull);
-    });
-
-    indicatorTest('the touch target holds at the app-wide size', (
-      tester,
-    ) async {
-      await queueSave('https://x.example/guide/foo/1');
-      await show(tester);
-
-      final box = tester.getRect(pill);
-      expect(box.height, greaterThanOrEqualTo(kHeaderActionSize));
-      expect(box.width, greaterThanOrEqualTo(kHeaderActionSize));
-    });
-
-    indicatorTest('it grows for a reader at 200%, rather than overflowing', (
-      tester,
-    ) async {
-      textScale = 2.0;
-      addTearDown(() => textScale = 1.0);
-      await queueSave('https://x.example/guide/foo/1');
-      await queueSave('https://x.example/guide/foo/2');
-      await show(tester, size: const Size(320, 640));
-
-      expect(tester.takeException(), isNull, reason: 'nothing overflowed');
-      final box = tester.getRect(pill);
-      expect(box.height, greaterThanOrEqualTo(kHeaderActionSize));
-      expect(
-        box.left,
-        greaterThan(0),
-        reason: 'it still fits across the narrowest screen the app supports',
-      );
-    });
-
-    indicatorTest('it clears the status bar and anything in the bar below it', (
-      tester,
-    ) async {
-      // A notch-sized inset, the case the constant exists for.
-      tester.view.padding = const FakeViewPadding(top: 59 * 3);
-      addTearDown(tester.view.reset);
-      await queueSave('https://x.example/guide/foo/1');
-      await show(tester);
-
-      final box = tester.getRect(pill);
-      expect(
-        box.top,
-        greaterThanOrEqualTo(59 + kToolbarHeight),
-        reason: 'below the safe area AND below where app-bar actions sit',
-      );
-      expect(box.right, lessThanOrEqualTo(430));
-    });
-
-    indicatorTest('knowing what the device is doing is never gated', (
-      tester,
-    ) async {
-      expect(
-        capability.enabled,
-        isFalse,
-        reason: 'setup: the paid capability is off',
-      );
-      await queueSave('https://x.example/guide/foo/1');
-      await show(tester);
-
-      expect(
-        pill,
-        findsOneWidget,
-        reason:
-            'status and cancellation are free (FOREGROUND_MULTITASKING '
-            'docs, §10.1)',
-      );
-    });
-
-    indicatorTest('a Free user watching a held save still sees it', (
-      tester,
-    ) async {
-      // The state a Free user genuinely reaches: a Browser-dependent phase was
-      // running, they chose to leave, the run held. Nothing about the pill is
-      // entitlement-aware — it reports the state the leave gate produced.
-      expect(capability.proAvailable, isFalse, reason: 'setup: no Pro');
-      run.debugSetRunning(true);
-      run.debugSetProgress(const SaveProgress(state: SaveState.scrolling));
-      run.pauseForBrowserHidden();
-      await show(tester);
-
-      expect(pill, findsOneWidget);
-      expect(hasIcon(tester, Icons.error_outline), isTrue);
-      await tester.tap(pill);
-      await settle(tester);
-      expect(
-        browserOpened,
-        1,
-        reason: 'and the way back to the Browser is free, as it always was',
-      );
-    });
-  });
-
-  // --- the counting itself -------------------------------------------------
-
   group('BackgroundActivity', () {
-    QueueTask row(
-      QueueTaskState state, {
-      QueueTaskType? type,
+    SaveTask row(
+      SaveTaskState state, {
       DateTime? queuedAt,
       DateTime? finishedAt,
       String? id,
-    }) => QueueTask(
-      id: id ?? '${state.name}-${type?.name}',
-      taskType: (type ?? QueueTaskType.entrySave).name,
-      captureModeIsUserSet: false,
-      state: state.name,
-      origin: kQueueOriginQueue,
+    }) => SaveTask(
+      id: id ?? state.name,
+      entryId: 'entry-${id ?? state.name}',
+      locationUrl: 'https://example.com/one/${id ?? state.name}',
+      state: state,
+      origin: SaveTaskOrigin.queue,
       orderIndex: 0,
       queuedAt: queuedAt ?? DateTime(2026, 8, 1),
       finishedAt: finishedAt,
     );
 
     BackgroundActivity resolve(
-      List<QueueTask> tasks, {
+      List<SaveTask> tasks, {
       bool runningWithoutTask = false,
       bool needsUser = false,
       bool paused = false,
@@ -824,9 +79,9 @@ void main() {
       test('a failure that happened alongside the outstanding work counts', () {
         expect(
           resolve([
-            row(QueueTaskState.queued, queuedAt: wave, id: 'a'),
+            row(SaveTaskState.queued, queuedAt: wave, id: 'a'),
             row(
-              QueueTaskState.failed,
+              SaveTaskState.failed,
               queuedAt: wave,
               finishedAt: wave.add(const Duration(seconds: 30)),
               id: 'b',
@@ -839,9 +94,9 @@ void main() {
       test('one from before the outstanding work was asked for does not', () {
         expect(
           resolve([
-            row(QueueTaskState.queued, queuedAt: wave, id: 'a'),
+            row(SaveTaskState.queued, queuedAt: wave, id: 'a'),
             row(
-              QueueTaskState.failed,
+              SaveTaskState.failed,
               queuedAt: wave.subtract(const Duration(days: 3)),
               finishedAt: wave.subtract(const Duration(days: 3)),
               id: 'b',
@@ -856,14 +111,14 @@ void main() {
         // wave, because the wave began with the first of them.
         expect(
           resolve([
-            row(QueueTaskState.queued, queuedAt: wave, id: 'a'),
+            row(SaveTaskState.queued, queuedAt: wave, id: 'a'),
             row(
-              QueueTaskState.running,
+              SaveTaskState.running,
               queuedAt: wave.add(const Duration(minutes: 10)),
               id: 'b',
             ),
             row(
-              QueueTaskState.failed,
+              SaveTaskState.failed,
               queuedAt: wave,
               finishedAt: wave.add(const Duration(minutes: 5)),
               id: 'c',
@@ -876,8 +131,8 @@ void main() {
       test('a failure with no finish time is never claimed', () {
         expect(
           resolve([
-            row(QueueTaskState.queued, queuedAt: wave, id: 'a'),
-            row(QueueTaskState.failed, queuedAt: wave, id: 'b'),
+            row(SaveTaskState.queued, queuedAt: wave, id: 'a'),
+            row(SaveTaskState.failed, queuedAt: wave, id: 'b'),
           ]).failed,
           0,
         );
@@ -887,7 +142,7 @@ void main() {
         expect(
           resolve([
             row(
-              QueueTaskState.failed,
+              SaveTaskState.failed,
               queuedAt: wave,
               finishedAt: wave.add(const Duration(minutes: 1)),
               id: 'b',
@@ -900,15 +155,15 @@ void main() {
       test('completed and cancelled rows are not failures', () {
         expect(
           resolve([
-            row(QueueTaskState.queued, queuedAt: wave, id: 'a'),
+            row(SaveTaskState.queued, queuedAt: wave, id: 'a'),
             row(
-              QueueTaskState.completed,
+              SaveTaskState.completed,
               queuedAt: wave,
               finishedAt: wave.add(const Duration(minutes: 1)),
               id: 'b',
             ),
             row(
-              QueueTaskState.cancelled,
+              SaveTaskState.cancelled,
               queuedAt: wave,
               finishedAt: wave.add(const Duration(minutes: 2)),
               id: 'c',
@@ -921,9 +176,9 @@ void main() {
 
     test('queued and running are both outstanding', () {
       final activity = resolve([
-        row(QueueTaskState.queued),
-        row(QueueTaskState.queued, type: QueueTaskType.collectionCheck),
-        row(QueueTaskState.running),
+        row(SaveTaskState.queued, id: 'a'),
+        row(SaveTaskState.queued, id: 'b'),
+        row(SaveTaskState.running, id: 'c'),
       ]);
       expect(activity.active, 1);
       expect(activity.waiting, 2);
@@ -939,16 +194,24 @@ void main() {
 
     test('a run WITH a row is not counted twice', () {
       final activity = resolve([
-        row(QueueTaskState.running),
+        row(SaveTaskState.running),
       ], runningWithoutTask: true);
-      expect(activity.active, 1);
+      expect(
+        activity.active,
+        1,
+        reason: 'one job counted two ways is the larger of the two, not a sum',
+      );
     });
 
     test('finished work is history, not activity', () {
       final activity = resolve([
-        row(QueueTaskState.completed),
-        row(QueueTaskState.cancelled, type: QueueTaskType.collectionCheck),
-        row(QueueTaskState.failed, type: QueueTaskType.checkAllCollections),
+        row(SaveTaskState.completed, id: 'a'),
+        row(SaveTaskState.cancelled, id: 'b'),
+        row(
+          SaveTaskState.failed,
+          id: 'c',
+          finishedAt: DateTime(2026, 8, 1, 0, 1),
+        ),
       ]);
       expect(activity.remaining, 0);
       expect(
@@ -980,13 +243,15 @@ void main() {
     });
 
     test('the description says what the counts are', () {
+      final wave = DateTime(2026, 8, 5, 12);
       final activity = resolve([
-        row(QueueTaskState.queued),
-        row(QueueTaskState.running),
+        row(SaveTaskState.queued, queuedAt: wave, id: 'a'),
+        row(SaveTaskState.running, queuedAt: wave, id: 'b'),
         row(
-          QueueTaskState.failed,
-          type: QueueTaskType.collectionCheck,
-          finishedAt: DateTime(2026, 8, 1, 0, 1),
+          SaveTaskState.failed,
+          queuedAt: wave,
+          finishedAt: wave.add(const Duration(minutes: 1)),
+          id: 'c',
         ),
       ]);
       expect(activity.description, contains('1 running'));
@@ -1006,11 +271,377 @@ void main() {
       );
     });
   });
-}
 
-/// Let the drift stream deliver and the widgets rebuild, on the fake clock.
-Future<void> settle(WidgetTester tester) async {
-  for (var i = 0; i < 20; i++) {
-    await tester.pump(const Duration(milliseconds: 20));
-  }
+  // ─── the widget ───────────────────────────────────────────────────────────
+
+  group('OperationIndicator', () {
+    late Directory root;
+    late FileStore store;
+    late BrowserController browser;
+    late V2Harness v2;
+    late ValueNotifier<bool> browserOnScreen;
+    late ValueNotifier<bool> surfacePainted;
+    late ReaderChromeVisibility readerChrome;
+    late int detailsOpened;
+    late int browserOpened;
+
+    setUp(() {
+      root = Directory.systemTemp.createTempSync('scrollary_operation_pill');
+      Directory(
+        '${root.path}/${FileStore.libraryFolderName}',
+      ).createSync(recursive: true);
+      Directory(
+        '${root.path}/${FileStore.tmpFolderName}',
+      ).createSync(recursive: true);
+      store = FileStore(root);
+      browser = BrowserController();
+      v2 = V2Harness(browser: browser, fileStore: store);
+      browserOnScreen = ValueNotifier<bool>(false);
+      surfacePainted = ValueNotifier<bool>(true);
+      readerChrome = ReaderChromeVisibility();
+      detailsOpened = 0;
+      browserOpened = 0;
+    });
+
+    tearDown(() async {
+      browserOnScreen.dispose();
+      surfacePainted.dispose();
+      readerChrome.dispose();
+      await v2.close();
+      if (root.existsSync()) root.deleteSync(recursive: true);
+    });
+
+    Widget harness() => ProviderScope(
+      overrides: [
+        v2ServicesProvider.overrideWithValue(v2.services),
+        browserOnScreenProvider.overrideWithValue(browserOnScreen),
+        browserSurfacePaintedProvider.overrideWithValue(surfacePainted),
+        readerChromeVisibleProvider.overrideWithValue(readerChrome),
+      ],
+      // The app's own placement: above everything the router draws, in a
+      // Stack, which is what makes "it leaves with the Reader's bars"
+      // something to prove rather than assume.
+      child: MaterialApp(
+        theme: appTheme(palette: AppPalette.light),
+        home: Stack(
+          fit: StackFit.expand,
+          children: [
+            const Scaffold(body: Center(child: Text('some screen'))),
+            OperationIndicator(
+              onOpenDetails: () => detailsOpened++,
+              onOpenBrowser: () => browserOpened++,
+            ),
+          ],
+        ),
+      ),
+    );
+
+    final pill = find.byKey(const ValueKey('operationIndicator'));
+
+    /// Let the drift stream deliver and the widgets rebuild, on the fake
+    /// clock. `pumpAndSettle` is unusable here: the spinner animates forever.
+    Future<void> settle(WidgetTester tester) async {
+      for (var i = 0; i < 20; i++) {
+        await tester.pump(const Duration(milliseconds: 20));
+      }
+    }
+
+    Future<void> show(WidgetTester tester) async {
+      tester.view.physicalSize = const Size(430, 900);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+      await tester.pumpWidget(harness());
+      await settle(tester);
+    }
+
+    /// Unmount inside the body, then let drift's stream teardown timers run —
+    /// the fake clock only turns while the test body is still going.
+    void indicatorTest(String name, Future<void> Function(WidgetTester) body) {
+      testWidgets(name, (tester) async {
+        await body(tester);
+        await tester.pumpWidget(const SizedBox.shrink());
+        await tester.pump(const Duration(milliseconds: 10));
+      });
+    }
+
+    /// An Entry for a queue row to point at. One each: the rows carry a real
+    /// foreign key, and an Entry may hold only one open task (I13).
+    Future<String> anEntry([String title = 'The saved page']) async {
+      final folder = await v2.ui.folders.ensureRoot();
+      final (entry, violation) = await v2.ui.entries.createStandalone(
+        folderId: folder.id,
+        title: title,
+      );
+      expect(violation, isNull, reason: 'seeding an Entry must not be refused');
+      return entry!.id;
+    }
+
+    /// A queue row with its timestamps stated, which `enqueue` cannot give —
+    /// it stamps the clock, and what the failure marker weighs is when one
+    /// thing finished against when another was asked for.
+    Future<void> putTask({
+      required String entryId,
+      required String id,
+      required SaveTaskState state,
+      required DateTime queuedAt,
+      DateTime? finishedAt,
+      int orderIndex = 0,
+    }) => v2.library
+        .into(v2.library.saveQueue)
+        .insert(
+          SaveQueueCompanion.insert(
+            id: id,
+            entryId: entryId,
+            locationUrl: 'https://example.com/one/$id',
+            state: Value(state.name),
+            origin: Value(SaveTaskOrigin.queue.name),
+            orderIndex: Value(orderIndex),
+            queuedAt: queuedAt,
+            finishedAt: Value(finishedAt),
+          ),
+        );
+
+    /// [count] waiting rows, each for an Entry of its own.
+    Future<void> queueSaves(int count) async {
+      for (var i = 0; i < count; i++) {
+        await putTask(
+          entryId: await anEntry('Page $i'),
+          id: 'q$i',
+          state: SaveTaskState.queued,
+          queuedAt: DateTime(2026, 8, 5, 12),
+          orderIndex: i,
+        );
+      }
+    }
+
+    /// Read the count the pill is showing.
+    String countOn(WidgetTester tester) => tester
+        .widgetList<Text>(
+          find.descendant(of: pill, matching: find.byType(Text)),
+        )
+        .first
+        .data!;
+
+    bool spinning(WidgetTester tester) => find
+        .descendant(of: pill, matching: find.byType(CircularProgressIndicator))
+        .evaluate()
+        .isNotEmpty;
+
+    bool hasIcon(WidgetTester tester, IconData icon) => find
+        .descendant(of: pill, matching: find.byIcon(icon))
+        .evaluate()
+        .isNotEmpty;
+
+    group('when it is there at all', () {
+      indicatorTest('nothing outstanding shows nothing', (tester) async {
+        await show(tester);
+        expect(pill, findsNothing);
+      });
+
+      indicatorTest('queued work brings it up with its count', (tester) async {
+        await queueSaves(2);
+        await show(tester);
+
+        expect(pill, findsOneWidget);
+        expect(countOn(tester), '2');
+      });
+
+      indicatorTest('waiting work never claims to be moving', (tester) async {
+        await queueSaves(1);
+        await show(tester);
+
+        expect(
+          spinning(tester),
+          isFalse,
+          reason: 'a save waiting for an explicit Start is not running',
+        );
+        expect(hasIcon(tester, Icons.schedule), isTrue);
+      });
+
+      indicatorTest('a running save spins and counts itself', (tester) async {
+        v2.runner.debugSetRunning(true);
+        await show(tester);
+
+        expect(pill, findsOneWidget);
+        expect(countOn(tester), '1');
+        expect(spinning(tester), isTrue);
+      });
+
+      indicatorTest('a direct run and its queue row are one job, not two', (
+        tester,
+      ) async {
+        final entryId = await anEntry();
+        await putTask(
+          entryId: entryId,
+          id: 'running-1',
+          state: SaveTaskState.running,
+          queuedAt: DateTime(2026, 8, 5, 12),
+        );
+        v2.runner.debugSetRunning(true);
+        await show(tester);
+
+        expect(countOn(tester), '1');
+      });
+
+      indicatorTest('a failed row on its own is history, not an indicator', (
+        tester,
+      ) async {
+        final entryId = await anEntry();
+        await putTask(
+          entryId: entryId,
+          id: 'failed-1',
+          state: SaveTaskState.failed,
+          queuedAt: DateTime(2026, 8, 5, 12),
+          finishedAt: DateTime(2026, 8, 5, 12, 5),
+        );
+        await show(tester);
+
+        expect(
+          pill,
+          findsNothing,
+          reason: 'an indicator that never leaves is one nobody reads',
+        );
+      });
+    });
+
+    group('where it stays out of the way', () {
+      indicatorTest('it stays out of the Browser, which says it all already', (
+        tester,
+      ) async {
+        await queueSaves(1);
+        await show(tester);
+        expect(pill, findsOneWidget);
+
+        browserOnScreen.value = true;
+        await settle(tester);
+        expect(pill, findsNothing);
+      });
+
+      indicatorTest('hiding the reader bars hides it too', (tester) async {
+        await queueSaves(1);
+        await show(tester);
+        expect(pill, findsOneWidget);
+
+        readerChrome.publish(false);
+        await settle(tester);
+        expect(pill, findsNothing);
+      });
+
+      indicatorTest('bringing the bars back brings it back', (tester) async {
+        await queueSaves(1);
+        await show(tester);
+        readerChrome.publish(false);
+        await settle(tester);
+        expect(pill, findsNothing);
+
+        readerChrome.publish(true);
+        await settle(tester);
+        expect(pill, findsOneWidget);
+      });
+    });
+
+    // ─── a hidden Browser is what "held" means ──────────────────────────────
+    //
+    // There is no pause flag in V2 and deliberately should not be one: the
+    // engine's render guards hold a capture the moment its surface stops
+    // painting and resume when it returns, so the indicator reads that
+    // condition rather than a mirror of it.
+
+    group('a run whose surface stopped painting', () {
+      indicatorTest('reads as held rather than as motion', (tester) async {
+        v2.runner.debugSetRunning(true);
+        surfacePainted.value = false;
+        await show(tester);
+
+        expect(
+          pill,
+          findsOneWidget,
+          reason: 'a hold is worth showing — it is still the user\'s work',
+        );
+        expect(
+          spinning(tester),
+          isFalse,
+          reason: 'a spinner over a page nobody is drawing claims a lie',
+        );
+        expect(hasIcon(tester, Icons.pause_circle_outline), isTrue);
+      });
+
+      indicatorTest('starts moving again the moment the surface returns', (
+        tester,
+      ) async {
+        v2.runner.debugSetRunning(true);
+        surfacePainted.value = false;
+        await show(tester);
+        expect(spinning(tester), isFalse);
+
+        surfacePainted.value = true;
+        await settle(tester);
+
+        expect(spinning(tester), isTrue);
+        expect(hasIcon(tester, Icons.pause_circle_outline), isFalse);
+      });
+
+      indicatorTest('a painted surface was never a hold to begin with', (
+        tester,
+      ) async {
+        v2.runner.debugSetRunning(true);
+        await show(tester);
+
+        expect(hasIcon(tester, Icons.pause_circle_outline), isFalse);
+        expect(spinning(tester), isTrue);
+      });
+    });
+
+    group('the shape of the pill', () {
+      indicatorTest('a large count cannot overflow it', (tester) async {
+        await queueSaves(120);
+        await show(tester);
+
+        expect(countOn(tester), '99+');
+        expect(tester.takeException(), isNull);
+      });
+
+      indicatorTest('the touch target holds at the app-wide size', (
+        tester,
+      ) async {
+        await queueSaves(1);
+        await show(tester);
+
+        final box = tester.getRect(pill);
+        expect(box.height, greaterThanOrEqualTo(kHeaderActionSize));
+        expect(box.width, greaterThanOrEqualTo(kHeaderActionSize));
+      });
+    });
+
+    group('what it says and where it goes', () {
+      indicatorTest('it is one button, described in words', (tester) async {
+        final semantics = tester.ensureSemantics();
+        await queueSaves(2);
+        await show(tester);
+
+        expect(
+          find.bySemanticsLabel(RegExp('2 waiting')),
+          findsOneWidget,
+          reason: 'a bare "2" tells a screen reader nothing',
+        );
+        expect(find.bySemanticsLabel(RegExp('Opens Activity')), findsOneWidget);
+        semantics.dispose();
+      });
+
+      indicatorTest('tapping it asks for the detail surface', (tester) async {
+        await queueSaves(1);
+        await show(tester);
+
+        await tester.tap(pill);
+        await settle(tester);
+
+        expect(detailsOpened, 1);
+        expect(
+          browserOpened,
+          0,
+          reason: 'nothing is holding on the user, so nothing wants a Browser',
+        );
+      });
+    });
+  });
 }

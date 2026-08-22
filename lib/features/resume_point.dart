@@ -1,7 +1,7 @@
 import '../reading/reading_position.dart';
 import '../reading/reading_repository.dart';
 import '../storage/database.dart';
-import 'library_screen.dart' show LibraryCollection;
+import 'library_formats.dart';
 
 /// One row of Continue Reading / Recently Read: which collection, which entry to
 /// open, and the reading state behind that choice.

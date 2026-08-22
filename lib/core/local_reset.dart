@@ -7,9 +7,6 @@ import 'package:flutter/foundation.dart';
 import '../browser/browser_controller.dart';
 import '../capability/internal_build.dart';
 
-import '../save/save_run.dart';
-import '../library/update_checker.dart';
-import '../queue/task_queue.dart';
 import '../storage/database.dart';
 import '../storage/file_store.dart';
 
@@ -88,18 +85,12 @@ class LocalResetService {
     required this.db,
     required this.fileStore,
     required this.browser,
-    required this.saveRun,
-    required this.checker,
-    required this.taskQueue,
     this.clearCookies,
   });
 
   final AppDatabase db;
   final FileStore fileStore;
   final BrowserController browser;
-  final SaveRunController saveRun;
-  final UpdateChecker checker;
-  final TaskQueueController taskQueue;
 
   /// The WebView cookie store in the app; a spy in tests. Null means "this
   /// build has no cookie store", which is reported as skipped rather than
@@ -134,19 +125,8 @@ class LocalResetService {
 
   /// Nothing may be mid-write when the tables go.
   Future<String> _stopEverything() async {
-    taskQueue.ensureBrowserVisible = null;
-    await taskQueue.stopQueuedSaves();
-    saveRun.stop();
-    checker.cancel();
     browser.automationOwner = null;
-    // Let the stop propagate through the running loops before the rows they
-    // are writing to disappear underneath them.
-    for (var i = 0; i < 40 && saveRun.isRunning; i++) {
-      await Future<void>.delayed(const Duration(milliseconds: 50));
-    }
-    return saveRun.isRunning
-        ? 'save still winding down'
-        : 'queue stopped, browser released';
+    return 'browser released';
   }
 
   /// Every table, in one transaction. Listed from the schema rather than by

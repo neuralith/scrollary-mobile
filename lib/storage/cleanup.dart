@@ -5,7 +5,6 @@ import 'package:drift/drift.dart' show Value;
 import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
 
-import '../save/save_run.dart';
 import 'database.dart';
 import 'file_store.dart';
 
@@ -27,16 +26,12 @@ class CleanupService {
   CleanupService({
     required this.db,
     required this.fileStore,
-    this.saveRun,
     this.undoWindow = const Duration(seconds: 6),
   });
 
   final AppDatabase db;
   final FileStore fileStore;
 
-  /// Optional: without it, the "in use by the running save" lock simply
-  /// cannot fire. The entry's own `saving` status still protects it.
-  final SaveRunController? saveRun;
   final Duration undoWindow;
 
   /// The entry currently open in the reader, if any. Set by the reader
@@ -66,14 +61,8 @@ class CleanupService {
     if (entry.saveStatus == 'saving') {
       return 'being saved';
     }
-    final run = saveRun;
-    if (run != null &&
-        run.isRunning &&
-        entry.sourceUrl.isNotEmpty &&
-        Uri.tryParse(run.progress.currentUrl)?.path ==
-            Uri.tryParse(entry.sourceUrl)?.path) {
-      return 'in use by the running save';
-    }
+    // The V1 run controller is gone; V2 saves write V2 rows, so the two
+    // remaining locks — the open reader and a mid-save V1 row — say it all.
     return null;
   }
 
@@ -303,4 +292,17 @@ CollectionCleanupPreference? collectionCleanupFromName(String? name) {
     if (value.name == name) return value;
   }
   return null;
+}
+
+/// The finished-and-still-offline set the global cleanup targets: read to the
+/// end, bytes still on this device. The V1 queue used to enqueue this walk;
+/// the storage screen now runs it directly.
+extension FinishedOfflineCleanup on CleanupService {
+  Future<List<String>> finishedOfflineEntryIds() async {
+    final entries = await db.allEntries();
+    return [
+      for (final entry in entries)
+        if (entry.readStatus == 'read' && isRemovable(entry)) entry.id,
+    ];
+  }
 }

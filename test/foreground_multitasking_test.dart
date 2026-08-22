@@ -7,7 +7,6 @@ import 'package:web_reader/browser/browser_surface_policy.dart';
 import 'package:web_reader/browser/page_data.dart';
 import 'package:web_reader/capability/foreground_multitasking.dart';
 import 'package:web_reader/core/config.dart';
-import 'package:web_reader/library/update_checker.dart';
 import 'package:web_reader/save/asset_fetcher.dart';
 import 'package:web_reader/save/capture_mode.dart';
 import 'package:web_reader/save/save_engine.dart';
@@ -311,68 +310,11 @@ void main() {
       expect(result.error, 'No images could be downloaded');
     });
 
-    test('the update checker holds on the same signal', () async {
-      await db.upsertCollection(
-        Collection(
-          contentKind: 'unknownWebContent',
-          sequenceKind: 'none',
-          orderingBasis: 'discoveryOrder',
-          shapeConfidence: 'low',
-          lifecycle: 'active',
-          id: 's1',
-          title: 'Foo',
-          sourceUrl: 'https://x.example/guide/foo',
-          host: 'x.example',
-          collectionKey: '/guide/foo',
-          createdAt: DateTime(2026, 7, 1),
-        ),
-      );
-      await db.upsertEntry(
-        Entry(
-          host: '',
-          contentKind: 'unknownWebContent',
-          contentKindConfidence: 'low',
-          contentKindIsUserSet: false,
-          id: 'c1',
-          collectionId: 's1',
-          title: 'Foo Entry 1',
-          sourceUrl: 'https://x.example/guide/foo/1',
-          urlKey: 'https://x.example/guide/foo/1',
-          artifactFormat: 'imageSequence',
-          saveStatus: 'complete',
-          contentPath: 'library/s1/entries/c1',
-          savedAt: DateTime(2026, 7, 20),
-          detectedAssetCount: 3,
-          storedAssetCount: 3,
-          entryOrder: 1,
-          byteSize: 1024,
-          entryNumber: 1,
-          sourceMarker: 'Entry 1',
-          readStatus: 'unread',
-          progressFraction: 0,
-          progressPageIndex: 0,
-          progressOffsetInPage: 0,
-        ),
-      );
-
-      final browser = ScriptedBrowser(probeBuilder: (y, _) => healthy(y))
-        ..setUrl('https://x.example/guide/foo/1')
-        ..surfaceIsPainted = false;
-      final checker = UpdateChecker(browser: browser, db: db);
-
-      final outcome = checker.check('s1');
-      // Past `awaitPaintedSurface`'s window: the checker now declines to open
-      // the first page until the app is drawing the WebView, so the hold it
-      // reports afterwards is the guard, not the wait.
-      await Future<void>.delayed(const Duration(seconds: 5));
-      expect(checker.log.join('\n'), contains('open the Browser'));
-      checker.cancel();
-      final result = await outcome;
-      expect(
-        result.state,
-        anyOf(UpdateCheckState.cancelled, UpdateCheckState.failed),
-      );
-    });
+    // 'the update checker holds on the same signal' retired with
+    // lib/library/update_checker.dart (roadmap §10, after F3 + F4). The V2
+    // check awaits the painted surface before its first navigation
+    // (lib/features/check_controller.dart), and the engine-level hold this
+    // group pins above is the signal both share.
   });
 
   group('renderer termination', () {

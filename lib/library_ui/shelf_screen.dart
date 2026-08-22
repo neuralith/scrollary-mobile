@@ -22,6 +22,7 @@ import '../ui/status_style.dart';
 import '../ui/theme.dart';
 import 'collection_actions.dart';
 import 'collection_models.dart';
+import 'continue_reading_strip.dart';
 import 'collection_screen.dart';
 import 'entry_offline.dart';
 import 'folder_actions.dart';
@@ -125,6 +126,7 @@ class _ShelfBody extends ConsumerWidget {
               ),
           ],
         ),
+        if (view.isRoot) const ContinueReadingStrip(),
         Expanded(
           child: ListView(
             padding: const EdgeInsets.only(bottom: 24),

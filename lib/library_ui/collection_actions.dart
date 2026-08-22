@@ -32,7 +32,7 @@ import 'providers.dart';
 
 // ─── collection ─────────────────────────────────────────────────────────────
 
-enum _CollectionAction { archive, follow, move }
+enum _CollectionAction { check, archive, follow, move }
 
 Future<void> showCollectionMenu(
   BuildContext context,
@@ -54,6 +54,22 @@ Future<void> showCollectionMenu(
               style: serifStyle(size: 20),
             ),
           ),
+          // Free, and never gated: what the app will *do* for a user is not
+          // smaller without Pro. Absent for an archived collection, because
+          // archiving is exactly "stop keeping this current" — offering a
+          // check there would contradict the sentence beside it.
+          if (!view.archived && ref.read(collectionCheckerProvider) != null)
+            ListTile(
+              key: const ValueKey('collectionCheck'),
+              leading: const Icon(Icons.search),
+              title: const Text('Check for new entries'),
+              subtitle: const Text(
+                'Reads this collection\'s site in the Browser. Nothing is '
+                'downloaded.',
+              ),
+              onTap: () =>
+                  Navigator.of(sheetContext).pop(_CollectionAction.check),
+            ),
           if (view.archived)
             ListTile(
               key: const ValueKey('collectionFollow'),
@@ -93,6 +109,9 @@ Future<void> showCollectionMenu(
 
   final repository = ref.read(collectionRepoProvider);
   switch (action) {
+    case _CollectionAction.check:
+      final checker = ref.read(collectionCheckerProvider);
+      if (checker != null) await checker(view.collection.id, view.name);
     case _CollectionAction.archive:
       final violation = await repository.archive(view.collection.id);
       if (!context.mounted) return;
@@ -128,6 +147,7 @@ Future<void> showCollectionMenu(
 // ─── entry ──────────────────────────────────────────────────────────────────
 
 enum _EntryAction {
+  read,
   markRead,
   markUnread,
   openAtSource,
@@ -184,6 +204,14 @@ Future<void> showEntryMenu(
                   color: AppPalette.of(sheetContext).inkMuted,
                 ),
               ),
+            ),
+          if (view.availableOffline)
+            ListTile(
+              key: const ValueKey('entryRead'),
+              leading: const Icon(Icons.menu_book_outlined),
+              title: const Text('Read'),
+              subtitle: const Text('Opens the copy on this device.'),
+              onTap: () => Navigator.of(sheetContext).pop(_EntryAction.read),
             ),
           if (view.status == ReadStatus.completed)
             ListTile(
@@ -313,6 +341,9 @@ Future<void> showEntryMenu(
   if (action == null || !context.mounted) return;
 
   switch (action) {
+    case _EntryAction.read:
+      final open = ref.read(entryOpenerProvider);
+      if (open != null) await open(view.id);
     case _EntryAction.markRead:
       await ref.read(readingRepoProvider).markRead(view.id);
     case _EntryAction.markUnread:

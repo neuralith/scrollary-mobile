@@ -11,36 +11,23 @@ import '../browser/browser_controller.dart';
 import '../browser/browser_navigator.dart';
 import '../browser/browser_presentation.dart';
 import '../browser/browser_url.dart';
-import '../browser/page_data.dart';
 import '../core/url_utils.dart';
-import '../library/collection_identity.dart';
-import '../save/capture_mode.dart';
 import '../save/capture_policy.dart';
-import '../save/save_run.dart';
-import '../save/save_preflight.dart';
-import '../save/size_estimate.dart';
 import '../core/config.dart';
 import '../core/connectivity.dart';
-import '../library/update_checker.dart';
 import '../providers.dart';
-import '../queue/task_queue.dart';
-import '../storage/database.dart';
 import '../ui/palette.dart';
-import 'browser_save_state.dart';
+import 'check_controller.dart';
+import 'v2_save_flow.dart';
+import '../save/queue_runner.dart';
+import '../save/queue_task.dart';
 import 'browser_home.dart';
 import 'browser_page_actions.dart';
 import 'browser_states.dart';
 import 'browser_toolbar.dart';
 import 'browser_url_editor.dart';
-import 'check_panel.dart';
-import 'collection_name_panel.dart';
-import 'save_panel.dart';
-import 'save_queue_ui.dart';
-import 'save_preflight_sheet.dart';
-import 'save_scope_sheet.dart';
-import 'duplicate_decision_panel.dart';
+import 'running_operation_panel.dart';
 import 'saved_site_sheets.dart';
-import 'selection_overlay.dart';
 
 /// The browser *and* the save surface. One WebView, kept alive and mounted
 /// for the whole session: save runs in exactly the environment the user
@@ -51,6 +38,11 @@ import 'selection_overlay.dart';
 /// `InAppWebView`, and nothing removes the one it has from the tree — which
 /// is what makes "open Home, come back, the page is still there, still
 /// scrolled, still signed in" true rather than merely likely.
+/// The V2 save queue, as the Browser shows it.
+final v2SaveTasksProvider = StreamProvider<List<SaveTask>>(
+  (ref) => ref.watch(v2ServicesProvider).ui.queue.watch(),
+);
+
 class BrowserScreen extends ConsumerStatefulWidget {
   const BrowserScreen({super.key, this.initialUrl});
 
@@ -61,7 +53,6 @@ class BrowserScreen extends ConsumerStatefulWidget {
 }
 
 class _BrowserScreenState extends ConsumerState<BrowserScreen> {
-  bool _panelOpen = false;
   bool _findOpen = false;
   BrowserController? _browser;
   BrowserPresentation? _presentation;
@@ -82,14 +73,10 @@ class _BrowserScreenState extends ConsumerState<BrowserScreen> {
   int _pageSession = -1;
   String _pageKey = '';
 
-  /// Whether the user is what put this page on screen. An automation hop owns
-  /// its own page, so the run stays on screen across it.
-  bool _pageEnteredManually = true;
-
   /// What this page already holds locally, looked up once per page session.
   /// Null while unknown — which is also the honest answer for a page nobody
   /// has ever saved.
-  EntryLocalState? _pageEntryState;
+  V2PageStatus? _pageEntryState;
 
   /// Whether the restricted-site capture policy covers the page on screen.
   ///
@@ -171,19 +158,12 @@ class _BrowserScreenState extends ConsumerState<BrowserScreen> {
     if (browser.pageSession == _pageSession) return;
     _pageSession = browser.pageSession;
     _pageKey = browser.pageSessionKey;
-    _pageEnteredManually = browser.pageSessionIsManual;
     _pageEntryState = null;
     // Both the session's canonical key and the live address: a page whose key
     // could not be formed still has a host, and the policy is about the host.
     _captureRestricted =
         isCaptureRestricted(_pageKey) ||
         isCaptureRestricted(browser.currentUrl);
-    _panelOpen = false;
-    // A result the user never dismissed belongs to the page they have now
-    // left; it is in Activity, which is where history lives.
-    final run = _browser == null ? null : ref.read(saveRunProvider);
-    final stale = run?.lastRun;
-    if (stale != null && stale.pageSession != _pageSession) run!.clearLastRun();
     unawaited(_loadPageEntryState(_pageSession, _pageKey));
     if (mounted) setState(() {});
   }
@@ -192,13 +172,12 @@ class _BrowserScreenState extends ConsumerState<BrowserScreen> {
   /// and discarded if the page moves on while the read is in flight.
   Future<void> _loadPageEntryState(int session, String pageKey) async {
     if (pageKey.isEmpty) return;
-    final preflight = SavePreflight(
-      db: ref.read(databaseProvider),
-      fileStore: ref.read(fileStoreProvider),
+    final result = await v2PageStatusFor(
+      ref,
+      ref.read(browserProvider).currentUrl,
     );
-    final result = await preflight.inspect(pageKey);
     if (!mounted || session != _pageSession) return;
-    setState(() => _pageEntryState = result.state);
+    setState(() => _pageEntryState = result);
   }
 
   void _onPresentationChanged() {
@@ -373,8 +352,8 @@ class _BrowserScreenState extends ConsumerState<BrowserScreen> {
     final palette = AppPalette.of(context);
     final browser = ref.watch(browserProvider);
     final presentation = ref.watch(browserPresentationProvider);
-    final run = ref.watch(saveRunProvider);
-    final checker = ref.watch(updateCheckerProvider);
+    final runner = ref.watch(queueRunnerProvider);
+    final sourceCheck = ref.watch(checkControllerProvider);
 
     // Settings asked for Browser Home from another route; honour it once the
     // Browser is actually on screen.
@@ -394,9 +373,13 @@ class _BrowserScreenState extends ConsumerState<BrowserScreen> {
     // Read once, here, in the build that owns this ref — the pieces below
     // rebuild from Listenables, and a `watch` from inside one of those
     // callbacks is a dependency registered outside its widget's build.
-    final tasks = ref.watch(queueTasksProvider).value ?? const [];
-    final pageIsQueued = pageHasQueuedSave(tasks, _pageKey);
-    final waitingSaves = QueueSummary.of(tasks).queuedSaves;
+    final tasks = ref.watch(v2SaveTasksProvider).value ?? const [];
+    final pageIsQueued = tasks.any(
+      (t) => !t.state.isTerminal && normalizeUrl(t.locationUrl) == _pageKey,
+    );
+    final waitingSaves = tasks
+        .where((t) => t.state == SaveTaskState.queued)
+        .length;
 
     return Scaffold(
       backgroundColor: palette.surfaceMuted,
@@ -442,9 +425,9 @@ class _BrowserScreenState extends ConsumerState<BrowserScreen> {
                   ),
                   // While a run runs, block stray taps from reaching the page.
                   AnimatedBuilder(
-                    animation: run,
+                    animation: Listenable.merge([runner, sourceCheck]),
                     builder: (context, _) =>
-                        run.isRunning && run.pendingSelection == null
+                        runner.isRunning || sourceCheck.isRunning
                         ? Positioned.fill(
                             child: AbsorbPointer(
                               child: ColoredBox(color: palette.veil),
@@ -453,19 +436,16 @@ class _BrowserScreenState extends ConsumerState<BrowserScreen> {
                         : const SizedBox.shrink(),
                   ),
                   _SaveActions(
-                    run: run,
-                    checker: checker,
-                    pageKey: _pageKey,
-                    pageSession: _pageSession,
-                    pageEntryState: _pageEntryState,
+                    runner: runner,
+                    sourceCheck: sourceCheck,
+                    pageStatus: _pageEntryState,
                     pageIsQueued: pageIsQueued,
-                    pageEnteredManually: _pageEnteredManually,
                     captureRestricted: _captureRestricted,
                     waitingSaves: waitingSaves,
                     onSave: () => _showSaveSheet(context),
                     onPageActions: _openPageActions,
-                    onViewActivity: () =>
-                        LeaveBrowserGuard.push(context, '/activity'),
+                    onViewLibrary: () =>
+                        ref.read(shellTabRequestProvider).value = 0,
                   ),
                   if (presentation.isHome)
                     Positioned.fill(
@@ -507,518 +487,69 @@ class _BrowserScreenState extends ConsumerState<BrowserScreen> {
                 ],
               ),
             ),
-            AnimatedBuilder(
-              animation: Listenable.merge([run, checker]),
-              builder: (context, _) {
-                final request = run.pendingSelection;
-                if (request != null) {
-                  return RuleSelectionOverlay(run: run, request: request);
-                }
-                // An update check can also need the user to point at the
-                // next-entry control; the same overlay serves it.
-                final checkRequest = checker.pendingSelection;
-                if (checkRequest != null) {
-                  return RuleSelectionOverlay(
-                    run: checker,
-                    request: checkRequest,
-                  );
-                }
-                // Before the duplicate prompt, because it comes first in the
-                // run: membership is decided on page 1, ahead of the preflight
-                // that finds an existing copy.
-                final naming = run.pendingCollectionName;
-                if (naming != null) {
-                  return CollectionNamePanel(
-                    proposal: naming,
-                    onSubmit: run.resolveCollectionName,
-                  );
-                }
-                final duplicate = run.pendingDuplicate;
-                if (duplicate != null) {
-                  return DuplicateDecisionPanel(run: run, request: duplicate);
-                }
-                // Page-scoped from here down (D59): the run panel belongs to
-                // the page being saved, and a finished run's banner belongs
-                // to the page it finished on. Neither survives navigating away.
-                final ui = _saveUi(run, checker, pageIsQueued);
-                if (ui.showsRunPanel) {
-                  return SavePanel(
-                    run: run,
-                    expanded: _panelOpen || run.isRunning,
-                    onToggle: () => setState(() => _panelOpen = !_panelOpen),
-                  );
-                }
-                // A check drives the same WebView and gets the same slot: it
-                // is deliberately *not* page-scoped like the save panel, because
-                // a check walks between pages by design and the panel must not
-                // vanish under it mid-hop. It ends when the check does.
-                if (checker.isRunning) {
-                  return UpdateCheckPanel(
-                    checker: checker,
-                    // Open while it runs, exactly like the save panel: the log
-                    // is the only place the check says what it is reading, and
-                    // the page session resets `_panelOpen` on every hop.
-                    expanded: _panelOpen || checker.isRunning,
-                    onToggle: () => setState(() => _panelOpen = !_panelOpen),
-                    onStop: () => unawaited(
-                      ref.read(taskQueueProvider).stopRunningCheck(),
-                    ),
-                  );
-                }
-                final result = ui.result;
-                if (result != null) {
-                  return SaveResultBanner(
-                    result: result,
-                    onDismiss: run.clearLastRun,
-                    onViewActivity: () =>
-                        LeaveBrowserGuard.push(context, '/activity'),
-                  );
-                }
-                return const SizedBox.shrink();
-              },
-            ),
+            // Docked under the WebView, never over it: while this app drives
+            // the Browser the user can see what it is doing and end it.
+            const RunningOperationPanel(),
           ],
         ),
       ),
     );
   }
 
-  /// The save control's state for the page on screen.
-  BrowserSaveState _saveUi(
-    SaveRunController run,
-    UpdateChecker checker,
-    bool pageIsQueued,
-  ) {
-    return resolveBrowserSaveState(
-      pageKey: _pageKey,
-      pageSession: _pageSession,
-      hasActiveRun: run.hasActiveRun,
-      activePageKey: run.activePageKey,
-      activeState: run.progress.state,
-      needsRenderedBrowser: run.needsRenderedBrowser,
-      awaitingUser:
-          run.pendingSelection != null ||
-          run.pendingDuplicate != null ||
-          run.pendingCollectionName != null,
-      pausedForBrowser: run.pauseReason == kPauseBrowserHidden,
-      checkerRunning: checker.isRunning,
-      pageEnteredManually: _pageEnteredManually,
-      lastRun: run.lastRun,
-      pageEntryState: _pageEntryState,
-      pageIsQueued: pageIsQueued,
-      captureRestricted: _captureRestricted,
-    );
-  }
-
   Future<void> _showSaveSheet(BuildContext context) async {
     // The control that leads here is absent on a restricted page, so this is
-    // the belt to that braces: the sheet cannot be opened by a stale callback,
-    // a race with a navigation, or any future caller that forgets to ask.
-    // Nothing is probed either — `_analysePage` below is a page measurement.
+    // the belt to those braces: the sheet cannot be opened by a stale
+    // callback, a race with a navigation, or any future caller.
     if (_captureRestricted) return;
-    final queue = ref.read(taskQueueProvider);
-    final run = ref.read(saveRunProvider);
-    // Asked before the sheet opens, so it can offer what is actually possible
-    // rather than failing after the choice (§3). Queueing is always on offer;
-    // only the direct start can conflict.
-    final owner = queue.browserOwner;
-
-    // Measure the page before offering anything. A probe that fails — a CSP
-    // that blocks injection, a page still loading — degrades to "not
-    // analysed", which offers every mode with the image sequence preselected:
-    // the behaviour this app had before it could tell the difference.
-    final analysis = await _analysePage();
-    if (!context.mounted) return;
-
-    final choice = await showSaveRangeSheet(
-      context: context,
-      config: run.config,
-      deviceStorage: run.deviceStorage,
-      currentTitle: ref.read(browserProvider).title,
-      busyLabel: owner?.label,
-      capabilities: analysis.capabilities,
-      preferredMode: analysis.preferredMode,
-      canRemember: analysis.collection != null,
-      sizeHistory: analysis.sizeHistory,
-    );
-    if (choice == null || !context.mounted) return;
-    if (choice.action == SaveSheetAction.viewActiveTask) {
-      await LeaveBrowserGuard.push(context, '/activity');
-      return;
-    }
-    await _startSave(context, choice);
-  }
-
-  /// What this page can be saved as, and what the collection it belongs to
-  /// already prefers.
-  ///
-  /// Best effort by design: every failure path here produces an honest
-  /// "not analysed" rather than an error, because not being able to classify a
-  /// page is a normal outcome and must never stop the user saving it.
-  Future<_PageAnalysis> _analysePage() async {
     final browser = ref.read(browserProvider);
-    final db = ref.read(databaseProvider);
-    final run = ref.read(saveRunProvider);
-
-    PageProbe? probe;
-    try {
-      probe = await browser.probe(withLinks: true);
-    } catch (_) {
-      probe = null;
-    }
-    final capabilities = probe == null
-        ? const CaptureCapabilities.unanalysed()
-        : detectCaptureCapabilities(probe, config: run.config);
-
-    // The collection this page would join, so its remembered mode can be
-    // preselected. Resolved from what is already stored — identity, never a
-    // fresh guess — so the sheet cannot create or imply a grouping.
-    Collection? collection;
-    try {
-      final url = browser.currentUrl;
-      final held = await db.findEntryByUrlKeyAnywhere(normalizeUrl(url));
-      final heldIn = held?.collectionId;
-      if (heldIn != null) {
-        collection = await db.collectionById(heldIn);
-      } else if (probe != null) {
-        final identity = resolveCollectionIdentity(
-          entryUrl: url,
-          pageTitle: browser.title,
-          hints: probe.pageHints,
-        );
-        if (identity.canMerge && identity.collectionKey.isNotEmpty) {
-          collection = await db.findCollectionByKey(
-            identity.host,
-            identity.collectionKey,
-          );
-        }
-      }
-    } catch (_) {
-      collection = null;
-    }
-
-    // What this collection's entries have actually cost, so the sheet can
-    // estimate from evidence instead of a constant. Best effort like the rest
-    // of the analysis: no history is a normal state, not an error.
-    var sizeHistory = const CollectionSizeHistory.empty();
-    if (collection != null) {
-      try {
-        sizeHistory = CollectionSizeHistory.fromEntries(
-          await db.entriesForCollection(collection.id),
-        );
-      } catch (_) {
-        sizeHistory = const CollectionSizeHistory.empty();
-      }
-    }
-
-    final preferred = captureModeFromName(collection?.preferredCaptureMode);
-    return _PageAnalysis(
-      capabilities: capabilities,
-      collection: collection,
-      sizeHistory: sizeHistory,
-      // Offered only when this page can honour it. A stale preference is a
-      // suggestion that has stopped applying, not an instruction.
-      preferredMode: preferred != null && capabilities.allows(preferred)
-          ? preferred
-          : null,
-    );
-  }
-
-  /// Carry out [action] for a resolved request. The single place the two
-  /// launches diverge — everything before it (range, preflight, policy) is
-  /// shared, which is what makes the intent survive the preflight (D58).
-  Future<void> _launch(
-    BuildContext context,
-    SaveSheetAction action, {
-    required String startUrl,
-    required int entryLimit,
-    required DuplicatePolicy policy,
-    required SaveScope range,
-    CaptureMode? captureMode,
-    bool captureModeIsUserSet = false,
-    bool rememberForCollection = false,
-  }) async {
-    final queue = ref.read(taskQueueProvider);
-    if (action == SaveSheetAction.addToQueue) {
-      final result = await queue.enqueueSave(
-        startUrl: startUrl,
-        entryLimit: entryLimit,
-        policy: policy,
-        range: range,
-        captureMode: captureMode,
-        captureModeIsUserSet: captureModeIsUserSet,
-      );
-      if (!context.mounted) return;
-      // Queued, not started (D46). The user stays exactly where they are.
-      showQueuedConfirmation(context, result);
-      return;
-    }
-
-    final started = await queue.startDirectSave(
-      startUrl: startUrl,
-      entryLimit: entryLimit,
-      policy: policy,
-      range: range,
-      captureMode: captureMode,
-      captureModeIsUserSet: captureModeIsUserSet,
-      rememberForCollection: rememberForCollection,
-    );
-    if (!context.mounted) return;
-    switch (started) {
-      case DirectStartResult.started:
-        // Nothing to say: the panel is now the answer, on this page.
-        break;
-      case DirectStartResult.browserBusy:
-        showDirectStartRefusal(
-          context,
-          'Another save is already using the Browser. This one can wait '
-          'in the queue instead.',
-        );
-      case DirectStartResult.browserUnavailable:
-        showDirectStartRefusal(
-          context,
-          'The Browser is not ready yet. Nothing was started, and nothing '
-          'was queued.',
-        );
-      case DirectStartResult.noPage:
-        showDirectStartRefusal(context, 'There is no page to save.');
-      case DirectStartResult.restrictedSite:
-        showDirectStartRefusal(context, kCaptureRestrictedMessage);
-    }
-  }
-
-  /// Launch whatever the preflight answer resolved to, keeping the launch the
-  /// user chose before it interrupted (D58).
-  Future<void> _launchPlanned(
-    BuildContext context,
-    String url,
-    PreflightDecision decision,
-    SaveSheetAction action,
-    int limit,
-    SaveScope range,
-    SaveRangeChoice choice,
-  ) async {
-    final plan = planAfterPreflight(
-      action: action,
-      choice: decision.choice,
-      requestedLimit: limit,
-      requestedRange: range,
-      policy: decision.policy,
-    );
-    if (plan == null) return;
-    await _launch(
-      context,
-      plan.action,
-      startUrl: url,
-      entryLimit: plan.entryLimit,
-      policy: plan.policy,
-      range: plan.range,
-      captureMode: choice.captureMode,
-      captureModeIsUserSet: choice.captureModeIsUserSet,
-      rememberForCollection: choice.rememberForCollection,
-    );
-  }
-
-  /// Preflight before anything downloads: if this entry already exists, say
-  /// so and ask, rather than starting a run that silently does nothing.
-  ///
-  /// The decision-making stays here — the sheet resolves duplicates and
-  /// conflicts *before* anything runs — and the launch the user chose is
-  /// carried through it unchanged (D58). "Start Save" that turns into
-  /// "Re-download this entry" still starts here and now; "Add to Queue" that
-  /// turns into the same thing still waits. The question is never asked twice.
-  Future<void> _startSave(BuildContext context, SaveRangeChoice choice) async {
-    final run = ref.read(saveRunProvider);
-    final queue = ref.read(taskQueueProvider);
-    final url = ref.read(browserProvider).currentUrl;
+    final url = browser.currentUrl;
     if (url.isEmpty) return;
-    final action = choice.action;
-    // The bound comes from one place — `SaveLimits.forScope` — so the sheet, the
-    // queue row and the run itself can never disagree about how much was asked
-    // for, and no scope can reach the engine unbounded.
-    final limits = SaveLimits.forScope(
-      choice.mode,
-      requestedCount: choice.count,
-      maxBytes: choice.maxBytes,
-      config: run.config,
-    );
-    final limit = limits.maxEntries;
-
-    final preflight = SavePreflight(
-      db: ref.read(databaseProvider),
-      fileStore: ref.read(fileStoreProvider),
-    );
-    final current = await preflight.inspect(url);
-
-    if (!current.needsUserDecision) {
-      if (!context.mounted) return;
-      // `ask` here means: if the run later walks onto an entry that is
-      // already saved, hold and ask — never silently skip or re-download.
-      await _launch(
-        context,
-        action,
-        startUrl: url,
-        entryLimit: limit,
-        policy: DuplicatePolicy.ask,
-        range: choice.mode,
-        captureMode: choice.captureMode,
-        captureModeIsUserSet: choice.captureModeIsUserSet,
-        rememberForCollection: choice.rememberForCollection,
-      );
-      return;
-    }
-
-    // Look ahead over the stored next-URL chain so the sheet can summarise the
-    // range instead of only the entry in front of us. Capped: the lookahead is
-    // a courtesy summary, not a crawl, and the user may have typed a big
-    // number.
-    final lookahead = limit > 20 ? 20 : limit;
-    final range = lookahead > 1
-        ? await preflight.inspectRange(url, lookahead)
-        : null;
-    if (!context.mounted) return;
-
-    final decision = await showSavePreflightSheet(
+    await showModalBottomSheet<void>(
       context: context,
-      preflight: current,
-      requestedCount: limit,
-      range: range,
+      builder: (_) => V2SavePanel(url: url, pageTitle: browser.title),
     );
-    if (decision == null || decision.choice == PreflightChoice.cancel) return;
-
-    switch (decision.choice) {
-      case PreflightChoice.openExisting:
-        final id = current.entry?.id;
-        if (id != null && context.mounted) context.push('/reader/\$id');
-
-      case PreflightChoice.removeRecord:
-        final id = current.entry?.id;
-        if (id != null) {
-          final path = current.entry?.contentPath;
-          if (path != null) {
-            await ref.read(fileStoreProvider).deleteEntryContent(path);
-          }
-          await ref.read(databaseProvider).deleteEntry(id);
-        }
-
-      case PreflightChoice.resumeRun:
-        // Resuming is always immediate — it is one run the user pointed at,
-        // and it keeps the launch it was interrupted under (D58).
-        final existing = current.blockingRun;
-        if (existing != null) await queue.resumeInterruptedSave(existing);
-
-      case PreflightChoice.discardRunAndRestart:
-        final existing = current.blockingRun;
-        if (existing != null) await run.discardRun(existing);
-        if (!context.mounted) return;
-        await _launchPlanned(
-          context,
-          url,
-          decision,
-          action,
-          limit,
-          choice.mode,
-          choice,
-        );
-
-      case PreflightChoice.saveFollowing:
-      case PreflightChoice.redownload:
-      case PreflightChoice.retryMissing:
-      case PreflightChoice.restartSave:
-      case PreflightChoice.repair:
-      case PreflightChoice.saveNow:
-        if (!context.mounted) return;
-        await _launchPlanned(
-          context,
-          url,
-          decision,
-          action,
-          limit,
-          choice.mode,
-          choice,
-        );
-
-      case PreflightChoice.cancel:
-        break;
-    }
+    if (!mounted) return;
+    unawaited(_loadPageEntryState(_pageSession, _pageKey));
   }
 }
 
-/// The save control, the page-actions button, and the queued chip.
-///
-/// The control says what is true **of this page** (D59): idle, already
-/// available offline, queued, or the phase of the run that is working on it.
-/// A run that finished, or one that is working somewhere else, never presents
-/// itself as this page's state — and never disables its Save button.
 class _SaveActions extends StatelessWidget {
   const _SaveActions({
-    required this.run,
-    required this.checker,
-    required this.pageKey,
-    required this.pageSession,
-    required this.pageEntryState,
+    required this.runner,
+    required this.sourceCheck,
+    required this.pageStatus,
     required this.pageIsQueued,
-    required this.pageEnteredManually,
     required this.captureRestricted,
     required this.waitingSaves,
     required this.onSave,
     required this.onPageActions,
-    required this.onViewActivity,
+    required this.onViewLibrary,
   });
 
-  final SaveRunController run;
-  final UpdateChecker checker;
-  final String pageKey;
-  final int pageSession;
-  final EntryLocalState? pageEntryState;
+  final QueueRunner runner;
+  final CheckController sourceCheck;
+  final V2PageStatus? pageStatus;
   final bool pageIsQueued;
-  final bool pageEnteredManually;
   final bool captureRestricted;
   final int waitingSaves;
   final VoidCallback onSave;
   final VoidCallback onPageActions;
-  final VoidCallback onViewActivity;
+  final VoidCallback onViewLibrary;
 
   @override
   Widget build(BuildContext context) {
     final palette = AppPalette.of(context);
 
     return AnimatedBuilder(
-      animation: Listenable.merge([run, checker]),
+      animation: Listenable.merge([runner, sourceCheck]),
       builder: (context, _) {
-        final ui = resolveBrowserSaveState(
-          pageKey: pageKey,
-          pageSession: pageSession,
-          hasActiveRun: run.hasActiveRun,
-          activePageKey: run.activePageKey,
-          activeState: run.progress.state,
-          needsRenderedBrowser: run.needsRenderedBrowser,
-          awaitingUser:
-              run.pendingSelection != null ||
-              run.pendingDuplicate != null ||
-              run.pendingCollectionName != null,
-          pausedForBrowser: run.pauseReason == kPauseBrowserHidden,
-          checkerRunning: checker.isRunning,
-          pageEnteredManually: pageEnteredManually,
-          lastRun: run.lastRun,
-          pageEntryState: pageEntryState,
-          pageIsQueued: pageIsQueued,
-          captureRestricted: captureRestricted,
-        );
-
-        // While the user is being asked something, the overlay owns the
-        // screen; a floating button over it is noise.
-        if (ui.status == BrowserSaveStatus.needsInput) {
-          return const SizedBox.shrink();
-        }
-
-        final waiting = waitingSaves;
-        final running = ui.showsRunPanel;
+        final running = runner.isRunning || sourceCheck.isRunning;
         // On a restricted page the save control is not drawn at all — and
         // neither is the gap it would have left. Page actions keep their
         // position on the right, so nothing else on screen moves or reserves
         // space for something that is not there.
-        final offersCapture = ui.offersCapture;
+        final offersCapture = !captureRestricted;
+        final hasCopy = pageStatus?.hasCopy ?? false;
 
         return Positioned(
           left: 14,
@@ -1028,8 +559,11 @@ class _SaveActions extends StatelessWidget {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.end,
             children: [
-              if (waiting > 0 && !running) ...[
-                QueuedSavesChip(count: waiting, onViewActivity: onViewActivity),
+              if (waitingSaves > 0 && !running) ...[
+                _QueuedSavesChip(
+                  count: waitingSaves,
+                  onViewLibrary: onViewLibrary,
+                ),
                 const SizedBox(height: 12),
               ],
               Row(
@@ -1041,33 +575,41 @@ class _SaveActions extends StatelessWidget {
                       tooltip: 'Page actions',
                       onPressed: onPageActions,
                     ),
-                    // The spacer belongs to the button beside it: with no save
-                    // control there is nothing to separate, and leaving it
-                    // would be the empty position this must not create.
                     if (offersCapture) const SizedBox(width: 8),
                   ],
                   if (offersCapture)
                     FloatingActionButton.extended(
                       key: const ValueKey('browserSaveAction'),
                       heroTag: 'browserSave',
-                      onPressed: ui.opensSaveSheet ? onSave : onViewActivity,
-                      tooltip: ui.detail ?? 'Save entries',
+                      onPressed: running ? onViewLibrary : onSave,
+                      tooltip: running
+                          ? 'Working — see the library'
+                          : 'Save this page',
                       backgroundColor: running
                           ? palette.surface
                           : palette.primary,
                       foregroundColor: running
                           ? palette.inkStrong
                           : palette.onPrimary,
-                      icon: Icon(switch (ui.status) {
-                        BrowserSaveStatus.queued => Icons.schedule,
-                        BrowserSaveStatus.saving => Icons.swipe_vertical,
-                        BrowserSaveStatus.downloading => Icons.downloading,
-                        BrowserSaveStatus.waitingForBrowser => Icons.public,
-                        BrowserSaveStatus.availableOffline =>
-                          Icons.download_for_offline,
-                        _ => Icons.download,
-                      }, size: 20),
-                      label: Text(ui.label),
+                      icon: Icon(
+                        running
+                            ? Icons.downloading
+                            : pageIsQueued
+                            ? Icons.schedule
+                            : hasCopy
+                            ? Icons.download_for_offline
+                            : Icons.download,
+                        size: 20,
+                      ),
+                      label: Text(
+                        running
+                            ? 'Saving'
+                            : pageIsQueued
+                            ? 'Queued'
+                            : hasCopy
+                            ? 'On this device'
+                            : 'Save',
+                      ),
                     ),
                 ],
               ),
@@ -1075,6 +617,38 @@ class _SaveActions extends StatelessWidget {
           ),
         );
       },
+    );
+  }
+}
+
+/// Queued V2 saves, waiting for an explicit Start. Tapping leads to the
+/// library, where the queue rows live.
+class _QueuedSavesChip extends StatelessWidget {
+  const _QueuedSavesChip({required this.count, required this.onViewLibrary});
+
+  final int count;
+  final VoidCallback onViewLibrary;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = AppPalette.of(context);
+    return Material(
+      color: palette.surface,
+      elevation: 2,
+      shadowColor: Colors.black26,
+      borderRadius: BorderRadius.circular(14),
+      child: InkWell(
+        key: const ValueKey('queuedSavesChip'),
+        borderRadius: BorderRadius.circular(14),
+        onTap: onViewLibrary,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          child: Text(
+            count == 1 ? '1 download waiting' : '$count downloads waiting',
+            style: TextStyle(fontSize: 12, color: palette.inkMuted),
+          ),
+        ),
+      ),
     );
   }
 }
@@ -1430,25 +1004,3 @@ class _HostChangeBannerState extends State<_HostChangeBanner> {
 }
 
 /// What the Browser measured about the page before offering to save it.
-class _PageAnalysis {
-  const _PageAnalysis({
-    required this.capabilities,
-    this.collection,
-    this.preferredMode,
-    this.sizeHistory = const CollectionSizeHistory.empty(),
-  });
-
-  final CaptureCapabilities capabilities;
-
-  /// What entries already saved in [collection] cost. Empty when there is no
-  /// collection, or nothing has been saved from it yet.
-  final CollectionSizeHistory sizeHistory;
-
-  /// The collection this page would join, when one already exists. Null makes
-  /// "remember for this collection" not worth offering.
-  final Collection? collection;
-
-  /// The collection's remembered mode, **already validated** against this
-  /// page. Null when there is none or it no longer applies.
-  final CaptureMode? preferredMode;
-}

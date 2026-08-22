@@ -40,9 +40,10 @@ import 'dart:io';
 import 'package:path/path.dart' as p;
 
 import '../core/url_utils.dart';
-import '../queue/task_queue.dart';
 import '../save/page_hint.dart' show collectionFingerprint;
 import '../storage/cleanup.dart';
+import 'package:drift/drift.dart' show Value;
+
 import '../storage/database.dart';
 import '../storage/file_store.dart';
 import 'collection_repository.dart' show displayNameFor;
@@ -132,7 +133,6 @@ class CollectionDeletionService {
     required this.db,
     required this.fileStore,
     required this.cleanup,
-    this.queue,
   });
 
   final AppDatabase db;
@@ -142,19 +142,15 @@ class CollectionDeletionService {
   /// same "in use" here as it is for removing files.
   final CleanupService cleanup;
 
-  /// Optional: without it there is no pending work to cancel. Null only in
-  /// tests and headless contexts that never built a queue.
-  final TaskQueueController? queue;
-
   /// The numbers the confirmation shows. Null when there is no such
   /// collection.
   Future<CollectionDeletionPlan?> plan(String collectionId) async {
     final collection = await db.collectionById(collectionId);
     if (collection == null) return null;
     final entries = await db.entriesForCollection(collectionId);
-    final pending =
-        await queue?.pendingTasksForCollection(collectionId) ??
-        const <QueueTask>[];
+    final pending = (await db.pendingQueueTasks())
+        .where((t) => t.collectionId == collectionId)
+        .toList();
 
     return CollectionDeletionPlan(
       collectionId: collectionId,
@@ -259,17 +255,23 @@ class CollectionDeletionService {
     Collection collection,
     _Addresses addresses,
   ) async {
-    final controller = queue;
-    if (controller == null) return 0;
-
-    var cancelled = await controller.cancelTasksForCollection(collection.id);
+    // The V1 queue controller is gone; nothing can be running V1 work. Rows a
+    // kill left behind are cancelled straight in the table, both passes.
+    var cancelled = 0;
     for (final task in await db.pendingQueueTasks()) {
-      if (task.collectionId == collection.id) continue; // pass one had it
       final url = task.startUrl;
-      if (url == null || !addresses.belongs(url)) continue;
-      final result = await controller.cancelTask(task.id);
-      if (result == CancelResult.cancelledBeforeStart ||
-          result == CancelResult.stoppingRunning) {
+      final belongs =
+          task.collectionId == collection.id ||
+          (url != null && addresses.belongs(url));
+      if (!belongs) continue;
+      if (await db.updateQueueTaskIfState(
+        id: task.id,
+        expected: const ['queued', 'running'],
+        values: QueueTasksCompanion(
+          state: const Value('cancelled'),
+          finishedAt: Value(DateTime.now()),
+        ),
+      )) {
         cancelled++;
       }
     }
@@ -290,16 +292,9 @@ class CollectionDeletionService {
       }
     }
 
-    // A save the user started straight from the Browser has no queue row to
-    // read, so ask the run itself where it is.
-    final run = cleanup.saveRun;
-    if (run != null &&
-        run.hasActiveRun &&
-        addresses.belongs(run.progress.currentUrl)) {
-      return 'A save is still working on this collection. It has been asked '
-          'to stop — try again in a moment.';
-    }
-
+    // The V1 run controller is gone, so no V1 save can be mid-flight; V2
+    // saves write V2 rows and never touch these tables. Only a leftover
+    // pending row can still block.
     final stillPending = (await db.pendingQueueTasks()).where(
       (t) => t.collectionId == collectionId,
     );

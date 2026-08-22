@@ -1,6 +1,6 @@
 import 'package:collection/collection.dart';
 
-import '../features/library_screen.dart' show LibraryCollection;
+import '../features/library_formats.dart';
 
 /// How the All Collection list is ordered. Persisted in the settings store so the
 /// choice survives restarts (Q26).

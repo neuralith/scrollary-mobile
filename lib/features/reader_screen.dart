@@ -14,8 +14,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
-import '../save/save_preflight.dart';
-import '../core/config.dart';
+import '../library_ui/providers.dart'
+    show libraryUiServicesProvider, primaryLocation;
 import '../providers.dart';
 import '../reading/reading_position.dart';
 import '../reading/reading_repository.dart';
@@ -28,10 +28,8 @@ import '../storage/manifest.dart';
 import '../reading/decode_budget.dart';
 import '../ui/palette.dart';
 import 'document_reader.dart';
-import 'save_queue_ui.dart';
 import 'cleanup_dialogs.dart';
-import 'library_screen.dart' show formatRelative;
-import 'collection_detail_screen.dart' show sortEntriesForReading;
+import 'library_formats.dart';
 
 /// How long the reader waits before writing a scroll position.
 ///
@@ -1254,36 +1252,50 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
 
   /// Bring an entry back that has no local files — the same queued save
   /// as anywhere else, so it shows up in Activity like any other run.
+  /// Only reachable from a V1 row, which the app no longer opens: the one
+  /// reader route hands an [OfflineReaderData] through, and that path reports
+  /// an unavailable Entry with no row to offer this for. Kept honest rather
+  /// than kept working — a V1 row has no V2 queue, and pretending otherwise
+  /// would fake a download.
   Future<void> _saveAgain(Entry entry) async {
-    final result = await ref
-        .read(taskQueueProvider)
-        .enqueueSave(
-          startUrl: entry.sourceUrl,
-          entryLimit: 1,
-          collectionId: entry.collectionId,
-          policy: DuplicatePolicy.replaceAll,
-          range: SaveScope.currentPageOnly,
-        );
-    if (!mounted) return;
-    showQueuedConfirmation(context, result);
+    _say('Downloading starts from the library.');
   }
 
-  /// Re-save this entry to fill in the panels a partial save missed.
-  /// The queue owns the work; the Browser is where it becomes visible.
+  /// Re-download this entry to fill in the panels a partial save missed.
+  ///
+  /// The queue owns the work and the Browser is where it becomes visible, so
+  /// this only asks: a row is written and **nothing starts** until the user
+  /// presses Start. Offering a retry that did not retry would be the same
+  /// failure as offering a stop that does not stop.
   Future<void> _retryMissing(_ReaderData data) async {
-    final entry = data.entry;
-    if (entry == null) return;
-    final result = await ref
-        .read(taskQueueProvider)
-        .enqueueSave(
-          startUrl: entry.sourceUrl,
-          entryLimit: 1,
-          collectionId: entry.collectionId,
-          policy: DuplicatePolicy.retryPartial,
-          range: SaveScope.currentPageOnly,
-        );
+    final id = _entryId;
+    if (id == null) return;
+    final services = ref.read(libraryUiServicesProvider);
+    final location = await primaryLocation(services.db, id);
     if (!mounted) return;
-    showQueuedConfirmation(context, result, what: 'missing pages');
+    if (location == null) {
+      _say('This entry has no address to download from.');
+      return;
+    }
+    final result = await services.queue.enqueue(
+      entryId: id,
+      locationId: location.id,
+      locationUrl: location.url,
+    );
+    if (!mounted) return;
+    _say(
+      result.refusedReason ??
+          (result.alreadyQueued
+              ? 'Already in the download queue, waiting for Start.'
+              : 'Added to the download queue. Nothing starts until you '
+                    'start it.'),
+    );
+  }
+
+  void _say(String message) {
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(content: Text(message)));
   }
 
   @override

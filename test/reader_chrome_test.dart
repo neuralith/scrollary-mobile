@@ -8,20 +8,19 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
 import 'package:path/path.dart' as p;
 import 'package:web_reader/browser/browser_controller.dart';
-import 'package:web_reader/features/collection_detail_screen.dart';
 import 'package:web_reader/features/document_reader.dart';
 import 'package:web_reader/features/operation_indicator.dart';
 import 'package:web_reader/features/reader_screen.dart';
-import 'package:web_reader/library/update_checker.dart';
 import 'package:web_reader/providers.dart';
-import 'package:web_reader/queue/task_queue.dart';
-import 'package:web_reader/save/save_run.dart';
 import 'package:web_reader/storage/database.dart';
 import 'package:web_reader/storage/document.dart';
 import 'package:web_reader/storage/file_store.dart';
 import 'package:web_reader/storage/manifest.dart';
 
 import '../tool/fixture/fixture_site.dart';
+import 'package:web_reader/domain/collection.dart' show OrderingBasis;
+
+import 'helpers/v2_harness.dart';
 
 /// What shows and hides the reader's overlaid chrome.
 ///
@@ -51,11 +50,13 @@ void main() {
   late ReaderChromeVisibility chromeFlag;
   late int detailsOpened;
   late int browserOpened;
+  late V2Harness v2;
 
   setUp(() {
     db = AppDatabase.forTesting(NativeDatabase.memory());
     root = Directory.systemTemp.createTempSync('webread_reader_chrome');
     store = FileStore(root);
+    v2 = V2Harness(browser: BrowserController(), fileStore: store);
     chromeFlag = ReaderChromeVisibility();
     detailsOpened = 0;
     browserOpened = 0;
@@ -69,6 +70,7 @@ void main() {
 
   tearDown(() async {
     chromeFlag.dispose();
+    await v2.close();
     await db.close();
     if (root.existsSync()) root.deleteSync(recursive: true);
   });
@@ -250,17 +252,11 @@ void main() {
   }
 
   Widget harness({String start = '/reader/c1'}) {
-    final browser = BrowserController();
     return ProviderScope(
       overrides: [
         databaseProvider.overrideWithValue(db),
         fileStoreProvider.overrideWithValue(store),
-        updateCheckerProvider.overrideWithValue(
-          UpdateChecker(browser: browser, db: db),
-        ),
-        saveRunProvider.overrideWithValue(
-          SaveRunController(browser: browser, db: db, fileStore: store),
-        ),
+        v2ServicesProvider.overrideWithValue(v2.services),
         readerChromeVisibleProvider.overrideWithValue(chromeFlag),
       ],
       child: MaterialApp.router(
@@ -568,18 +564,26 @@ void main() {
   // --- the background-activity indicator over the reader -------------------
 
   /// One waiting save, so there is something for the indicator to report.
-  Future<void> queueWork() => db.upsertQueueTask(
-    QueueTask(
-      id: 'waiting-1',
-      taskType: QueueTaskType.entrySave.name,
-      startUrl: 'https://x.example/guide/foo/9',
-      captureModeIsUserSet: false,
-      state: QueueTaskState.queued.name,
-      origin: kQueueOriginQueue,
-      orderIndex: 0,
-      queuedAt: DateTime(2026, 8, 1),
-    ),
-  );
+  /// The queue's entry_id is a real foreign key, so the entry must exist.
+  Future<void> queueWork() async {
+    final root = await v2.ui.folders.ensureRoot();
+    final (collection, cv) = await v2.ui.collections.create(
+      name: 'Waiting Collection',
+      folderId: root.id,
+      orderingBasis: OrderingBasis.explicitNumericIndex,
+    );
+    assert(cv == null);
+    final (entry, ev) = await v2.ui.entries.createInCollection(
+      collectionId: collection!.id,
+      ordinal: 9,
+      title: 'Entry 9',
+    );
+    assert(ev == null);
+    await v2.ui.queue.enqueue(
+      entryId: entry!.id,
+      locationUrl: 'https://x.example/guide/foo/9',
+    );
+  }
 
   final pill = find.byKey(const ValueKey('operationIndicator'));
 
@@ -806,4 +810,13 @@ void main() {
       );
     });
   });
+}
+
+/// Stands in for the retired V1 collection screen: these tests assert the
+/// reader RETURNS somewhere, not what that somewhere renders.
+class CollectionDetailScreen extends StatelessWidget {
+  const CollectionDetailScreen({super.key, this.collectionId = ''});
+  final String collectionId;
+  @override
+  Widget build(BuildContext context) => const SizedBox.expand();
 }

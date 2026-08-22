@@ -11,16 +11,15 @@ import 'browser/browser_presentation.dart';
 import 'browser/favicon_service.dart';
 import 'browser/history_repository.dart';
 import 'browser/saved_sites_repository.dart';
-import 'save/save_run.dart';
 import 'save/page_hint_repository.dart';
+import 'features/check_controller.dart';
 import 'features/resume_point.dart';
-import 'features/library_check_flow.dart';
-import 'features/library_screen.dart' show LibraryCollection;
+import 'features/v2_composition.dart';
+import 'save/queue_runner.dart';
+import 'features/library_formats.dart';
 import 'library/library_sort.dart';
 import 'library/collection_deletion.dart';
 import 'library/collection_repository.dart';
-import 'library/update_checker.dart';
-import 'queue/task_queue.dart';
 import 'reading/reading_repository.dart';
 import 'save/page_hint.dart';
 import 'storage/cleanup.dart';
@@ -34,39 +33,20 @@ class AppServices {
     required this.db,
     required this.fileStore,
     required this.browser,
-    required this.saveRun,
-    UpdateChecker? updateChecker,
-    TaskQueueController? taskQueue,
     CleanupService? cleanup,
     ForegroundMultitasking? foregroundMultitasking,
   }) : foregroundMultitasking =
            foregroundMultitasking ?? ForegroundMultitasking(),
-       updateChecker = updateChecker ?? UpdateChecker(browser: browser, db: db),
-       cleanup =
-           cleanup ??
-           CleanupService(db: db, fileStore: fileStore, saveRun: saveRun) {
-    this.taskQueue =
-        taskQueue ??
-        TaskQueueController(
-          db: db,
-          browser: browser,
-          saveRun: saveRun,
-          checker: this.updateChecker,
-          cleanup: this.cleanup,
-        );
-  }
+       cleanup = cleanup ?? CleanupService(db: db, fileStore: fileStore);
 
   final AppDatabase db;
   final FileStore fileStore;
   final BrowserController browser;
-  final SaveRunController saveRun;
-  final UpdateChecker updateChecker;
   final CleanupService cleanup;
 
   /// The one place that answers whether an operation may keep running while
   /// the user is elsewhere in the app.
   final ForegroundMultitasking foregroundMultitasking;
-  late final TaskQueueController taskQueue;
 }
 
 final appServicesProvider = Provider<AppServices>(
@@ -83,14 +63,6 @@ final fileStoreProvider = Provider<FileStore>(
 
 final browserProvider = Provider<BrowserController>(
   (ref) => ref.watch(appServicesProvider).browser,
-);
-
-final saveRunProvider = Provider<SaveRunController>(
-  (ref) => ref.watch(appServicesProvider).saveRun,
-);
-
-final updateCheckerProvider = Provider<UpdateChecker>(
-  (ref) => ref.watch(appServicesProvider).updateChecker,
 );
 
 final foregroundMultitaskingProvider = Provider<ForegroundMultitasking>((ref) {
@@ -123,29 +95,18 @@ final cleanupProvider = Provider<CleanupService>((ref) {
   }
 });
 
-final taskQueueProvider = Provider<TaskQueueController>(
-  (ref) => ref.watch(appServicesProvider).taskQueue,
-);
-
 /// Permanent collection deletion.
 ///
 /// Degrades the same way [cleanupProvider] does: a widget test that overrides
 /// the database and the file store only still gets a working service, and
 /// without a queue there is simply no pending work for it to cancel.
-final collectionDeletionProvider = Provider<CollectionDeletionService>((ref) {
-  TaskQueueController? queue;
-  try {
-    queue = ref.watch(appServicesProvider).taskQueue;
-  } catch (_) {
-    queue = null;
-  }
-  return CollectionDeletionService(
+final collectionDeletionProvider = Provider<CollectionDeletionService>(
+  (ref) => CollectionDeletionService(
     db: ref.watch(databaseProvider),
     fileStore: ref.watch(fileStoreProvider),
     cleanup: ref.watch(cleanupProvider),
-    queue: queue,
-  );
-});
+  ),
+);
 
 /// The persisted appearance preference (default: follow the system).
 final appearanceProvider = StreamProvider<AppearanceMode>(
@@ -157,11 +118,6 @@ final appearanceProvider = StreamProvider<AppearanceMode>(
 
 Future<void> setAppearance(WidgetRef ref, AppearanceMode mode) =>
     ref.read(databaseProvider).setSetting(kAppearanceSettingKey, mode.name);
-
-/// The queue as the UI sees it (activity strip + manager, M14 UI).
-final queueTasksProvider = StreamProvider<List<QueueTask>>(
-  (ref) => ref.watch(databaseProvider).watchQueueTasks(),
-);
 
 /// Reactive library: the list updates the moment an entry commits, with no
 /// manual invalidation.
@@ -456,6 +412,22 @@ final browserOnScreenProvider = Provider<ValueNotifier<bool>>((ref) {
   return notifier;
 });
 
+/// True when the app is actually compositing the WebView.
+///
+/// The same value the shell publishes to [BrowserController.surfaceIsPainted],
+/// exposed here as well because it is what *held* means: the ported engine's
+/// render guards stop a capture the moment its surface stops painting and
+/// resume when it returns, so there is no pause flag to read and deliberately
+/// should not be one. Written by the same owner as [keepBrowserPaintedProvider]
+/// and read by the running-operation indicator, which floats above the router
+/// and must not reach into `AppServices` to answer a question the shell has
+/// already answered.
+final browserSurfacePaintedProvider = Provider<ValueNotifier<bool>>((ref) {
+  final notifier = ValueNotifier<bool>(true);
+  ref.onDispose(notifier.dispose);
+  return notifier;
+});
+
 /// True unless the Reader is hiding its chrome.
 ///
 /// The Reader is the one writer: it publishes its own bar visibility here and
@@ -495,26 +467,8 @@ final readerChromeVisibleProvider = Provider<ReaderChromeVisibility>((ref) {
   return notifier;
 });
 
-final resumableRunProvider = StreamProvider<SaveRun?>(
-  (ref) => ref.watch(databaseProvider).watchResumableRun(),
-);
-
 /// The Library-wide check the user started, and what its presentation owns.
 ///
-/// In memory on purpose. Everything the run *reports* is read back from
-/// durable rows — the queue's task states, each collection's `last_check_*`
-/// columns, and `discovered_at` — so the only thing a restart loses is the
-/// framing of "these collections were one operation", and a schema column to
-/// carry a heading is not a trade worth making. The foreground half is even
-/// more clearly transient: "this run moved the user into the Browser and owes
-/// them the way back" must not survive a relaunch. Nothing here authorises
-/// work: the queue rows do that, and they are already visible in Activity.
-final libraryCheckFlowProvider = Provider<LibraryCheckFlow>((ref) {
-  final flow = LibraryCheckFlow();
-  ref.onDispose(flow.dispose);
-  return flow;
-});
-
 // --- browser (M18) ---------------------------------------------------------
 
 final historyRepositoryProvider = Provider<HistoryRepository>(
@@ -576,4 +530,20 @@ final visitedHostsProvider = Provider<AsyncValue<List<VisitedHost>>>(
   (ref) => ref
       .watch(browsingHistoryProvider)
       .whenData(HistoryRepository.groupByHost),
+);
+
+// --- V2 composition --------------------------------------------------------
+
+/// The V2 stack, built once at startup beside [AppServices]. Overridden in
+/// `main()`; widget tests that never touch V2 surfaces simply do not read it.
+final v2ServicesProvider = Provider<V2Services>(
+  (ref) => throw UnimplementedError('overridden in main()'),
+);
+
+final queueRunnerProvider = Provider<QueueRunner>(
+  (ref) => ref.watch(v2ServicesProvider).runner,
+);
+
+final checkControllerProvider = Provider<CheckController>(
+  (ref) => ref.watch(v2ServicesProvider).check,
 );

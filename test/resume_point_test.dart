@@ -1,6 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:web_reader/features/resume_point.dart';
-import 'package:web_reader/features/library_screen.dart' show LibraryCollection;
+import 'package:web_reader/features/library_formats.dart'
+    show LibraryCollection;
 import 'package:web_reader/reading/reading_repository.dart';
 import 'package:web_reader/storage/database.dart';
 

@@ -6,19 +6,18 @@ import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:web_reader/browser/page_data.dart';
 import 'package:web_reader/core/config.dart';
-import 'package:web_reader/queue/task_queue.dart';
-import 'package:web_reader/library/update_checker.dart';
 import 'package:web_reader/save/asset_fetcher.dart';
 import 'package:web_reader/save/capture_mode.dart';
+import 'package:web_reader/features/v2_save_flow.dart';
 import 'package:web_reader/save/capture_policy.dart';
 import 'package:web_reader/save/save_engine.dart';
-import 'package:web_reader/save/save_run.dart';
 import 'package:web_reader/storage/database.dart';
 import 'package:web_reader/storage/file_store.dart';
 import 'package:web_reader/storage/manifest.dart';
 
 import '../tool/fixture/fixture_site.dart';
 import 'helpers/fake_browser.dart';
+import 'save_v2/support/capture_harness.dart';
 
 /// Where the restricted-site policy stops: **a page is a capture source, an
 /// asset is not.**
@@ -368,41 +367,22 @@ void main() {
       expect(isCaptureRestricted(restrictedSubdomainAsset), isTrue);
     });
 
-    test(
-      'direct capture and enqueue of an asset host as the source is refused',
-      () async {
-        final browser = FakeBrowser();
-        final queue = TaskQueueController(
-          db: db,
-          browser: browser,
-          saveRun: SaveRunController(
-            browser: browser,
-            db: db,
-            fileStore: store,
-          ),
-          checker: UpdateChecker(browser: browser, db: db),
-          saveRunner: (_) async => const QueueOutcome.success('saved'),
-          checkRunner: (_) async => const QueueOutcome.success('checked'),
-        );
+    test('enqueue of an asset host as the page source is refused', () async {
+      // Someone points the *page* at what is normally an asset host. It is a
+      // page URL here, so the policy applies exactly as anywhere else. The
+      // decision follows the role the URL plays, not the file it names.
+      expect(v2SaveAvailable(restrictedExactHostAsset), isFalse);
 
-        // Someone points the *page* at what is normally an asset host. It is a
-        // page URL here, so the policy applies exactly as anywhere else. The
-        // decision follows the role the URL plays, not the file it names.
-        expect(
-          await queue.startDirectSave(
-            startUrl: restrictedExactHostAsset,
-            entryLimit: 1,
-          ),
-          DirectStartResult.restrictedSite,
-        );
-        final enqueued = await queue.enqueueSave(
-          startUrl: restrictedSubdomainAsset,
-          entryLimit: 1,
-        );
-        expect(enqueued.restricted, isTrue);
-        expect(await db.pendingQueueTasks(), isEmpty);
-      },
-    );
+      final h = CaptureHarness();
+      addTearDown(h.close);
+      final seeded = await h.repos.seedLibrary();
+      final refused = await h.queue.enqueue(
+        entryId: seeded.entry.id,
+        locationUrl: restrictedSubdomainAsset,
+      );
+      expect(refused.restricted, isTrue);
+      expect(await h.queue.pending(), isEmpty);
+    });
   });
 }
 
