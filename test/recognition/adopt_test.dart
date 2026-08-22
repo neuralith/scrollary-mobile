@@ -16,6 +16,7 @@ import 'package:web_reader/domain/invariants.dart';
 import 'package:web_reader/domain/reading_state.dart';
 import 'package:web_reader/recognition/adopt.dart';
 import 'package:web_reader/recognition/recognise.dart';
+import 'package:web_reader/save/queue_repository.dart';
 
 import 'support/recognition_harness.dart';
 
@@ -560,6 +561,96 @@ void main() {
       expect(moved.active, isFalse, reason: 'I13: one active copy per Entry');
       expect(moved.contentPath, arriving.contentPath);
       expect(moved.byteSize, 256);
+    });
+
+    test('a waiting download the survivor is already waiting on is '
+        'cancelled, never deleted', () async {
+      final collection = await h.collection();
+      final sourceA = await h.source(collection: collection, host: kHostA);
+      final (target, _) = await h.placedEntry(
+        collection: collection,
+        source: sourceA,
+        host: kHostA,
+        number: 7,
+      );
+      await h.source(collection: collection, host: kHostB);
+      final entry = await standalone(url: partUrl(kHostB, 7), title: 'Part 7');
+
+      final queue = SaveQueueRepository(h.repos.db, now: h.repos.tick);
+      await queue.enqueue(entryId: target.id, locationUrl: partUrl(kHostA, 7));
+      await queue.enqueue(entryId: entry.id, locationUrl: partUrl(kHostB, 7));
+
+      await h.adoption.adoptStandalone(
+        entryId: entry.id,
+        collectionId: collection.id,
+      );
+
+      // Both rows survive the merge and both name the survivor. Exactly one
+      // is still waiting — enqueueing is idempotent per Entry — and the other
+      // is `cancelled`, which is a state the user can see, not a deletion.
+      final rows = await (h.repos.db.select(h.repos.db.saveQueue)).get();
+      expect(rows, hasLength(2));
+      expect(rows.map((t) => t.entryId).toSet(), {target.id});
+      expect(
+        rows.where((t) => t.state == 'queued'),
+        hasLength(1),
+        reason: 'one Entry is waiting once, however many rows arrived at it',
+      );
+      expect(rows.where((t) => t.state == 'cancelled'), hasLength(1));
+    });
+
+    test('an open download request the survivor already holds is not '
+        'duplicated', () async {
+      final collection = await h.collection();
+      final sourceA = await h.source(collection: collection, host: kHostA);
+      final (target, _) = await h.placedEntry(
+        collection: collection,
+        source: sourceA,
+        host: kHostA,
+        number: 7,
+      );
+      await h.source(collection: collection, host: kHostB);
+      final entry = await standalone(url: partUrl(kHostB, 7), title: 'Part 7');
+
+      Future<void> request(String id, String entryId) =>
+          h.repos.requests.applyRemote(
+            id: id,
+            serverId: id,
+            entryId: entryId,
+            locationId: null,
+            state: 'pending',
+            idempotencyKey: id,
+            createdBy: 'device-a',
+            createdAt: DateTime.utc(2026, 8, 22),
+            claimedByDevice: '',
+            claimedAt: null,
+            resolvedAt: null,
+            failureReason: '',
+            revision: 1,
+          );
+      await request('req-target', target.id);
+      await request('req-loose', entry.id);
+
+      await h.adoption.adoptStandalone(
+        entryId: entry.id,
+        collectionId: collection.id,
+      );
+
+      // I17: an intent belongs to the server. The survivor keeps the one it
+      // already had, and the duplicate goes locally and quietly — the server
+      // never asked for this move and is never told a request was resolved.
+      final open = await h.repos.requests.pendingRequests();
+      expect(open, hasLength(1));
+      expect(open.single.id, 'req-target');
+      expect(open.single.entryId, target.id);
+      final tombstones = await (h.repos.db.select(
+        h.repos.db.outbox,
+      )..where((o) => o.entityKind.equals('downloadRequest'))).get();
+      expect(
+        tombstones,
+        isEmpty,
+        reason: 'a local duplicate is never announced as a deletion',
+      );
     });
 
     test('a merge tells the other devices what became of the rows', () async {
