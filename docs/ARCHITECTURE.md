@@ -10,8 +10,10 @@
 > [STORE_POLICY_MAP.md](./STORE_POLICY_MAP.md); data flows in
 > [PRIVACY.md](./PRIVACY.md).
 >
-> **The V2 data and sync layers are built; the V1 UI below is still the running
-> app.** Scrollary is evolving into a cross-platform reading library in which
+> **V2 is the running app; this document is the historical record of the V1
+> build it replaced.** The V1 library screens, save queue, save run and update
+> checker described below are retired (V2_ROADMAP.md §10); the capture engine,
+> file store, readers and browser guards were ported verbatim and still apply. Scrollary is evolving into a cross-platform reading library in which
 > an Entry belongs to the library because the user wants to read it, not
 > because it has been downloaded, and in which library state can follow the
 > user across their own devices. The domain, persistence, recognition, capture

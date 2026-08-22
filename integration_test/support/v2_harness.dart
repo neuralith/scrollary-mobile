@@ -43,7 +43,9 @@ import 'package:web_reader/data/schema.dart';
 import 'package:web_reader/domain/domain.dart';
 import 'package:web_reader/features/check_controller.dart';
 import 'package:web_reader/features/source_observation_browser.dart';
+import 'package:web_reader/data/reading_state_repository.dart';
 import 'package:web_reader/features/v2_composition.dart';
+import 'package:web_reader/recognition/recognise.dart';
 import 'package:web_reader/recognition/check.dart';
 import 'package:web_reader/library_ui/providers.dart' as libui;
 import 'package:web_reader/providers.dart';
@@ -327,7 +329,28 @@ class V2App {
       browser: browser,
       foregroundMultitasking: capability,
     );
-    v2 = V2Services(library: library, ui: ui, runner: runner, check: check);
+    final recogniser = Recogniser(
+      index: RecognitionIndex(library),
+      collections: ui.collections,
+      reading: ReadingStateRepository(library),
+    );
+    v2 = V2Services(
+      library: library,
+      ui: ui,
+      runner: runner,
+      check: check,
+      recogniser: recogniser,
+      history: BrowsingHistoryStore(library),
+      // No service in the device suites: the resolver answers null, the
+      // outbox journals, nothing leaves the device.
+      sync: SyncComposition(
+        db: library,
+        queue: ui.queue,
+        cloudSyncAvailable: () => capability.cloudSyncAvailable,
+        capabilityChanges: capability,
+        transport: null,
+      ),
+    );
 
     // The same resume OFFER `main()` makes: a row a kill left `running` goes
     // back to `queued`, and nothing autonomous starts.
@@ -353,7 +376,7 @@ class V2App {
             (id, name) async => v2.checkCollection?.call(id, name),
           ),
           libui.placementSubmitProvider.overrideWithValue(
-            placementSubmitOver(v2),
+            placementSubmitFor(v2),
           ),
         ],
         child: const WebReaderApp(),

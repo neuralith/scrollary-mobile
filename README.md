@@ -15,14 +15,12 @@ completes on the device in front of you, and the app is fully usable offline.
 No analytics, no advertising, and nothing about what you read is sent to the
 developer.
 
-The current build is single-device and needs no account. **V2** — a
-recognition-driven library where reading updates your library automatically,
-Collections have several Sources, Folders organise everything, and library
-metadata syncs across your devices — has its domain, data, recognition,
-capture, library-UX, sync and backend layers built and merged; the composition
-that wires those screens up as the running app in place of the one described
-below is still in integration. See [docs/PRODUCT.md](docs/PRODUCT.md) for the
-product, [docs/V2_ARCHITECTURE.md](docs/V2_ARCHITECTURE.md) for the domain and
+The app is **V2**: a recognition-driven library where reading updates your
+library automatically, Collections have several Sources, Folders organise
+everything, and library metadata can synchronise across your devices as a Pro
+capability. It needs no account and is fully usable offline. See
+[docs/PRODUCT.md](docs/PRODUCT.md) for the product,
+[docs/V2_ARCHITECTURE.md](docs/V2_ARCHITECTURE.md) for the domain and
 [docs/V2_ROADMAP.md](docs/V2_ROADMAP.md) for the plan and current status.
 
 ## Documentation
