@@ -127,14 +127,16 @@ class LibraryAdoption {
   /// exposes a writer for — an Entry's own Collection membership, a
   /// standalone Location's Source, the device's queue rows and the offline
   /// copies whose bytes must survive the move. It also makes the four writes
-  /// of [createCollection] one transaction. Without it those two operations
-  /// have no database to work against and say so rather than half-writing.
+  /// of [createCollection] one transaction. It is **required** rather than
+  /// optional so that "adopted, atomically" is the only behaviour this class
+  /// has: an optional database would make half of it degrade quietly at one
+  /// call site and throw at another.
   LibraryAdoption({
     required this.folders,
     required this.collections,
     required this.entries,
     required this.index,
-    this._db,
+    required this._db,
     Clock? now,
   }) : _now = now ?? utcNow;
 
@@ -143,7 +145,7 @@ class LibraryAdoption {
   final EntryRepository entries;
   final RecognitionIndex index;
 
-  final LibraryDatabase? _db;
+  final LibraryDatabase _db;
   final Clock _now;
 
   late final EntryReconciler _reconciler = EntryReconciler(
@@ -400,7 +402,7 @@ class LibraryAdoption {
     required String entryId,
     required String collectionId,
   }) async {
-    final db = _requireDatabase('adoptStandalone');
+    final db = _db;
 
     final entry = await entries.byId(entryId);
     if (entry == null) return const AdoptionOutcome.refused(unknownRow);
@@ -812,24 +814,12 @@ class LibraryAdoption {
       ? OrderingBasis.explicitNumericIndex
       : OrderingBasis.discoveryOrder;
 
-  /// One transaction where there is a database to open one on. Drift nests
-  /// through savepoints, so the repositories' own `transaction` calls inside
-  /// this one join it rather than committing early.
-  Future<T> _atomically<T>(Future<T> Function() action) {
-    final db = _db;
-    return db == null ? action() : db.transaction(action);
-  }
-
-  LibraryDatabase _requireDatabase(String operation) {
-    final db = _db;
-    if (db == null) {
-      throw StateError(
-        '$operation moves rows no repository exposes a writer for; construct '
-        'LibraryAdoption with its database',
-      );
-    }
-    return db;
-  }
+  /// One transaction. Drift nests through savepoints, so the repositories'
+  /// own `transaction` calls inside this one join it rather than committing
+  /// early — which is what lets a refused Location roll back the Collection
+  /// and Source that were written for it.
+  Future<T> _atomically<T>(Future<T> Function() action) =>
+      _db.transaction(action);
 
   Future<ReadingStateRow?> _readingRow(LibraryDatabase db, String entryId) =>
       (db.select(

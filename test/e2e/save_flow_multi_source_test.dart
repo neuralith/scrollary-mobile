@@ -37,6 +37,7 @@ void main() {
     collections: client.collections,
     entries: client.entries,
     index: RecognitionIndex(client.db),
+    db: client.db,
   );
 
   setUpAll(() async {
