@@ -200,6 +200,74 @@ void main() {
     });
   });
 
+  group('a page on a Source the library already holds', () {
+    screenTest('joins the entry that Collection already has at that '
+        'number', (tester) async {
+      final ref = await refFor(tester);
+      final root = await h.folders.ensureRoot();
+      final collection = await h.collection('Serial Alpha', folderId: root.id);
+      // The Source key is the one the address itself yields, so the page the
+      // user is on lands on this Source rather than looking like a new site.
+      final source = await h.source(
+        collection.id,
+        pathKey: RecognitionKeys.of(
+          'https://reading.example.com/notes/12',
+        ).pathKey!,
+      );
+      // The Collection already holds part 12, found by reading the Source's
+      // own listing.
+      final held = await h.entryIn(
+        collection.id,
+        title: 'Part 12',
+        ordinal: 12,
+      );
+      await h.location(
+        held.id,
+        'https://reading.example.com/notes/12',
+        sourceId: source.id,
+      );
+
+      // The user is on the same part, at a second address on that Source.
+      const other = 'https://reading.example.com/notes/part-12-mirror';
+      final message = await v2SavePage(ref, url: other, pageTitle: 'Part 12');
+
+      expect(message, isNull);
+      // One Entry, two addresses — not a second unplaced Entry that could
+      // never be placed at 12 afterwards (I8).
+      expect(await h.entries.entriesOf(collection.id), hasLength(1));
+      final locations = await h.entries.locationsOf(held.id);
+      expect(locations, hasLength(2));
+      expect(locations.every((l) => l.sourceId == source.id), isTrue);
+      expect((await v2PageStatusFor(ref, other)).entryId, held.id);
+    });
+
+    screenTest('a part the Collection does not hold is added, unplaced when '
+        'nothing numbers it', (tester) async {
+      final ref = await refFor(tester);
+      final root = await h.folders.ensureRoot();
+      final collection = await h.collection('Serial Alpha', folderId: root.id);
+      await h.source(
+        collection.id,
+        pathKey: RecognitionKeys.of(
+          'https://reading.example.com/notes/12',
+        ).pathKey!,
+      );
+
+      const unnumbered = 'https://reading.example.com/notes/ep-extra';
+      final message = await v2SavePage(
+        ref,
+        url: unnumbered,
+        pageTitle: 'Afterword',
+      );
+
+      expect(message, isNull);
+      final entries = await h.entries.entriesOf(collection.id);
+      expect(entries, hasLength(1));
+      expect(entries.single.ordinal, isNull);
+      expect(entries.single.placement, 'unplaced');
+    });
+  });
+
   group('what the sheet knows about the page', () {
     screenTest('reports that this device already holds a copy', (tester) async {
       final ref = await refFor(tester);

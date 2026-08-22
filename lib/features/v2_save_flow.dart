@@ -15,6 +15,7 @@ import '../providers.dart';
 import '../recognition/history.dart';
 import '../recognition/page_kind.dart';
 import '../recognition/recognise.dart';
+import '../recognition/reconcile.dart';
 import '../save/capture_mode.dart';
 import '../save/capture_policy.dart';
 import '../save/entry_capture.dart';
@@ -104,27 +105,39 @@ Future<String?> v2SavePage(
       entryId = entry.id;
       locationId = location.id;
     case RecognisedSource(:final source, :final collection, :final keys):
-      // The page sits on a known Source at a new address: the Entry joins its
-      // Collection, honestly unplaced until something numbers it.
-      final (entry, violation) = await services.entries.createInCollection(
-        collectionId: collection.id,
-        placement: Placement.unplaced,
-        title: pageTitle,
-      );
-      if (entry == null) {
-        return 'Could not add this page: ${violation?.message}';
+      // The page sits on a known Source at a new address, so the Entry joins
+      // its Collection — through the **same** reconciliation a reading of
+      // that Source's listing would go through. This branch used to create an
+      // unplaced Entry unconditionally, which meant a part the Collection
+      // already held at that number arrived a second time and could then
+      // never be placed there (I8). The entry point differs from discovery's;
+      // the rule does not (V2_SAVE_FLOW.md §5).
+      final printed = readPageShape(url, pageTitle: pageTitle).printedNumber;
+      final reconciled =
+          await EntryReconciler(
+            entries: services.entries,
+            index: RecognitionIndexOf(services).index,
+          ).entryFor(
+            collectionId: collection.id,
+            basis: OrderingBasis.values.byName(collection.orderingBasis),
+            printedNumber: printed,
+            title: pageTitle,
+          );
+      if (!reconciled.succeeded) {
+        return 'Could not add this page: ${reconciled.violation?.message}';
       }
       final (location, locViolation) = await services.entries.addLocation(
-        entryId: entry.id,
+        entryId: reconciled.entryId!,
         url: url,
         urlKey: keys.urlKey,
         sourceId: source.id,
+        sourceNumber: printed,
         discoveryBasis: 'userSave',
       );
       if (location == null) {
         return 'Could not add this page: ${locViolation?.message}';
       }
-      entryId = entry.id;
+      entryId = reconciled.entryId!;
       locationId = location.id;
     case Unrecognised():
       // A page the library knows nothing about becomes a standalone item,
