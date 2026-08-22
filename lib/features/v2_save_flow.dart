@@ -27,7 +27,7 @@ import '../ui/status_style.dart';
 import 'capture_mode_section.dart';
 import 'selection_overlay.dart';
 // STUB IMPORT — switch to 'v2_add_flow.dart' at merge.
-import 'v2_add_flow_stub.dart';
+import 'v2_add_flow.dart';
 import 'v2_check_flow.dart';
 
 /// The Browser's save flow over the V2 library.

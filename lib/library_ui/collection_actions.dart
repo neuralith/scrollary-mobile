@@ -24,7 +24,7 @@ import '../domain/reading_state.dart';
 // is the one call into it from the library: *this loose Entry belongs in that
 // Collection after all*.
 // STUB IMPORT — switch to '../features/v2_add_flow.dart' at merge.
-import '../features/v2_add_flow_stub.dart';
+import '../features/v2_add_flow.dart';
 import '../save/queue_task.dart';
 import '../ui/palette.dart';
 import '../ui/status_style.dart';

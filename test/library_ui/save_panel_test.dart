@@ -18,7 +18,7 @@ import 'package:web_reader/core/config.dart';
 import 'package:web_reader/features/capture_mode_section.dart';
 // STUB IMPORT — switch to 'package:web_reader/features/v2_add_flow.dart' at
 // merge.
-import 'package:web_reader/features/v2_add_flow_stub.dart';
+import 'package:web_reader/features/v2_add_flow.dart';
 import 'package:web_reader/features/v2_save_flow.dart';
 import 'package:web_reader/library_ui/providers.dart';
 import 'package:web_reader/providers.dart';

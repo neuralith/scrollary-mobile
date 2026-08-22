@@ -340,16 +340,19 @@ document a future contributor should read as current.
 G1–G7 · H1. Gates A through D have passed — Gate D at host/fixture level, with
 device validation (H6) still pending (§4).
 
-**In integration, not yet on `master`:**
+Composition, the V1 cleanup passes (§10) and the end-to-end harness (H2–H4)
+have since merged as well; H5 is done and H6 — device validation on hardware —
+is the one lane item still outstanding.
 
-- **The composition branch** — wiring the V2 screens in `lib/library_ui` up as
-  the running app in place of V1's, and the V1 cleanup passes that follow
-  (§10). Phase 4 (B10, E4, D4–D7, G5–G7) landed ahead of this and ahead of
-  Gate E (§5's sequencing note); the cutover itself has not.
-- **The end-to-end harness, H2–H4.** H1 is merged; H2 and H3 are Gate E's own
-  artefact and are the immediate next work in `wt/v2-e2e`.
-- **H5 cleanup and H6 device validation**, which depend on the two items
-  above.
+**After the lanes: the save flow.** Retiring the V1 queue (`b0740eb`) took the
+scope sheet and the collection panel with it, and the V2 sheet that replaced
+them asked neither of V1's two questions. A page on a site the library did not
+already hold became a loose Entry in the root Folder. The recovery is not a
+lane — it is `docs/V2_SAVE_FLOW.md`: `readPageShape`, `LibraryAdoption`, one
+shared `EntryReconciler` for every save path, and the typed count restored on
+the untouched `SaveLimits` bound (V2-D44, V2-D45, V2-D46). It closes the
+multi-source gap at the same time, because attaching a second Source to a
+Collection was the same missing operation.
 
 ---
 

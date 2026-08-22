@@ -31,12 +31,13 @@ happens to live at. The full statement is [PRODUCT.md](./PRODUCT.md).
 | [FOREGROUND_MULTITASKING.md](./FOREGROUND_MULTITASKING.md) | Specification for one user-started operation continuing while the user reads, and **§10.0, the current Free/Pro boundary** |
 | [FOREGROUND_MULTITASKING_PLAN.md](./FOREGROUND_MULTITASKING_PLAN.md) | The implementation checklist for that specification, its validation record, and the device and accessibility tests still outstanding |
 
-### V2 — domain, data, sync and backend layers built; composition in integration
+### V2 — the running app
 
 | Document | What it is |
 |---|---|
 | [V2_ARCHITECTURE.md](./V2_ARCHITECTURE.md) | **The V2 domain.** Folder / Collection / Source / Entry / Location / Measurement / OfflineCopy, the numbered invariants I1-I17, the state-ownership matrix, identity, and the local architecture |
 | [V2_SYNC.md](./V2_SYNC.md) | Automatic synchronisation, merge and conflict rules, removal semantics, the backend responsibility boundary, the shared API contract, and Download to Mobile |
+| [V2_SAVE_FLOW.md](./V2_SAVE_FLOW.md) | **How a page becomes library.** What the page is structurally, the decision matrix the save sheet implements, how a site is attached to a Collection the user names, and how a typed count becomes queue rows |
 | [V2_ROADMAP.md](./V2_ROADMAP.md) | **The execution plan.** Lanes, gates, per-phase maximum parallelism, worktree ownership, the dependency graph, the port-as-is inventory, V1 cleanup points, and which worktrees can start now |
 | [V2_PRODUCTIZATION.md](./V2_PRODUCTIZATION.md) | The separate programme: authentication, monetization, tombstone retention, privacy and store work, production backend, extension publishing, and the V1 release blockers |
 
