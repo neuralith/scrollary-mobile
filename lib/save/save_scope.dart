@@ -21,7 +21,12 @@
 ///   an address it has not seen.
 library;
 
+import 'package:drift/drift.dart';
+
 import '../core/config.dart';
+import '../data/entry_repository.dart';
+import '../data/schema.dart';
+import '../domain/location.dart' show LocationLifecycle;
 
 /// One queued download, resolved to the row it will run against.
 class PlannedSave {
@@ -94,4 +99,85 @@ abstract class SaveScopePlanner {
     required SaveLimits limits,
     String? preferSourceId,
   });
+}
+
+/// The planner over the library as it stands.
+///
+/// Reads and nothing else: no page is opened, no address is guessed at, and
+/// nothing here writes a row. The whole of "how much" is [SaveLimits], which
+/// cannot be built unbounded.
+class LibrarySaveScopePlanner implements SaveScopePlanner {
+  LibrarySaveScopePlanner({required this._db, required this._entries});
+
+  final LibraryDatabase _db;
+  final EntryRepository _entries;
+
+  @override
+  Future<SaveScopePlan> plan({
+    required String startEntryId,
+    required SaveLimits limits,
+    String? preferSourceId,
+  }) async {
+    final requested = limits.maxEntries;
+    final start = await _entries.byId(startEntryId);
+    if (start == null) {
+      return SaveScopePlan(saves: const [], requested: requested);
+    }
+
+    final collectionId = start.collectionId;
+    // Standalone, or in a Collection with no position of its own: "the ones
+    // after it" is not a question the library can answer, so the plan is this
+    // Entry alone and says why.
+    if (collectionId == null || start.ordinal == null) {
+      final save = await _saveFor(start, preferSourceId);
+      return SaveScopePlan(
+        saves: [?save],
+        requested: requested,
+        startIsUnplaced: true,
+      );
+    }
+
+    final ordered = await _entries.entriesOf(collectionId);
+    final saves = <PlannedSave>[];
+    for (final entry in ordered) {
+      final ordinal = entry.ordinal;
+      if (ordinal == null || ordinal < start.ordinal!) continue;
+      if (saves.length >= requested) break;
+      final save = await _saveFor(entry, preferSourceId);
+      // Nothing is skipped quietly. An Entry the library holds no address for
+      // ends the walk, and the plan is short by however many were asked for
+      // beyond it.
+      if (save == null) break;
+      saves.add(save);
+    }
+    return SaveScopePlan(saves: saves, requested: requested);
+  }
+
+  /// The address this Entry would be downloaded from: one on [preferSourceId]
+  /// when it has one, else its earliest active Location.
+  Future<PlannedSave?> _saveFor(EntryRow entry, String? preferSourceId) async {
+    final locations =
+        await (_db.select(_db.locations)
+              ..where(
+                (l) =>
+                    l.entryId.equals(entry.id) &
+                    l.lifecycle.equals(LocationLifecycle.active.name),
+              )
+              ..orderBy([(l) => OrderingTerm.asc(l.discoveredAt)]))
+            .get();
+    if (locations.isEmpty) return null;
+    final chosen = preferSourceId == null
+        ? locations.first
+        : locations.firstWhere(
+            (l) => l.sourceId == preferSourceId,
+            orElse: () => locations.first,
+          );
+    return PlannedSave(
+      entryId: entry.id,
+      locationId: chosen.id,
+      url: chosen.url,
+      ordinal: entry.ordinal,
+      title: entry.title,
+    );
+  }
 }
