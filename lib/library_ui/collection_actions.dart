@@ -20,10 +20,16 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../domain/reading_state.dart';
+// The adoption half of the save flow lives with the flow it belongs to. This
+// is the one call into it from the library: *this loose Entry belongs in that
+// Collection after all*.
+// STUB IMPORT — switch to '../features/v2_add_flow.dart' at merge.
+import '../features/v2_add_flow_stub.dart';
 import '../save/queue_task.dart';
 import '../ui/palette.dart';
 import '../ui/status_style.dart';
 import 'collection_models.dart';
+import 'collection_picker.dart';
 import 'entry_offline.dart';
 import 'folder_picker.dart';
 import 'library_widgets.dart';
@@ -250,6 +256,7 @@ enum _EntryAction {
   markUnread,
   openAtSource,
   place,
+  addToCollection,
   download,
   startDownload,
   removeWaiting,
@@ -353,6 +360,22 @@ Future<void> showEntryMenu(
               ),
               onTap: () => Navigator.of(sheetContext).pop(_EntryAction.place),
             ),
+          // A standalone Entry is a first-class library item, not a mistake
+          // to be corrected — so this is offered, never urged, and only where
+          // it means anything: an Entry that is already in a Collection has
+          // nothing to adopt it (I3).
+          if (view.row.collectionId == null)
+            ListTile(
+              key: const ValueKey('entryAddToCollection'),
+              leading: const Icon(Icons.library_add_outlined),
+              title: const Text('Add to a collection…'),
+              subtitle: const Text(
+                'Moves this entry into a collection you already have. '
+                'Nothing on this device is removed.',
+              ),
+              onTap: () =>
+                  Navigator.of(sheetContext).pop(_EntryAction.addToCollection),
+            ),
           // Downloading is one Entry, onto one device, and it waits. A row
           // already in the queue offers what can be done to *that row*
           // instead — a second request would only ever be a second candidate
@@ -450,6 +473,8 @@ Future<void> showEntryMenu(
       await _openAtSource(context, ref, view);
     case _EntryAction.place:
       await placeEntryInSequence(context, ref, view);
+    case _EntryAction.addToCollection:
+      await _addEntryToCollection(context, ref, view);
     case _EntryAction.download:
       await downloadForOffline(context, ref, view);
     case _EntryAction.startDownload:
@@ -465,6 +490,31 @@ Future<void> showEntryMenu(
     case _EntryAction.remove:
       await _removeFromLibrary(context, ref, view);
   }
+}
+
+/// *Add to a collection…* for a standalone Entry.
+///
+/// The picker cannot create one here, deliberately: this operation moves an
+/// Entry into a Collection that already exists, and a Collection of one Entry
+/// is the shape I3 exists to forbid. Where the Collection already holds an
+/// equivalent Entry the two become one — the domain decides that, by the same
+/// reconciliation every save path uses, and says so in its own sentence.
+Future<void> _addEntryToCollection(
+  BuildContext context,
+  WidgetRef ref,
+  EntryRowView view,
+) async {
+  // No suggested filter: an Entry's own title is not a Collection name, and
+  // pre-filling one here would hide the very list the user came to read.
+  final choice = await showCollectionPicker(context, ref, allowCreate: false);
+  if (choice is! ExistingCollectionChoice || !context.mounted) return;
+  final report = await v2AdoptStandalone(
+    ref,
+    entryId: view.id,
+    collectionId: choice.id,
+  );
+  if (!context.mounted) return;
+  showLibraryMessage(context, report.sentence ?? 'Added to “${choice.name}”.');
 }
 
 /// Opening at the source is two facts, in this order: the page opens, and the

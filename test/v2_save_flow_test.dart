@@ -237,24 +237,28 @@ void main() {
       );
     }
 
-    screenTest('offers Save for a page with nothing queued', (tester) async {
+    // What each branch of the sheet offers is
+    // `test/library_ui/save_panel_test.dart`; what is here is the pair of
+    // facts this file has always covered — an unknown page is asked about
+    // rather than filed, and a row already waiting offers the Start instead
+    // of a second request.
+    screenTest('asks about a page the library does not know', (tester) async {
       await openPanel(tester);
 
-      await pumpUntil(tester, find.byKey(const ValueKey('v2SaveButton')));
+      await pumpUntil(tester, find.byKey(const ValueKey('v2AddCollection')));
       expect(find.byKey(const ValueKey('v2StartButton')), findsNothing);
       expect(find.text('Not in your library yet.'), findsOneWidget);
     });
 
-    screenTest('offers Start, and no longer Save, once a task is waiting', (
+    screenTest('offers Start, and no second request, once a task is waiting', (
       tester,
     ) async {
+      final ref = await refFor(tester);
+      await v2SavePage(ref, url: _pageUrl, pageTitle: _pageTitle);
       await openPanel(tester);
-      await pumpUntil(tester, find.byKey(const ValueKey('v2SaveButton')));
-
-      await tapAndPump(tester, find.byKey(const ValueKey('v2SaveButton')));
 
       await pumpUntil(tester, find.byKey(const ValueKey('v2StartButton')));
-      expect(find.byKey(const ValueKey('v2SaveButton')), findsNothing);
+      expect(find.byKey(const ValueKey('v2DownloadEntry')), findsNothing);
       expect(find.text('Queued — waiting for Start.'), findsOneWidget);
       expect((await theOnlyTask()).state, SaveTaskState.queued);
     });
@@ -278,7 +282,7 @@ void main() {
       await tester.pumpWidget(
         app(const V2SavePanel(url: _pageUrl, pageTitle: _pageTitle)),
       );
-      await pumpUntil(tester, find.byKey(const ValueKey('v2SaveButton')));
+      await pumpUntil(tester, find.byKey(const ValueKey('v2AddCollection')));
       return ProviderScope.containerOf(
         tester.element(find.byType(V2SavePanel)),
       ).read(v2AssistProvider);
@@ -288,7 +292,7 @@ void main() {
       await openPanel(tester);
 
       expect(find.text('Show the app where the content is'), findsNothing);
-      expect(find.byKey(const ValueKey('v2SaveButton')), findsOneWidget);
+      expect(find.byKey(const ValueKey('v2AddCollection')), findsOneWidget);
     });
 
     screenTest('takes over the sheet exactly while a capture holds', (
@@ -306,7 +310,7 @@ void main() {
         reason: 'the user is told what failed, not asked to tap blindly',
       );
       expect(
-        find.byKey(const ValueKey('v2SaveButton')),
+        find.byKey(const ValueKey('v2AddCollection')),
         findsNothing,
         reason: 'one slot: the hold replaces the sheet it interrupted',
       );
@@ -314,7 +318,7 @@ void main() {
       await tapAndPump(tester, find.text('Cancel run'));
 
       expect(find.text('Show the app where the content is'), findsNothing);
-      expect(find.byKey(const ValueKey('v2SaveButton')), findsOneWidget);
+      expect(find.byKey(const ValueKey('v2AddCollection')), findsOneWidget);
       expect(assist.pendingSelection, isNull);
     });
 
