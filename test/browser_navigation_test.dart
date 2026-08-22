@@ -1,7 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:web_reader/browser/browser_controller.dart';
 import 'package:web_reader/browser/browser_presentation.dart';
-import 'package:web_reader/browser/history_repository.dart';
+import 'package:web_reader/browser/browsing_history.dart';
 
 /// The navigation model (§1) and the page-state classifier (§14), asserted on
 /// the state objects that actually decide them rather than through a platform

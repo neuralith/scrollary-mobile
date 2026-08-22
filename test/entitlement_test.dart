@@ -231,7 +231,6 @@ void main() {
       'lib/features/reader_screen.dart',
       'lib/features/cleanup_dialogs.dart',
       'lib/storage/cleanup.dart',
-      'lib/reading/reading_repository.dart',
       'lib/reading/reading_position.dart',
     ];
 

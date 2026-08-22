@@ -3,7 +3,7 @@ import 'dart:async';
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 
-import '../storage/database.dart';
+import '../data/schema.dart';
 
 /// Favicons are decoration (§12, D55).
 ///
@@ -19,7 +19,7 @@ class FaviconService extends ChangeNotifier {
     : _client =
           client ?? Dio(BaseOptions(followRedirects: true, maxRedirects: 3));
 
-  final AppDatabase db;
+  final LibraryDatabase db;
   final Dio _client;
 
   /// Whether a cache miss may go to the network.
@@ -44,7 +44,7 @@ class FaviconService extends ChangeNotifier {
 
   /// Load the cache into memory once, at boot.
   Future<void> warmUp() async {
-    for (final row in await db.allFavicons()) {
+    for (final row in await db.select(db.favicons).get()) {
       _memory[row.host] = row.bytes;
     }
     _safeNotify();
@@ -81,8 +81,8 @@ class FaviconService extends ChangeNotifier {
     final key = _key(host);
     if (key.isEmpty || bytes.isEmpty || bytes.length > maxBytes) return;
     _memory[key] = bytes;
-    await db.putFavicon(
-      FaviconCacheData(
+    await _put(
+      FaviconRow(
         host: key,
         bytes: bytes,
         sourceUrl: sourceUrl,
@@ -97,7 +97,9 @@ class FaviconService extends ChangeNotifier {
     String? pageIcon,
     required String scheme,
   }) async {
-    final existing = await db.favicon(host);
+    final existing = await (db.select(
+      db.favicons,
+    )..where((t) => t.host.equals(host))).getSingleOrNull();
     if (existing != null) {
       _memory[host] = existing.bytes;
       // A previous miss is honoured for a while; a previous hit stands until
@@ -125,8 +127,8 @@ class FaviconService extends ChangeNotifier {
       final bytes = await _download(candidate);
       if (bytes == null) continue;
       _memory[host] = bytes;
-      await db.putFavicon(
-        FaviconCacheData(
+      await _put(
+        FaviconRow(
           host: host,
           bytes: bytes,
           sourceUrl: candidate,
@@ -139,9 +141,7 @@ class FaviconService extends ChangeNotifier {
 
     // Remember the miss so the next twenty list builds do not retry it.
     _memory[host] = null;
-    await db.putFavicon(
-      FaviconCacheData(host: host, fetchedAt: DateTime.now()),
-    );
+    await _put(FaviconRow(host: host, fetchedAt: DateTime.now()));
     _safeNotify();
   }
 
@@ -195,9 +195,16 @@ class FaviconService extends ChangeNotifier {
   /// Website data was cleared: the icons came from those sites too.
   Future<void> clear() async {
     _memory.clear();
-    await db.clearFavicons();
+    await db.delete(db.favicons).go();
     _safeNotify();
   }
+
+  /// Exactly V1's write, over the V2 table: a hit stores its bytes, and a
+  /// miss stores a row with none. Nothing here ever overwrites a hit with a
+  /// miss — [_fetch] returns early on a cached hit — so the drift
+  /// null-is-absent trap has no case to bite in.
+  Future<void> _put(FaviconRow icon) =>
+      db.into(db.favicons).insertOnConflictUpdate(icon);
 
   static String _key(String host) {
     final clean = host.trim().toLowerCase();

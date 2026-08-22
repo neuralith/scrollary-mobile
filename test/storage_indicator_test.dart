@@ -1,6 +1,3 @@
-import 'dart:io';
-
-import 'package:drift/native.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -8,11 +5,8 @@ import 'package:go_router/go_router.dart';
 import 'package:web_reader/core/device_capacity_provider.dart';
 import 'package:web_reader/core/device_storage.dart';
 import 'package:web_reader/features/storage_screen.dart';
-import 'package:web_reader/providers.dart';
 import 'package:web_reader/ui/palette.dart';
 import 'package:web_reader/ui/status_style.dart';
-import 'package:web_reader/storage/database.dart';
-import 'package:web_reader/storage/file_store.dart';
 
 /// The Library's storage entry: one glyph, one number, and no filesystem walk
 /// behind it.
@@ -77,25 +71,15 @@ void main() {
   });
 
   group('the Library indicator', () {
-    late AppDatabase db;
-    late Directory root;
-    late FileStore store;
     late _FakeDeviceStorage device;
     String? pushed;
     SemanticsHandle? semantics;
 
     setUp(() {
-      db = AppDatabase.forTesting(NativeDatabase.memory());
-      root = Directory.systemTemp.createTempSync('webread_indicator');
-      store = FileStore(root);
       device = _FakeDeviceStorage(
         const DeviceCapacity(totalBytes: 100 * _gb, freeBytes: 28 * _gb),
       );
       pushed = null;
-    });
-    tearDown(() async {
-      await db.close();
-      if (root.existsSync()) root.deleteSync(recursive: true);
     });
 
     /// The pill inside a header row of the same shape the Library uses, so
@@ -137,11 +121,7 @@ void main() {
         ],
       );
       return ProviderScope(
-        overrides: [
-          databaseProvider.overrideWithValue(db),
-          fileStoreProvider.overrideWithValue(store),
-          deviceStorageProvider.overrideWithValue(device),
-        ],
+        overrides: [deviceStorageProvider.overrideWithValue(device)],
         child: MediaQuery(
           data: MediaQueryData(size: Size(width, 800)),
           child: MaterialApp.router(routerConfig: router),
@@ -161,8 +141,8 @@ void main() {
       }
     }
 
-    /// Unmount inside the body so drift's disposal timers run, and release
-    /// the semantics handle before the framework checks for leaks.
+    /// Unmount inside the body so any disposal timers run, and release the
+    /// semantics handle before the framework checks for leaks.
     Future<void> drain(WidgetTester tester) async {
       await tester.pumpWidget(const SizedBox.shrink());
       await tester.pump(const Duration(milliseconds: 10));

@@ -9,7 +9,7 @@ import '../core/url_utils.dart';
 import 'bridge_script.dart';
 import 'browser_presentation.dart';
 import 'browser_url.dart';
-import 'history_repository.dart';
+import 'browsing_history.dart';
 import 'page_data.dart';
 
 /// The single boundary between the app and `flutter_inappwebview`.

@@ -1,27 +1,42 @@
 import 'dart:io';
 
-import 'package:drift/native.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
+import 'package:web_reader/browser/saved_sites_repository.dart';
+import 'package:web_reader/capability/foreground_multitasking.dart';
 import 'package:web_reader/core/local_reset.dart';
-import 'package:web_reader/storage/database.dart';
+import 'package:web_reader/data/local_settings.dart';
+import 'package:web_reader/data/schema.dart';
+import 'package:web_reader/features/v2_composition.dart'
+    show BrowsingHistoryStore;
+import 'package:web_reader/save/queue_repository.dart';
 import 'package:web_reader/storage/file_store.dart';
 
+import 'data/support/repo_harness.dart';
 import 'helpers/fake_browser.dart';
-import 'package:web_reader/features/library_formats.dart' show kEntrySortKey;
 
 /// The development reset: everything goes, in a controlled order, and a
 /// partial failure says so rather than claiming success.
 void main() {
-  late AppDatabase db;
+  late RepoHarness repos;
+  late LibraryDatabase db;
+  late SaveQueueRepository queue;
+  late SavedSitesRepository saved;
+  late BrowsingHistoryStore history;
+  late LocalSettingsStore settings;
   late FakeBrowser browser;
   late Directory root;
   late FileStore store;
   var cookiesCleared = 0;
 
   setUp(() {
-    db = AppDatabase.forTesting(NativeDatabase.memory());
+    repos = RepoHarness();
+    db = repos.db;
+    queue = SaveQueueRepository(db);
+    saved = SavedSitesRepository(db);
+    history = BrowsingHistoryStore(db);
+    settings = LocalSettingsStore(db);
     browser = FakeBrowser();
     root = Directory.systemTemp.createTempSync('webread_reset');
     store = FileStore(root);
@@ -29,7 +44,7 @@ void main() {
   });
 
   tearDown(() async {
-    await db.close();
+    await repos.close();
     if (root.existsSync()) root.deleteSync(recursive: true);
   });
 
@@ -45,63 +60,32 @@ void main() {
             },
       );
 
+  Future<List<EntryRow>> entryRows() => db.select(db.entries).get();
+  Future<List<CollectionRow>> collectionRows() =>
+      db.select(db.collections).get();
+
   /// A device that has been used: a collection, an entry with files on disk,
   /// reading progress, a queued task, a saved rule and a setting.
   Future<void> seedUsedApp() async {
-    await db.upsertCollection(
-      Collection(
-        contentKind: 'unknownWebContent',
-        sequenceKind: 'none',
-        orderingBasis: 'discoveryOrder',
-        shapeConfidence: 'low',
-        lifecycle: 'active',
-        id: 'collection-1',
-        title: 'Foo',
-        sourceUrl: 'https://x.example/guide/foo',
-        host: 'x.example',
-        collectionKey: '/guide/foo',
-        createdAt: DateTime(2026, 7, 1),
-      ),
+    final seeded = await repos.seedLibrary();
+    await repos.reading.markRead(seeded.entry.id);
+    await repos.offline.recordCopy(
+      entryId: seeded.entry.id,
+      locationUrl: seeded.location.url,
+      artifactFormat: 'imageSequence',
+      contentPath: 'library/collection-1/entries/c1',
+      byteSize: 64,
     );
-    await db.upsertEntry(
-      Entry(
-        host: '',
-        contentKind: 'unknownWebContent',
-        contentKindConfidence: 'low',
-        contentKindIsUserSet: false,
-        id: 'c1',
-        collectionId: 'collection-1',
-        title: 'Entry 1',
-        sourceUrl: 'https://x.example/guide/foo/1',
-        urlKey: 'https://x.example/guide/foo/1',
-        artifactFormat: 'imageSequence',
-        saveStatus: 'complete',
-        contentPath: 'library/collection-1/entries/c1',
-        savedAt: DateTime(2026, 7, 20),
-        detectedAssetCount: 1,
-        storedAssetCount: 1,
-        entryOrder: 1,
-        byteSize: 64,
-        entryNumber: 1,
-        sourceMarker: 'Entry 1',
-        readStatus: 'completed',
-        progressFraction: 1,
-        progressPageIndex: 0,
-        progressOffsetInPage: 0,
-      ),
+    await settings.set(ForegroundMultitasking.settingKey, 'true');
+    await queue.enqueue(
+      entryId: seeded.entry.id,
+      locationUrl: 'https://x.example/guide/foo/2',
     );
-    await db.setSetting('collection.entrySort', 'oldestFirst');
-    await db.upsertQueueTask(
-      QueueTask(
-        id: 'waiting-1',
-        taskType: 'entrySave',
-        startUrl: 'https://x.example/guide/foo/2',
-        captureModeIsUserSet: false,
-        state: 'queued',
-        origin: 'queue',
-        orderIndex: 0,
-        queuedAt: DateTime(2026, 8, 1),
-      ),
+    await saved.save(url: 'https://x.example/guide/foo', title: 'Foo');
+    await history.recordVisit(
+      landedUrl: 'https://x.example/guide/foo/1',
+      title: 'Entry 1',
+      userInitiated: true,
     );
 
     final dir = Directory(p.join(root.path, 'library', 'collection-1'))
@@ -124,46 +108,24 @@ void main() {
 
   test('a used app comes back empty', () async {
     await seedUsedApp();
-    expect(await db.allEntries(), isNotEmpty);
+    expect(await entryRows(), isNotEmpty);
 
     final report = await makeService().resetEverything();
 
     expect(report.ok, isTrue, reason: report.toString());
-    expect(await db.allEntries(), isEmpty);
-    expect(await db.allCollections(), isEmpty);
-    expect(await db.watchQueueTasks().first, isEmpty);
-    expect(await db.setting(kEntrySortKey), isNull);
-  });
-
-  test('a collection cleanup decision does not survive a reset', () async {
-    await seedUsedApp();
-    final collection = (await db.allCollections()).first;
-    await db.setCollectionCleanupPreference(collection.id, 'remove');
-    expect(
-      (await db.collectionById(collection.id))!.cleanupPreference,
-      'remove',
-    );
-
-    await makeService().resetEverything();
-
-    // The decision lives on the collection row, so it goes with it: a reset
-    // app asks the question again, exactly as a clean install does. There is no
-    // separate setting for it to hide in.
-    expect(await db.collectionById(collection.id), isNull);
-    expect(await db.allCollections(), isEmpty);
+    expect(await entryRows(), isEmpty);
+    expect(await collectionRows(), isEmpty);
+    expect(await queue.watch().first, isEmpty);
+    expect(await settings.get(ForegroundMultitasking.settingKey), isNull);
   });
 
   test('every table is emptied, discovered from the schema', () async {
     await seedUsedApp();
     await makeService().resetEverything();
 
-    // The wipe empties everything; the two rows that exist afterwards are the
-    // clean-install seed put back on purpose (D54) — the default saved site
-    // and the flag that stops it being seeded twice.
-    const reseeded = {'saved_sites', 'settings'};
-
+    // Every table, with nothing exempted: V2 seeds nothing on create, so a
+    // reset device holds no row it did not put there itself.
     for (final table in db.allTables) {
-      if (reseeded.contains(table.actualTableName)) continue;
       final rows = await db
           .customSelect('SELECT COUNT(*) AS n FROM ${table.actualTableName}')
           .getSingle();
@@ -179,12 +141,12 @@ void main() {
     // in the first place: a site the developer chose would be a recommendation
     // the app is not entitled to make.
     expect(
-      await db.allSavedSites(),
+      await saved.all(),
       isEmpty,
       reason: 'a reset must not put a developer-chosen site back',
     );
-    // Nothing the user set survives either, including the sort preference.
-    expect(await db.setting(kEntrySortKey), isNull);
+    // Nothing the user set survives either.
+    expect(await settings.get(ForegroundMultitasking.settingKey), isNull);
   });
 
   test('saved files, staging and replacement backups all go', () async {
@@ -271,7 +233,7 @@ void main() {
     expect(report.failures.single.area, 'browser session');
     // The areas that DID work still worked — a partial failure leaves the
     // app recoverable, not half-wiped and lying about it.
-    expect(await db.allEntries(), isEmpty);
+    expect(await entryRows(), isEmpty);
     expect(
       Directory(p.join(root.path, 'library', 'collection-1')).existsSync(),
       isFalse,
@@ -283,6 +245,6 @@ void main() {
     await makeService().resetEverything();
     final second = await makeService().resetEverything();
     expect(second.ok, isTrue);
-    expect(await db.allEntries(), isEmpty);
+    expect(await entryRows(), isEmpty);
   });
 }

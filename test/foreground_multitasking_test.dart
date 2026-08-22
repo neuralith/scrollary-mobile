@@ -1,6 +1,5 @@
 import 'dart:io';
 
-import 'package:drift/native.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:web_reader/browser/browser_surface_policy.dart';
@@ -10,8 +9,8 @@ import 'package:web_reader/core/config.dart';
 import 'package:web_reader/save/asset_fetcher.dart';
 import 'package:web_reader/save/capture_mode.dart';
 import 'package:web_reader/save/save_engine.dart';
+import 'package:web_reader/save/save_result_sink.dart';
 import 'package:web_reader/save/save_state.dart';
-import 'package:web_reader/storage/database.dart';
 import 'package:web_reader/storage/file_store.dart';
 import 'package:web_reader/storage/manifest.dart';
 import 'package:web_reader/ui/app_page.dart';
@@ -184,8 +183,8 @@ void main() {
   });
 
   group('the render guard', () {
-    late AppDatabase db;
     late Directory root;
+    late FileStore store;
 
     const config = SaveConfig(
       scrollDelay: Duration(milliseconds: 5),
@@ -200,11 +199,10 @@ void main() {
     );
 
     setUp(() {
-      db = AppDatabase.forTesting(NativeDatabase.memory());
       root = Directory.systemTemp.createTempSync('webread_fg');
+      store = FileStore(root);
     });
     tearDown(() async {
-      await db.close();
       if (root.existsSync()) root.deleteSync(recursive: true);
     });
 
@@ -220,9 +218,11 @@ void main() {
       final states = <SaveState>[];
       final engine = SaveEngine(
         browser: browser,
-        db: db,
-        fileStore: FileStore(root),
+        fileStore: store,
         downloader: AssetFetcher(browser: browser, config: config),
+        sink: StagedPackageSink(
+          await store.beginEntry(collectionId: 'collection-1', entryId: 'e1'),
+        ),
         config: config,
         onProgress: (update) => states.add(update(const SaveProgress()).state),
       );
@@ -257,7 +257,6 @@ void main() {
           isNot(contains(SaveState.extracting)),
           reason: 'nothing may be read off a surface nobody is drawing',
         );
-        expect(await db.allEntries(), isEmpty);
         expect(
           Directory(root.path).listSync(recursive: true).whereType<File>(),
           isEmpty,
@@ -291,9 +290,11 @@ void main() {
 
       final engine = SaveEngine(
         browser: browser,
-        db: db,
-        fileStore: FileStore(root),
+        fileStore: store,
         downloader: AssetFetcher(browser: browser, config: config),
+        sink: StagedPackageSink(
+          await store.beginEntry(collectionId: 'collection-1', entryId: 'e1'),
+        ),
         config: config,
       );
       final run = engine.saveCurrentPage(
@@ -318,8 +319,8 @@ void main() {
   });
 
   group('renderer termination', () {
-    late AppDatabase db;
     late Directory root;
+    late FileStore store;
 
     const config = SaveConfig(
       scrollDelay: Duration(milliseconds: 5),
@@ -334,11 +335,10 @@ void main() {
     );
 
     setUp(() {
-      db = AppDatabase.forTesting(NativeDatabase.memory());
       root = Directory.systemTemp.createTempSync('webread_rt');
+      store = FileStore(root);
     });
     tearDown(() async {
-      await db.close();
       if (root.existsSync()) root.deleteSync(recursive: true);
     });
 
@@ -355,51 +355,53 @@ void main() {
       expect(browser.isLoading, isFalse);
     });
 
-    test('an Entry in flight when the renderer dies is never committed', () {
-      // The renderer dying mid-run looks, from Dart, exactly like a page that
-      // stopped answering. The rule is the same either way and it is the one
-      // that matters: whatever was measured a moment ago is no longer true, so
-      // nothing may be written from it.
-      final browser = ScriptedBrowser(
-        probeBuilder: (y, n) {
-          if (n > 4) throw StateError('web content process terminated');
-          return lazyStripProbe(y: y, viewportHeight: 800, panelCount: 5);
-        },
-      )..setUrl('https://x.example/guide/foo/1');
+    test(
+      'an Entry in flight when the renderer dies is never committed',
+      () async {
+        // The renderer dying mid-run looks, from Dart, exactly like a page that
+        // stopped answering. The rule is the same either way and it is the one
+        // that matters: whatever was measured a moment ago is no longer true, so
+        // nothing may be written from it.
+        final browser = ScriptedBrowser(
+          probeBuilder: (y, n) {
+            if (n > 4) throw StateError('web content process terminated');
+            return lazyStripProbe(y: y, viewportHeight: 800, panelCount: 5);
+          },
+        )..setUrl('https://x.example/guide/foo/1');
 
-      final engine = SaveEngine(
-        browser: browser,
-        db: db,
-        fileStore: FileStore(root),
-        downloader: AssetFetcher(browser: browser, config: config),
-        config: config,
-      );
+        final engine = SaveEngine(
+          browser: browser,
+          fileStore: store,
+          downloader: AssetFetcher(browser: browser, config: config),
+          sink: StagedPackageSink(
+            await store.beginEntry(collectionId: 'collection-1', entryId: 'e1'),
+          ),
+          config: config,
+        );
 
-      return engine
-          .saveCurrentPage(
-            collectionId: 'collection-1',
-            entryOrder: 1,
-            visitedNormalized: {},
-            captureMode: CaptureMode.imageSequence,
-          )
-          .then((result) async {
-            expect(
-              result.status,
-              isNot(SaveStatus.complete),
-              reason: 'a run whose page died may never report success',
-            );
-            expect(
-              await db.allEntries(),
-              isEmpty,
-              reason: 'and it may never leave an Entry behind',
-            );
-            expect(
-              Directory(root.path).listSync(recursive: true).whereType<File>(),
-              isEmpty,
-              reason: 'nor any bytes',
-            );
-          });
-    });
+        return engine
+            .saveCurrentPage(
+              collectionId: 'collection-1',
+              entryOrder: 1,
+              visitedNormalized: {},
+              captureMode: CaptureMode.imageSequence,
+            )
+            .then((result) async {
+              expect(
+                result.status,
+                isNot(SaveStatus.complete),
+                reason: 'a run whose page died may never report success',
+              );
+              expect(
+                Directory(
+                  root.path,
+                ).listSync(recursive: true).whereType<File>(),
+                isEmpty,
+                reason: 'nor any bytes',
+              );
+            });
+      },
+    );
   });
 
   group('AppPage keeps what is below it painted', () {

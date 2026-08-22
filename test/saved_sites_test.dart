@@ -2,17 +2,17 @@ import 'package:drift/drift.dart' show Value;
 import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:web_reader/browser/saved_sites_repository.dart';
-import 'package:web_reader/storage/database.dart';
+import 'package:web_reader/data/schema.dart';
 
 /// Saved sites are the user's own list (§4, D54): seeded once, editable in
 /// every direction, never silently duplicated, and never recreated behind
 /// their back.
 void main() {
-  late AppDatabase db;
+  late LibraryDatabase db;
   late SavedSitesRepository repo;
 
   setUp(() {
-    db = AppDatabase.forTesting(NativeDatabase.memory());
+    db = LibraryDatabase.forTesting(NativeDatabase.memory());
     repo = SavedSitesRepository(db);
   });
 
@@ -139,12 +139,9 @@ void main() {
     test('rows that were never reordered still have a stable order', () async {
       // Equal indices are what a seeded/imported set looks like; the fallback
       // is creation time, so the list never shuffles between reads.
-      for (final site in await repo.all()) {
-        await db.writeSavedSite(
-          site.id,
-          const SavedSitesCompanion(orderIndex: Value(0)),
-        );
-      }
+      await db
+          .update(db.savedSites)
+          .write(const SavedSitesCompanion(orderIndex: Value(0)));
       final first = (await repo.all()).map((s) => s.title).toList();
       final second = (await repo.all()).map((s) => s.title).toList();
       expect(first, second);

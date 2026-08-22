@@ -11,10 +11,13 @@ import 'package:web_reader/features/v2_composition.dart';
 import 'package:web_reader/features/browser_toolbar.dart';
 import 'package:web_reader/features/browser_ui.dart';
 import 'package:web_reader/features/browser_url_editor.dart';
+import 'package:web_reader/library_ui/providers.dart' as libui;
 import 'package:web_reader/providers.dart';
-import 'package:web_reader/storage/database.dart';
+import 'package:web_reader/storage/file_store.dart';
 import 'package:web_reader/ui/theme.dart';
 import 'package:web_reader/browser/saved_sites_repository.dart';
+
+import 'helpers/v2_harness.dart' show tempFileStore;
 
 /// The Browser's own chrome: toolbar shape and state, Browser Home, and the
 /// URL editor's suggestions.
@@ -41,21 +44,23 @@ void browserWidgetTest(
 }
 
 void main() {
-  late AppDatabase db;
-
-  /// Browsing history is the V2 `history` table; the V1 one has no writers
-  /// left. Only the store is needed here, not the whole V2 service graph.
+  /// Every device-local store these surfaces read — history, saved sites,
+  /// favicons — is the V2 library now. Only the stores are needed here, not
+  /// the whole V2 service graph.
   late LibraryDatabase library;
+  late FileStore store;
+  late libui.LibraryUiServices ui;
   late BrowsingHistoryStore history;
 
   setUp(() {
-    db = AppDatabase.forTesting(NativeDatabase.memory());
     library = LibraryDatabase.forTesting(NativeDatabase.memory());
+    store = tempFileStore();
+    ui = libui.LibraryUiServices(library, fileStore: store);
     history = BrowsingHistoryStore(library);
   });
   tearDown(() async {
     await library.close();
-    await db.close();
+    if (store.rootDir.existsSync()) store.rootDir.deleteSync(recursive: true);
   });
 
   Future<void> visit(String url, {required String title}) =>
@@ -64,12 +69,12 @@ void main() {
   Widget host(Widget child, {Size size = const Size(390, 844)}) =>
       ProviderScope(
         overrides: [
-          databaseProvider.overrideWithValue(db),
+          libui.libraryUiServicesProvider.overrideWithValue(ui),
           historyRepositoryProvider.overrideWithValue(history),
           // Network-free, like everything under `test/`. A favicon miss
           // renders the fallback, which is the state these tests care about.
           faviconServiceProvider.overrideWithValue(
-            FaviconService(db: db, allowNetwork: false),
+            FaviconService(db: library, allowNetwork: false),
           ),
         ],
         child: MaterialApp(
@@ -230,7 +235,7 @@ void main() {
       browser.onUrlChanged('https://example.com/guide/x/885-part-oku');
       await tester.pumpWidget(
         ProviderScope(
-          overrides: [databaseProvider.overrideWithValue(db)],
+          overrides: [libui.libraryUiServicesProvider.overrideWithValue(ui)],
           child: MaterialApp(
             theme: appTheme(),
             home: MediaQuery(
@@ -278,7 +283,7 @@ void main() {
       'renders saved sites and recently visited from real data',
       (tester) async {
         await SavedSitesRepository(
-          db,
+          library,
         ).save(url: 'https://a.example/', title: 'Example A');
         await visit('https://example.com/guide/x/885', title: 'part 885');
 
@@ -356,7 +361,7 @@ void main() {
       // Nothing is seeded on a clean install, so the grid appears only once the
       // user has put something in it — and one row is enough.
       await SavedSitesRepository(
-        db,
+        library,
       ).save(url: 'https://a.example/', title: 'Example A');
 
       await tester.pumpWidget(home());
@@ -576,8 +581,8 @@ void main() {
   });
 
   group('suggestion ranking', () {
-    List<SavedSite> savedFixture() => [
-      SavedSite(
+    List<SavedSiteRow> savedFixture() => [
+      SavedSiteRow(
         id: 's1',
         url: 'https://example.com/',
         urlKey: 'https://example.com/',
@@ -589,8 +594,8 @@ void main() {
       ),
     ];
 
-    List<BrowsingHistoryData> visitFixture() => [
-      BrowsingHistoryData(
+    List<HistoryRow> visitFixture() => [
+      HistoryRow(
         id: 'v1',
         url: 'https://example.com/comics/x/137',
         urlKey: 'https://example.com/comics/x/137',
@@ -650,7 +655,7 @@ void main() {
     test('a page already saved is not repeated under History', () {
       final saved = savedFixture();
       final visits = [
-        BrowsingHistoryData(
+        HistoryRow(
           id: 'v2',
           url: 'https://example.com/',
           urlKey: 'https://example.com/',

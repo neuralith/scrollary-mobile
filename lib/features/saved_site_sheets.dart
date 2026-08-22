@@ -2,11 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../browser/browser_url.dart';
-import '../browser/history_repository.dart';
+import '../browser/browsing_history.dart';
 import '../browser/saved_sites_repository.dart';
 import '../core/url_utils.dart';
 import '../providers.dart';
-import '../storage/database.dart';
+import '../data/schema.dart' show SavedSiteRow;
 import '../ui/palette.dart';
 import '../ui/status_style.dart';
 import '../ui/theme.dart';
@@ -402,7 +402,7 @@ class _EditSavedSiteState extends ConsumerState<_EditSavedSite> {
 
   /// True when the user picked "save the whole site" over "save this page".
   bool _useSiteRoot = false;
-  SavedSite? _duplicate;
+  SavedSiteRow? _duplicate;
 
   @override
   void initState() {

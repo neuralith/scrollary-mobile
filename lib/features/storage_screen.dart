@@ -13,11 +13,22 @@ import '../ui/status_style.dart';
 import '../ui/theme.dart';
 import '../storage/cleanup.dart';
 import 'cleanup_dialogs.dart';
-import 'library_formats.dart';
 import '../library/entry_labels.dart';
 
 const int _bytesPerMb = 1024 * 1024;
 const int _bytesPerGb = 1024 * _bytesPerMb;
+
+/// One entry's worth of bytes: B, KB, then MB with one decimal.
+///
+/// The smallest of the three scales and the base of the other two. It lived
+/// on the retired V1 shelf's formatters, where the entry rows that used it
+/// were; it lives here now, with the only figures left that are measured in
+/// megabytes.
+String formatBytes(int bytes) {
+  if (bytes < 1024) return '$bytes B';
+  if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(0)} KB';
+  return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
+}
 
 /// A figure this app is responsible for: the library total, one collection,
 /// the staging tree.
@@ -59,86 +70,15 @@ String _formatGb(int bytes, {required int decimals}) {
 /// widget rebuild: `byteSize` already lives on every entry row, so the
 /// whole screen is arithmetic over data the library stream carries — no file
 /// tree is walked here.
-class StorageSummary {
-  const StorageSummary({
-    required this.totalBytes,
-    required this.offlineEntries,
-    required this.offlineCollection,
-    required this.finishedOfflineEntries,
-    required this.finishedOfflineBytes,
-    required this.collection,
-  });
-
-  final int totalBytes;
-  final int offlineEntries;
-  final int offlineCollection;
-  final int finishedOfflineEntries;
-  final int finishedOfflineBytes;
-
-  /// Collection holding offline bytes, largest first.
-  final List<CollectionStorage> collection;
-}
-
-class CollectionStorage {
-  const CollectionStorage({
-    required this.group,
-    required this.bytes,
-    required this.offlineEntries,
-    required this.partialEntries,
-  });
-
-  final LibraryCollection group;
-  final int bytes;
-  final int offlineEntries;
-  final int partialEntries;
-}
-
-/// Storage totals, derived from the same library stream everything else uses
-/// so the numbers can never disagree with the shelf.
-final storageSummaryProvider = Provider<AsyncValue<StorageSummary>>(
-  (ref) => ref.watch(allLibraryCollectionsProvider).whenData((groups) {
-    final collection = <CollectionStorage>[];
-    var total = 0;
-    var entries = 0;
-    var finished = 0;
-    var finishedBytes = 0;
-
-    for (final group in groups) {
-      var bytes = 0;
-      var offline = 0;
-      var partial = 0;
-      for (final c in group.entries) {
-        if (c.contentPath == null) continue;
-        bytes += c.byteSize;
-        offline++;
-        if (c.saveStatus == 'partial') partial++;
-        if (c.readStatus == 'completed') {
-          finished++;
-          finishedBytes += c.byteSize;
-        }
-      }
-      if (offline == 0) continue;
-      total += bytes;
-      entries += offline;
-      collection.add(
-        CollectionStorage(
-          group: group,
-          bytes: bytes,
-          offlineEntries: offline,
-          partialEntries: partial,
-        ),
-      );
-    }
-    collection.sort((a, b) => b.bytes.compareTo(a.bytes));
-    return StorageSummary(
-      totalBytes: total,
-      offlineEntries: entries,
-      offlineCollection: collection.length,
-      finishedOfflineEntries: finished,
-      finishedOfflineBytes: finishedBytes,
-      collection: collection,
-    );
-  }),
+/// What this device is holding, read from the copy rows **and** the disk.
+///
+/// A future rather than a stream, and it walks the library tree: the two
+/// sources can disagree (see `lib/storage/cleanup.dart`), and the only honest
+/// way to report the disagreement is to look at both. Scoped to this screen
+/// for exactly that reason — nothing else in the app may wait on a recursive
+/// listing, and the Library header reads [deviceCapacityProvider] instead.
+final storageSurveyProvider = FutureProvider<StorageSurvey>(
+  (ref) => ref.watch(cleanupProvider).survey(),
 );
 
 /// Size of the staging tree, for this screen only.
@@ -166,7 +106,7 @@ class _StorageScreenState extends ConsumerState<StorageScreen> {
   @override
   Widget build(BuildContext context) {
     final palette = AppPalette.of(context);
-    final summary = ref.watch(storageSummaryProvider);
+    final summary = ref.watch(storageSurveyProvider);
     final capacity = ref.watch(deviceCapacityProvider).value;
     final staging = ref.watch(stagingBytesProvider);
 
@@ -178,15 +118,14 @@ class _StorageScreenState extends ConsumerState<StorageScreen> {
         data: (s) {
           final free = capacity?.freeBytes;
           final temp = staging.value ?? 0;
-          final collection = [...s.collection];
+          final byCollection = s.byCollection;
+          final collection = [...byCollection];
           if (!_sortBySize) {
             collection.sort(
-              (a, b) => a.group.displayName.toLowerCase().compareTo(
-                b.group.displayName.toLowerCase(),
-              ),
+              (a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()),
             );
           }
-          final largest = s.collection.isEmpty ? 1 : s.collection.first.bytes;
+          final largest = byCollection.isEmpty ? 1 : byCollection.first.bytes;
 
           return ListView(
             padding: const EdgeInsets.only(bottom: 40),
@@ -205,14 +144,14 @@ class _StorageScreenState extends ConsumerState<StorageScreen> {
                     ),
                     const SizedBox(height: 4),
                     Text(
-                      formatStorageBytes(s.totalBytes),
+                      formatStorageBytes(s.heldBytes),
                       style: serifStyle(size: 34),
                     ),
                     const SizedBox(height: 4),
                     Text(
-                      '${kPlainEntryLabels.count(s.offlineEntries)} across '
-                      '${s.offlineCollection} '
-                      'collection${s.offlineCollection == 1 ? '' : 's'} · '
+                      '${kPlainEntryLabels.count(s.held.length)} across '
+                      '${byCollection.length} '
+                      'collection${byCollection.length == 1 ? '' : 's'} · '
                       'reading history not included',
                       style: TextStyle(fontSize: 12.5, color: palette.inkMuted),
                     ),
@@ -229,8 +168,8 @@ class _StorageScreenState extends ConsumerState<StorageScreen> {
                   crossAxisSpacing: 8,
                   mainAxisSpacing: 8,
                   children: [
-                    _Metric('${s.offlineEntries}', 'entries offline'),
-                    _Metric('${s.offlineCollection}', 'collection offline'),
+                    _Metric('${s.held.length}', 'entries offline'),
+                    _Metric('${byCollection.length}', 'collection offline'),
                     // Free space stays as a figure; the *percentage* and its
                     // colour live in the meter above, so this tile does not
                     // carry a second, differently-derived warning.
@@ -282,22 +221,45 @@ class _StorageScreenState extends ConsumerState<StorageScreen> {
               _CleanupRow(
                 icon: Icons.auto_delete,
                 label: 'Remove finished offline entries',
-                sub: s.finishedOfflineEntries == 0
+                sub: s.finished.isEmpty
                     ? 'Nothing finished is stored offline right now'
-                    : '${s.finishedOfflineEntries} entries read to the end · '
-                          'frees ~${formatStorageBytes(s.finishedOfflineBytes)}',
-                enabled: s.finishedOfflineEntries > 0,
+                    : '${s.finished.length} entries read to the end · '
+                          'frees ~${formatStorageBytes(s.finishedBytes)}',
+                enabled: s.finished.isNotEmpty,
                 onTap: () => _confirmGlobalCleanup(s),
               ),
               _CleanupRow(
                 icon: Icons.checklist,
                 label: 'Choose entries to remove',
-                sub: 'Open a collection and select entries yourself',
+                sub: 'Open a collection and free entries one at a time',
                 enabled: collection.isNotEmpty,
-                onTap: () => context.push(
-                  '/collection/${collection.first.group.id}?select=1',
-                ),
+                onTap: () => context.push('/collection/${collection.first.id}'),
               ),
+              // What the rows and the disk disagree about, said out loud.
+              // Offered rather than applied: freeing bytes is the user's, and
+              // a startup pass that quietly rebuilt a library from packages is
+              // exactly what V2 must not do.
+              if (s.orphans.isNotEmpty)
+                _CleanupRow(
+                  icon: Icons.folder_delete,
+                  label: 'Discard unreferenced packages',
+                  sub:
+                      '${s.orphans.length} package'
+                      '${s.orphans.length == 1 ? '' : 's'} on this device that '
+                      'no entry refers to · frees '
+                      '~${formatStorageBytes(s.orphanBytes)}',
+                  onTap: () => _confirmOrphans(s),
+                ),
+              if (s.missing.isNotEmpty)
+                _CleanupRow(
+                  icon: Icons.link_off,
+                  label: 'Forget copies whose files are gone',
+                  sub:
+                      '${s.missing.length} entr'
+                      '${s.missing.length == 1 ? 'y is' : 'ies are'} listed as '
+                      'downloaded here, but the files are not on the device',
+                  onTap: () => _confirmMissing(s),
+                ),
               Padding(
                 padding: const EdgeInsets.fromLTRB(20, 18, 20, 0),
                 child: Text(
@@ -318,7 +280,7 @@ class _StorageScreenState extends ConsumerState<StorageScreen> {
     );
   }
 
-  Future<void> _confirmGlobalCleanup(StorageSummary s) async {
+  Future<void> _confirmGlobalCleanup(StorageSurvey s) async {
     final ok = await showRemovalConfirm(
       context: context,
       summary: RemovalSummary(
@@ -328,25 +290,80 @@ class _StorageScreenState extends ConsumerState<StorageScreen> {
             'offline. They stay in your library with read marks and history, '
             'and you can save any of them again.',
         facts: [
-          ('Entries', '${s.finishedOfflineEntries}'),
-          ('Space freed', '~${formatStorageBytes(s.finishedOfflineBytes)}'),
+          ('Entries', '${s.finished.length}'),
+          ('Space freed', '~${formatStorageBytes(s.finishedBytes)}'),
         ],
-        lockNote:
-            'Anything open in the reader or being saved right now is '
-            'kept.',
       ),
     );
     if (!ok || !mounted) return;
-    final cleanup = ref.read(cleanupProvider);
-    final ids = await cleanup.finishedOfflineEntryIds();
-    final result = await cleanup.removeOfflineNow(ids);
+    final removed = await ref.read(cleanupProvider).removeCopiesOf([
+      for (final copy in s.finished) copy.entryId,
+    ]);
     if (!mounted) return;
+    ref.invalidate(storageSurveyProvider);
     showCleanupToast(
       context,
-      text:
-          'Removed ${result.removed} '
-          'entr${result.removed == 1 ? 'y' : 'ies'}',
+      text: 'Removed $removed entr${removed == 1 ? 'y' : 'ies'}',
       icon: Icons.delete_sweep,
+    );
+  }
+
+  /// Packages on disk that no copy row refers to.
+  ///
+  /// Never rebuilt into a library row: an Entry is a synced library fact and
+  /// a package on one device is not evidence for one (V2-D22). So the only
+  /// thing that can honestly be offered is the space.
+  Future<void> _confirmOrphans(StorageSurvey s) async {
+    final ok = await showRemovalConfirm(
+      context: context,
+      summary: RemovalSummary(
+        title: 'Discard unreferenced packages?',
+        body:
+            'These files are on this device but no entry in your library '
+            'refers to them — they are left over from a reset or a restore. '
+            'Nothing in your library changes.',
+        facts: [
+          ('Packages', '${s.orphans.length}'),
+          ('Space freed', '~${formatStorageBytes(s.orphanBytes)}'),
+        ],
+        cta: 'Discard',
+      ),
+    );
+    if (!ok || !mounted) return;
+    final removed = await ref.read(cleanupProvider).discardOrphans(s.orphans);
+    if (!mounted) return;
+    ref.invalidate(storageSurveyProvider);
+    ref.invalidate(stagingBytesProvider);
+    showCleanupToast(
+      context,
+      text: 'Discarded $removed package${removed == 1 ? '' : 's'}',
+      icon: Icons.folder_delete,
+    );
+  }
+
+  /// Copy rows whose package is gone: the record goes, the Entry stays.
+  Future<void> _confirmMissing(StorageSurvey s) async {
+    final ok = await showRemovalConfirm(
+      context: context,
+      summary: RemovalSummary(
+        title: 'Forget copies whose files are gone?',
+        body:
+            'These entries are listed as downloaded on this device, but the '
+            'files are not there. Forgetting the record stops the figure '
+            'above counting space that is not being used. The entries stay in '
+            'your library with your reading history, and can be saved again.',
+        facts: [('Entries', '${s.missing.length}')],
+        cta: 'Forget',
+      ),
+    );
+    if (!ok || !mounted) return;
+    final removed = await ref.read(cleanupProvider).forgetMissing(s.missing);
+    if (!mounted) return;
+    ref.invalidate(storageSurveyProvider);
+    showCleanupToast(
+      context,
+      text: 'Forgot $removed record${removed == 1 ? '' : 's'}',
+      icon: Icons.link_off,
     );
   }
 }
@@ -614,8 +631,10 @@ class _CollectionRow extends StatelessWidget {
         ? 0.0
         : (row.bytes / largestBytes).clamp(0.0, 1.0);
     return InkWell(
-      key: ValueKey('storageRow-${row.group.id}'),
-      onTap: () => context.push('/collection/${row.group.id}'),
+      key: ValueKey('storageRow-${row.id ?? 'standalone'}'),
+      onTap: row.id == null
+          ? null
+          : () => context.push('/collection/${row.id}'),
       child: Padding(
         padding: const EdgeInsets.fromLTRB(16, 12, 12, 12),
         child: Row(
@@ -625,7 +644,7 @@ class _CollectionRow extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    row.group.displayName,
+                    row.name,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
@@ -637,26 +656,9 @@ class _CollectionRow extends StatelessWidget {
                   ),
                   const SizedBox(height: 3),
                   Text(
-                    '${row.offlineEntries} entries offline',
+                    '${row.entryCount} entries offline',
                     style: monoStyle(color: palette.inkFaint),
                   ),
-                  if (row.partialEntries > 0) ...[
-                    const SizedBox(height: 5),
-                    Row(
-                      children: [
-                        Icon(
-                          Icons.arrow_circle_down,
-                          size: 14,
-                          color: palette.warn,
-                        ),
-                        const SizedBox(width: 5),
-                        Text(
-                          '${row.partialEntries} partial',
-                          style: TextStyle(fontSize: 11.5, color: palette.warn),
-                        ),
-                      ],
-                    ),
-                  ],
                 ],
               ),
             ),

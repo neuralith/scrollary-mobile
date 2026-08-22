@@ -1,12 +1,23 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+
+import '../core/connectivity.dart';
 import 'package:go_router/go_router.dart';
 
 import '../core/url_utils.dart';
 import '../providers.dart';
 import '../ui/palette.dart';
 import '../ui/status_style.dart';
-import 'entry_source_state.dart';
+
+/// Injectable so a widget test can say "this device is offline" without one.
+///
+/// It lived on the retired V1 entry-state helpers with the two predicates
+/// about a row's source; the predicates went with the rows, and this — a
+/// question about the network, asked before opening a page — stayed with the
+/// action that asks it.
+final connectivityProvider = Provider<Connectivity>(
+  (ref) => const Connectivity(),
+);
 
 /// The copy the product uses when a row has nowhere to go.
 const kNoSourcePageMessage = 'This entry does not have a source page.';

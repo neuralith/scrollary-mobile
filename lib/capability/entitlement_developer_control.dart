@@ -48,8 +48,8 @@ class EntitlementOverridePickerState
     // the corruption this whole feature exists to avoid.
     _capability.override = value;
     await ref
-        .read(databaseProvider)
-        .setSetting(ForegroundMultitasking.overrideSettingKey, value.name);
+        .read(localSettingsProvider)
+        .set(ForegroundMultitasking.overrideSettingKey, value.name);
   }
 
   @override

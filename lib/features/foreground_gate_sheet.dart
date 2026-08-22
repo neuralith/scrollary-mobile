@@ -703,6 +703,6 @@ Future<void> setKeepWorkingPreference(WidgetRef ref, bool value) async {
   final capability = ref.read(foregroundMultitaskingProvider);
   capability.preference = value;
   await ref
-      .read(databaseProvider)
-      .setSetting(ForegroundMultitasking.settingKey, capability.storedValue);
+      .read(localSettingsProvider)
+      .set(ForegroundMultitasking.settingKey, capability.storedValue);
 }

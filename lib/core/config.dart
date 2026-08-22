@@ -148,8 +148,8 @@ class SaveConfig {
   /// Here the two errors are asymmetric: over-estimating stops a run one entry
   /// early, under-estimating writes the device full mid-entry. On screen they
   /// are not — multiplying this constant by an entry count is what reported
-  /// "up to ~1.0 GB" for twenty ordinary entries. What the user sees comes from
-  /// `save/size_estimate.dart`, which measures the collection instead.
+  /// "up to ~1.0 GB" for twenty ordinary entries. What the user is shown is
+  /// measured from what is actually on the device, never from this constant.
   final int unknownEntryEstimate;
 }
 

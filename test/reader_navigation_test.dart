@@ -1,154 +1,63 @@
-import 'dart:io';
-
 import 'package:flutter/material.dart';
-import 'package:drift/native.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
-import 'package:path/path.dart' as p;
 import 'package:web_reader/features/reader_screen.dart';
-import 'package:web_reader/providers.dart';
-import 'package:web_reader/storage/database.dart';
-import 'package:web_reader/storage/file_store.dart';
-import 'package:web_reader/storage/manifest.dart';
+import 'package:web_reader/reading_v2/offline_read.dart';
 
-import '../tool/fixture/fixture_site.dart';
+import 'helpers/reader_harness.dart';
 
 /// Swiping right in the reader goes back to the collection's entry list.
 ///
 /// The two things that make this correct rather than merely present: the
 /// gesture must not fire on ordinary reading (which is vertical), and the
 /// reading position must be written before the screen goes away.
+///
+/// Where the swipe lands is the route's business, not the reader's: the
+/// collection is handed to the screen as an argument, exactly as
+/// `V2ReaderRoute` hands it over. So the destination here is a stand-in — the
+/// subject is that the reader leaves for it, and flushes on the way.
 void main() {
-  late AppDatabase db;
-  late Directory root;
-  late FileStore store;
+  late ReaderHarness h;
+  late String collectionId;
+  late String entryId;
+  late OfflineReaderData offline;
 
-  setUp(() {
-    db = AppDatabase.forTesting(NativeDatabase.memory());
-    root = Directory.systemTemp.createTempSync('webread_reader_nav');
-    store = FileStore(root);
-    Directory(
-      p.join(root.path, FileStore.libraryFolderName),
-    ).createSync(recursive: true);
-    Directory(
-      p.join(root.path, FileStore.tmpFolderName),
-    ).createSync(recursive: true);
+  setUp(() => h = ReaderHarness());
+  tearDown(() => h.close());
+
+  /// Three real panels, committed and recorded as this device's copy, then
+  /// resolved into exactly what the route hands the screen.
+  Future<void> seed(WidgetTester tester) => tester.runAsync(() async {
+    collectionId = await h.collectionId();
+    entryId = await h.seedEntry(title: 'Foo Entry 1', ordinal: 201);
+    await h.seedImages(entryId: entryId, pages: 3);
+    offline = await h.open(entryId);
   });
-
-  tearDown(() async {
-    await db.close();
-    if (root.existsSync()) root.deleteSync(recursive: true);
-  });
-
-  Future<void> seed() async {
-    await db.upsertCollection(
-      Collection(
-        contentKind: 'unknownWebContent',
-        sequenceKind: 'none',
-        orderingBasis: 'discoveryOrder',
-        shapeConfidence: 'low',
-        lifecycle: 'active',
-        id: 'collection-1',
-        title: 'Fixture Collection',
-        sourceUrl: 'https://x.example/guide/foo',
-        host: 'x.example',
-        collectionKey: '/guide/foo',
-        createdAt: DateTime(2026, 7, 1),
-      ),
-    );
-    final staging = await store.beginEntry(
-      collectionId: 'collection-1',
-      entryId: 'c1',
-    );
-    final entries = <EntryAsset>[];
-    for (var i = 1; i <= 3; i++) {
-      await staging
-          .assetFile('00$i.png')
-          .writeAsBytes(panelPng(entry: 1, index: i));
-      entries.add(
-        EntryAsset(
-          index: i,
-          sourceUrl: 'https://cdn.example/$i.png',
-          status: AssetStatus.stored,
-          relativePath: 'assets/00$i.png',
-          width: 800,
-          height: 1200,
-          dimensionsVerified: true,
-        ),
-      );
-    }
-    final relative = await store.commit(
-      staging,
-      EntryManifest(
-        schemaVersion: 1,
-        entryId: 'c1',
-        collectionId: 'collection-1',
-        sourceUrl: 'https://x.example/guide/foo/1',
-        title: 'Foo Entry 1',
-        savedAt: DateTime(2026, 7, 20),
-        status: SaveStatus.complete,
-        detectedAssetCount: 3,
-        storedAssetCount: 3,
-        assets: entries,
-      ),
-    );
-    await db.upsertEntry(
-      Entry(
-        host: '',
-        contentKind: 'unknownWebContent',
-        contentKindConfidence: 'low',
-        contentKindIsUserSet: false,
-        id: 'c1',
-        collectionId: 'collection-1',
-        title: 'Foo Entry 1',
-        sourceUrl: 'https://x.example/guide/foo/1',
-        urlKey: 'https://x.example/guide/foo/1',
-        artifactFormat: 'imageSequence',
-        saveStatus: 'complete',
-        contentPath: relative,
-        savedAt: DateTime(2026, 7, 20),
-        detectedAssetCount: 3,
-        storedAssetCount: 3,
-        entryOrder: 1,
-        byteSize: 1024,
-        entryNumber: 1,
-        sourceMarker: 'Entry 1',
-        readStatus: 'unread',
-        progressFraction: 0,
-        progressPageIndex: 0,
-        progressOffsetInPage: 0,
-      ),
-    );
-  }
 
   /// The two real routes involved, so the test exercises the actual
   /// pop-or-replace decision rather than a stand-in.
-  Widget harness({required String start}) {
+  Widget app({required String start}) {
     final router = GoRouter(
       initialLocation: start,
       routes: [
         GoRoute(
           path: '/collection/:collectionId',
-          builder: (context, state) => CollectionDetailScreen(
-            collectionId: state.pathParameters['collectionId']!,
-          ),
+          builder: (context, state) =>
+              _EntryList(collectionId: state.pathParameters['collectionId']!),
           routes: const [],
         ),
         GoRoute(
           path: '/reader/:entryId',
-          builder: (context, state) =>
-              ReaderScreen(entryId: state.pathParameters['entryId']!),
+          builder: (context, state) => ReaderScreen(
+            entryId: state.pathParameters['entryId']!,
+            offline: offline,
+            collectionId: collectionId,
+          ),
         ),
       ],
     );
-    return ProviderScope(
-      overrides: [
-        databaseProvider.overrideWithValue(db),
-        fileStoreProvider.overrideWithValue(store),
-      ],
-      child: MaterialApp.router(routerConfig: router),
-    );
+    return ProviderScope(child: MaterialApp.router(routerConfig: router));
   }
 
   /// Real file IO needs the event loop to turn (`runAsync`), and route
@@ -173,8 +82,8 @@ void main() {
     });
   }
 
-  Future<void> openReader(WidgetTester tester, Widget app) async {
-    await tester.pumpWidget(app);
+  Future<void> openReader(WidgetTester tester, Widget widget) async {
+    await tester.pumpWidget(widget);
     for (var i = 0; i < 100; i++) {
       await tester.runAsync(
         () => Future<void>.delayed(const Duration(milliseconds: 20)),
@@ -186,39 +95,39 @@ void main() {
   }
 
   navTest('a right swipe leaves for the entry list', (tester) async {
-    await tester.runAsync(seed);
-    await openReader(tester, harness(start: '/reader/c1'));
+    await seed(tester);
+    await openReader(tester, app(start: '/reader/$entryId'));
 
     await tester.drag(find.byType(ListView), const Offset(220, 0));
     await settleAsync(tester);
 
     expect(find.byType(ReaderScreen), findsNothing);
-    expect(find.byType(CollectionDetailScreen), findsOneWidget);
+    expect(find.byType(_EntryList), findsOneWidget);
   });
 
   navTest('the position is written before the reader goes away', (
     tester,
   ) async {
-    await tester.runAsync(seed);
-    await openReader(tester, harness(start: '/reader/c1'));
+    await seed(tester);
+    await openReader(tester, app(start: '/reader/$entryId'));
 
     // Read a little — well inside the 2s save debounce, so nothing has been
     // persisted yet when the swipe happens.
     await tester.drag(find.byType(ListView), const Offset(0, -900));
     await tester.pump(const Duration(milliseconds: 50));
-    expect((await db.entryById('c1'))!.progressUpdatedAt, isNull);
+    expect((await h.repos.offline.activeCopyOf(entryId))!.anchorOffset, isNull);
 
     await tester.drag(find.byType(ListView), const Offset(220, 0));
     await settleAsync(tester);
 
-    final entry = (await db.entryById('c1'))!;
-    expect(entry.progressUpdatedAt, isNotNull);
-    expect(entry.progressFraction, greaterThan(0));
+    final copy = (await h.repos.offline.activeCopyOf(entryId))!;
+    expect(copy.anchorOffset, isNotNull);
+    expect(copy.anchorOffset, greaterThan(0));
   });
 
   navTest('scrolling to read never triggers it', (tester) async {
-    await tester.runAsync(seed);
-    await openReader(tester, harness(start: '/reader/c1'));
+    await seed(tester);
+    await openReader(tester, app(start: '/reader/$entryId'));
 
     // A long read scroll with the sideways wobble of a real thumb.
     await tester.drag(find.byType(ListView), const Offset(40, -600));
@@ -239,15 +148,13 @@ void main() {
   navTest('opened from the entry list, it pops back onto the same one', (
     tester,
   ) async {
-    await tester.runAsync(seed);
-    final app = harness(start: '/collection/collection-1');
-    await tester.pumpWidget(app);
+    await seed(tester);
+    final widget = app(start: '/collection/$collectionId');
+    await tester.pumpWidget(widget);
     await settleAsync(tester, rounds: 40);
 
-    final router = GoRouter.of(
-      tester.element(find.byType(CollectionDetailScreen)),
-    );
-    router.push('/reader/c1');
+    final router = GoRouter.of(tester.element(find.byType(_EntryList)));
+    router.push('/reader/$entryId');
     final readerList = find.descendant(
       of: find.byType(ReaderScreen),
       matching: find.byType(ListView),
@@ -264,7 +171,7 @@ void main() {
     await tester.drag(readerList.first, const Offset(220, 0));
     await settleAsync(tester);
 
-    expect(find.byType(CollectionDetailScreen), findsOneWidget);
+    expect(find.byType(_EntryList), findsOneWidget);
     expect(find.byType(ReaderScreen), findsNothing);
     // Popped rather than stacked: there is no second entry list underneath.
     expect(
@@ -275,11 +182,14 @@ void main() {
   });
 }
 
-/// Stands in for the retired V1 collection screen: these tests assert the
-/// reader RETURNS somewhere, not what that somewhere renders.
-class CollectionDetailScreen extends StatelessWidget {
-  const CollectionDetailScreen({super.key, this.collectionId = ''});
+/// Stands in for the collection's entry list: these tests assert the reader
+/// RETURNS somewhere, not what that somewhere renders.
+class _EntryList extends StatelessWidget {
+  const _EntryList({required this.collectionId});
+
   final String collectionId;
+
   @override
-  Widget build(BuildContext context) => const SizedBox.expand();
+  Widget build(BuildContext context) =>
+      Scaffold(body: Center(child: Text('entry list $collectionId')));
 }

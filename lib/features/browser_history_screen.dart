@@ -5,9 +5,9 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../browser/browser_url.dart';
-import '../browser/history_repository.dart';
+import '../browser/browsing_history.dart';
 import '../providers.dart';
-import '../storage/database.dart';
+import '../data/schema.dart' show HistoryRow;
 import '../ui/palette.dart';
 import '../ui/status_style.dart';
 import '../ui/theme.dart';
@@ -56,7 +56,7 @@ class _BrowserHistoryScreenState extends ConsumerState<BrowserHistoryScreen> {
     });
   }
 
-  List<BrowsingHistoryData> _filter(List<BrowsingHistoryData> visits) {
+  List<HistoryRow> _filter(List<HistoryRow> visits) {
     final needle = _query.trim().toLowerCase();
     if (needle.isEmpty) return visits;
     return visits
@@ -155,7 +155,7 @@ class _BrowserHistoryScreenState extends ConsumerState<BrowserHistoryScreen> {
     );
   }
 
-  Future<void> _showRowMenu(BrowsingHistoryData visit) async {
+  Future<void> _showRowMenu(HistoryRow visit) async {
     final palette = AppPalette.of(context);
     await showModalBottomSheet<void>(
       context: context,
@@ -268,7 +268,7 @@ class _BrowserHistoryScreenState extends ConsumerState<BrowserHistoryScreen> {
   /// History was reached directly from the Browser — reached from
   /// Settings it landed the user back on Settings, with the page loaded
   /// somewhere they could not see.
-  void _open(BrowsingHistoryData visit) {
+  void _open(HistoryRow visit) {
     // No reachability probe: a history row is a page the user has already
     // been to, and the Browser's own offline state explains it better than a
     // snackbar that refuses to move.
@@ -312,8 +312,8 @@ class _BrowserHistoryScreenState extends ConsumerState<BrowserHistoryScreen> {
 class _PagesTab extends StatelessWidget {
   const _PagesTab({required this.visits, required this.onMenu});
 
-  final List<BrowsingHistoryData> visits;
-  final void Function(BrowsingHistoryData) onMenu;
+  final List<HistoryRow> visits;
+  final void Function(HistoryRow) onMenu;
 
   @override
   Widget build(BuildContext context) {
@@ -370,7 +370,7 @@ class _SitesTab extends StatelessWidget {
     required this.onRemoveHost,
   });
 
-  final List<BrowsingHistoryData> visits;
+  final List<HistoryRow> visits;
   final String? expandedHost;
   final void Function(String host) onToggleHost;
   final void Function(String host) onRemoveHost;
@@ -378,7 +378,7 @@ class _SitesTab extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final palette = AppPalette.of(context);
-    final hosts = HistoryRepository.groupByHost(visits);
+    final hosts = groupVisitsByHost(visits);
     return ListView.builder(
       itemCount: hosts.length,
       itemBuilder: (context, i) {

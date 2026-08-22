@@ -1,15 +1,14 @@
 import 'dart:io';
 
-import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:web_reader/browser/page_data.dart';
 import 'package:web_reader/save/asset_fetcher.dart';
 import 'package:web_reader/save/capture_mode.dart';
 import 'package:web_reader/save/save_engine.dart';
+import 'package:web_reader/save/save_result_sink.dart';
 import 'package:web_reader/save/save_state.dart';
 import 'package:web_reader/storage/manifest.dart';
 import 'package:web_reader/core/config.dart';
-import 'package:web_reader/storage/database.dart';
 import 'package:web_reader/storage/file_store.dart';
 
 import 'helpers/scripted_browser.dart';
@@ -20,8 +19,8 @@ import 'helpers/scripted_browser.dart';
 /// extraction accept comment avatars as entry panels. None of that may
 /// ever reach disk.
 void main() {
-  late AppDatabase db;
   late Directory root;
+  late FileStore store;
 
   const config = SaveConfig(
     scrollDelay: Duration(milliseconds: 5),
@@ -36,21 +35,21 @@ void main() {
   );
 
   setUp(() {
-    db = AppDatabase.forTesting(NativeDatabase.memory());
     root = Directory.systemTemp.createTempSync('webread_hidden');
+    store = FileStore(root);
   });
   tearDown(() async {
-    await db.close();
     if (root.existsSync()) root.deleteSync(recursive: true);
   });
 
-  SaveEngine engine(ScriptedBrowser browser) => SaveEngine(
-    browser: browser,
-    db: db,
-    fileStore: FileStore(root),
-    downloader: AssetFetcher(browser: browser, config: config),
-    config: config,
-  );
+  SaveEngine engine(ScriptedBrowser browser, StagingHandle staging) =>
+      SaveEngine(
+        browser: browser,
+        fileStore: store,
+        downloader: AssetFetcher(browser: browser, config: config),
+        sink: StagedPackageSink(staging),
+        config: config,
+      );
 
   /// The audit's regression fixture: valid DOM (panels + avatars), zero
   /// viewport, frozen scroll.
@@ -73,9 +72,11 @@ void main() {
 
     final eng = SaveEngine(
       browser: browser,
-      db: db,
-      fileStore: FileStore(root),
+      fileStore: store,
       downloader: AssetFetcher(browser: browser, config: config),
+      sink: StagedPackageSink(
+        await store.beginEntry(collectionId: 'collection-1', entryId: 'e1'),
+      ),
       config: config,
       onProgress: (update) => states.add(update(const SaveProgress()).state),
     );
@@ -103,7 +104,6 @@ void main() {
     eng.cancel();
     final result = await run;
     expect(result.status, SaveStatus.failed);
-    expect(await db.allEntries(), isEmpty, reason: 'nothing stored');
     expect(
       Directory(root.path).listSync(recursive: true).whereType<File>(),
       isEmpty,
@@ -121,7 +121,11 @@ void main() {
           : lazyStripProbe(y: y, viewportHeight: 800, panelCount: 5),
     )..setUrl('https://x.example/guide/foo/1');
 
-    final result = await engine(browser).saveCurrentPage(
+    final staging = await store.beginEntry(
+      collectionId: 'collection-1',
+      entryId: 'e1',
+    );
+    final result = await engine(browser, staging).saveCurrentPage(
       collectionId: 'collection-1',
       entryOrder: 1,
       visitedNormalized: {},
@@ -178,7 +182,11 @@ void main() {
         },
       )..setUrl('https://x.example/guide/foo/1');
 
-      final result = await engine(browser).saveCurrentPage(
+      final staging = await store.beginEntry(
+        collectionId: 'collection-1',
+        entryId: 'e1',
+      );
+      final result = await engine(browser, staging).saveCurrentPage(
         collectionId: 'collection-1',
         entryOrder: 1,
         visitedNormalized: {},
@@ -188,7 +196,11 @@ void main() {
       expect(result.status, SaveStatus.failed);
       expect(result.extractionFailed, isTrue, reason: 'asks the user instead');
       expect(result.error, contains('changed under the save'));
-      expect(await db.allEntries(), isEmpty);
+      expect(
+        Directory(root.path).listSync(recursive: true).whereType<File>(),
+        isEmpty,
+        reason: 'nothing stored',
+      );
     },
   );
 

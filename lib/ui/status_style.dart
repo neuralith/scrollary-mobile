@@ -5,7 +5,6 @@ import '../core/device_storage.dart';
 import 'package:flutter/material.dart';
 
 import '../reading/reading_position.dart';
-import '../storage/database.dart';
 import 'palette.dart';
 import 'theme.dart';
 
@@ -34,64 +33,6 @@ class SaveLook {
   final bool dimTitle;
 }
 
-/// Presentation for an entry's save state. [filesMissing] is decided by
-/// the caller (the manifest is on disk but its images are not), because the
-/// database has no such status — the files simply stopped existing.
-SaveLook saveLook(
-  Entry entry,
-  AppPalette palette, {
-  bool filesMissing = false,
-}) {
-  if (filesMissing) {
-    return SaveLook(
-      Icons.folder_off,
-      palette.danger,
-      'Files missing',
-      dimTitle: true,
-    );
-  }
-  // An entry whose files the USER removed is not an error and not a
-  // discovery — it is a known entry that simply is not downloaded.
-  if (entry.contentPath == null && entry.offlineRemovedAt != null) {
-    return SaveLook(Icons.cloud, palette.inkFaint, 'Not downloaded');
-  }
-  return switch (entry.saveStatus) {
-    'knownRemote' => SaveLook(Icons.cloud, palette.inkFaint, 'On source only'),
-    'complete' => SaveLook(
-      Icons.download_for_offline,
-      palette.primary,
-      'Saved offline',
-    ),
-    'partial' => SaveLook(Icons.arrow_circle_down, palette.warn, 'Partial'),
-    'saving' => SaveLook(Icons.downloading, palette.primary, 'Saving'),
-    _ => SaveLook(Icons.error, palette.danger, 'Failed', dimTitle: true),
-  };
-}
-
-/// The save glyph on its own — 22px, matching the entry rows.
-class SaveGlyph extends StatelessWidget {
-  const SaveGlyph(this.look, {super.key, this.size = 22});
-
-  final SaveLook look;
-  final double size;
-
-  @override
-  Widget build(BuildContext context) =>
-      Icon(look.icon, size: size, color: look.color);
-}
-
-// ─── read state ─────────────────────────────────────────────────────────────
-
-/// Read-state indicator. Unread is a small filled dot, in-progress a partial
-/// ring with its percentage beside it, finished a hollow check.
-// ─── storage ────────────────────────────────────────────────────────────────
-
-/// The colours one storage reading wears, everywhere it appears.
-///
-/// Driven by the **percentage of the device in use**, not by the app's own
-/// share and not by free bytes alone (D51). One palette, one source, so the
-/// Library pill and the Storage screen can never disagree about how worried
-/// to look.
 class StorageLook {
   const StorageLook({
     required this.ink,
@@ -324,50 +265,6 @@ class _ProgressRingPainter extends CustomPainter {
       old.fill != fill;
 }
 
-class ReadGlyph extends StatelessWidget {
-  const ReadGlyph({super.key, required this.entry});
-
-  final Entry entry;
-
-  @override
-  Widget build(BuildContext context) {
-    final palette = AppPalette.of(context);
-    final status = readStatusFromName(entry.readStatus);
-    final pct =
-        (readProgressFor(
-                  readStatus: entry.readStatus,
-                  stored: entry.progressFraction,
-                ) *
-                100)
-            .round();
-
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        if (status == ReadStatus.inProgress)
-          Padding(
-            padding: const EdgeInsets.only(right: 6),
-            child: Text('$pct%', style: monoStyle(color: palette.inkMuted)),
-          ),
-        // One component for all three states: the ring IS the state, so an
-        // unread entry cannot render as finished by picking a wrong icon.
-        EntryProgressRing(
-          key: ValueKey('progressRing-${entry.id}'),
-          fraction: readProgressFor(
-            readStatus: entry.readStatus,
-            stored: entry.progressFraction,
-          ),
-          completed: status == ReadStatus.completed,
-        ),
-      ],
-    );
-  }
-}
-
-// ─── update-check state ─────────────────────────────────────────────────────
-
-/// How a collection's update-check state reads on its library row. "Never checked"
-/// is its own state and must never render as "no new entries".
 class CheckLook {
   const CheckLook(this.icon, this.label, this.bg, this.fg, this.border);
 

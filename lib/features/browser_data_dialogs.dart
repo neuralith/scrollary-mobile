@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../browser/history_repository.dart';
+import '../browser/browsing_history.dart';
 import '../providers.dart';
 import '../ui/palette.dart';
 import '../ui/status_style.dart';
@@ -11,7 +11,7 @@ import '../ui/theme.dart';
 ///
 /// The counts are read *before* anything is deleted, so "Clear today · 9
 /// pages" is a promise rather than a guess. The "does not touch" block is
-/// literally true: [HistoryRepository.clear] deletes from one table (§10).
+/// literally true: `BrowsingHistoryStore.clear` deletes from one table (§10).
 Future<void> showClearHistorySheet(BuildContext context, WidgetRef ref) async {
   await showModalBottomSheet<void>(
     context: context,

@@ -1,6 +1,5 @@
 import 'dart:io';
 
-import 'package:drift/native.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -8,10 +7,9 @@ import 'package:go_router/go_router.dart';
 import 'package:web_reader/browser/browser_navigator.dart';
 import 'package:web_reader/browser/browser_presentation.dart';
 import 'package:web_reader/core/connectivity.dart';
-import 'package:web_reader/features/entry_source_state.dart';
 import 'package:web_reader/features/open_in_browser.dart';
+import 'package:web_reader/library_ui/providers.dart' as libui;
 import 'package:web_reader/providers.dart';
-import 'package:web_reader/storage/database.dart';
 import 'package:web_reader/storage/file_store.dart';
 import 'package:web_reader/ui/theme.dart';
 
@@ -35,7 +33,6 @@ class _AlwaysOnline implements Connectivity {
 }
 
 void main() {
-  late AppDatabase db;
   late Directory root;
   late FakeBrowser browser;
   late V2Harness v2;
@@ -43,7 +40,6 @@ void main() {
   late ValueNotifier<int?> tabRequest;
 
   setUp(() {
-    db = AppDatabase.forTesting(NativeDatabase.memory());
     root = Directory.systemTemp.createTempSync('webread_open_in_browser');
     browser = FakeBrowser();
     v2 = V2Harness(browser: browser, fileStore: FileStore(root));
@@ -55,7 +51,6 @@ void main() {
     navigator.dispose();
     tabRequest.dispose();
     await v2.close();
-    await db.close();
     if (root.existsSync()) root.deleteSync(recursive: true);
   });
 
@@ -102,8 +97,8 @@ void main() {
 
     return ProviderScope(
       overrides: [
-        databaseProvider.overrideWithValue(db),
         fileStoreProvider.overrideWithValue(FileStore(root)),
+        libui.libraryUiServicesProvider.overrideWithValue(v2.ui),
         browserProvider.overrideWithValue(browser),
         v2ServicesProvider.overrideWithValue(v2.services),
         browserNavigatorProvider.overrideWithValue(navigator),

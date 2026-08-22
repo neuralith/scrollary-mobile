@@ -9,9 +9,8 @@
 ///    device may reach the network at all.
 ///  * **Placement submission** — over the service when there is one, and an
 ///    ordinary local write when there is not (V2-D7).
-///  * **Browsing history** — the V2 `history` table, presented to the browser
-///    screens that were written against V1's. The V1 `browsing_history` table
-///    has no writers left.
+///  * **Browsing history** — the V2 `history` table, which is the only one
+///    there is: V1's `browsing_history` retired with the rest of that schema.
 library;
 
 import 'dart:async';
@@ -22,7 +21,8 @@ import 'package:flutter/foundation.dart' show Listenable;
 
 import 'package:drift/drift.dart';
 
-import '../browser/history_repository.dart'
+import '../browser/browser_url.dart' show displayHost;
+import '../browser/browsing_history.dart'
     show HistoryClearRange, kHistoryMaxAge, kHistoryMaxRows;
 import '../core/sync_config.dart';
 import '../data/data_violations.dart';
@@ -35,12 +35,12 @@ import '../recognition/placement.dart' as placement;
 import '../recognition/recognise.dart';
 import '../save/queue_repository.dart';
 import '../save/queue_runner.dart';
-import '../storage/database.dart' show BrowsingHistoryData;
 import '../sync/download_intent.dart';
 import '../sync/scheduler.dart';
 import '../sync/session.dart';
 import '../sync/transport.dart';
 import 'check_controller.dart';
+import 'v2_save_flow.dart' show V2AssistController;
 
 /// Visits closer together than this to the same page are one visit.
 ///
@@ -58,6 +58,7 @@ class V2Services {
     required this.check,
     required this.recogniser,
     required this.history,
+    required this.assist,
     required this.sync,
   });
 
@@ -72,6 +73,12 @@ class V2Services {
 
   /// Device-local browsing history, over the V2 table.
   final BrowsingHistoryStore history;
+
+  /// The one user-assist host. A capture that cannot find the reading area
+  /// holds here and asks; the save sheet renders the request. One per app,
+  /// because two would mean a capture could hold on a controller nothing is
+  /// watching.
+  final V2AssistController assist;
 
   /// The one sync stack. Never null: an unconfigured or unentitled device has
   /// a scheduler that resolves no transport and does nothing, which is a state
@@ -94,6 +101,7 @@ class V2Services {
   Future<void> dispose() async {
     runner.dispose();
     check.dispose();
+    assist.dispose();
     await sync.dispose();
     await library.close();
   }
@@ -423,10 +431,9 @@ Future<void> recordCompletedVisit(
 
 /// The browser's history, over the V2 `history` table.
 ///
-/// The V1 `browsing_history` table has no writers left. This class exists so
-/// the screens written against V1's repository keep working unchanged while
-/// reading the one table the recognition pipeline also reads: two tables
-/// holding the same fact is how they come to disagree.
+/// One table, read by the recognition pipeline and by the History screen
+/// alike: two tables holding the same fact is how they come to disagree, which
+/// is why V1's `browsing_history` retired rather than being kept in step.
 ///
 /// Device-local either way. History is never synced (I11) and no intent about
 /// it can be expressed — the outbox's own CHECK constraint refuses the
@@ -440,8 +447,11 @@ class BrowsingHistoryStore {
   /// Record one completed navigation the user performed themselves.
   ///
   /// [userInitiated] is the whole gate and is passed straight through to
-  /// [HistoryStore], which refuses without it. The collapse in front of it is
-  /// browser-surface behaviour, which is why it is here rather than there.
+  /// [HistoryStore], which refuses without it. Two things sit in front of it
+  /// and both are browser-surface behaviour, which is why they are here rather
+  /// than there: the collapse window, and the title fallback — a page that
+  /// never reported a title reads better as its host than as an empty row the
+  /// user cannot identify.
   Future<void> recordVisit({
     required String landedUrl,
     required String title,
@@ -456,8 +466,10 @@ class BrowsingHistoryStore {
     DateTime? at,
   }) async {
     if (!userInitiated || !completed) return;
-    final label = title.trim();
     final when = (at ?? DateTime.now()).toUtc();
+    final redirected = requestedUrl.isNotEmpty && requestedUrl != landedUrl;
+    final trimmed = title.trim();
+    final label = trimmed.isEmpty ? displayHost(landedUrl) : trimmed;
     final key = urlKey ?? RecognitionKeys.of(landedUrl).urlKey;
     final recent = await _recentVisitTo(key, when);
     if (recent != null) {
@@ -473,7 +485,6 @@ class BrowsingHistoryStore {
       );
       return;
     }
-    final redirected = requestedUrl.isNotEmpty && requestedUrl != landedUrl;
     await _store.recordVisit(
       url: redirected ? requestedUrl : landedUrl,
       finalUrl: redirected ? landedUrl : null,
@@ -500,18 +511,18 @@ class BrowsingHistoryStore {
 
   /// Newest first, bounded — the one stream the History screen and Browser
   /// Home's *recently visited* both read.
-  Stream<List<BrowsingHistoryData>> watchRecent({int limit = 200}) {
+  Stream<List<HistoryRow>> watchRecent({int limit = 200}) {
     final query = _db.select(_db.history)
       ..orderBy([(h) => OrderingTerm.desc(h.visitedAt)])
       ..limit(limit);
-    return query.watch().map((rows) => rows.map(asVisit).toList());
+    return query.watch();
   }
 
-  Future<List<BrowsingHistoryData>> recent({int limit = 200}) async {
+  Future<List<HistoryRow>> recent({int limit = 200}) {
     final query = _db.select(_db.history)
       ..orderBy([(h) => OrderingTerm.desc(h.visitedAt)])
       ..limit(limit);
-    return (await query.get()).map(asVisit).toList();
+    return query.get();
   }
 
   Future<int> removeVisit(String id) =>
@@ -568,18 +579,3 @@ class BrowsingHistoryStore {
     return removed;
   }
 }
-
-/// One V2 history row, in the shape the browser screens read.
-///
-/// A view model, not a write: nothing constructed here reaches the V1 table.
-BrowsingHistoryData asVisit(HistoryRow row) => BrowsingHistoryData(
-  id: row.id,
-  url: row.url,
-  urlKey: row.urlKey,
-  host: row.host,
-  title: row.title,
-  source: row.source,
-  finalUrl: row.finalUrl,
-  completed: row.completed,
-  visitedAt: row.visitedAt,
-);

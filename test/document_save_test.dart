@@ -1,7 +1,5 @@
 import 'dart:io';
 
-import 'package:drift/drift.dart' as drift;
-import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:web_reader/browser/page_data.dart';
 import 'package:web_reader/core/config.dart';
@@ -9,7 +7,7 @@ import 'package:web_reader/save/asset_fetcher.dart';
 import 'package:web_reader/save/capture_mode.dart';
 import 'package:web_reader/save/document_extraction.dart';
 import 'package:web_reader/save/save_engine.dart';
-import 'package:web_reader/storage/database.dart';
+import 'package:web_reader/save/save_result_sink.dart';
 import 'package:web_reader/storage/document.dart';
 import 'package:web_reader/storage/file_store.dart';
 import 'package:web_reader/storage/manifest.dart';
@@ -23,11 +21,16 @@ import 'helpers/fake_browser.dart';
 /// magic-number verification and the atomic commit are all the production
 /// ones — only the browser is faked, because there is no WebView here.
 void main() {
-  late AppDatabase db;
   late Directory root;
   late FileStore store;
   late HttpServer server;
   late String origin;
+
+  /// The directory the last capture filled. The engine stops at *the package
+  /// is staged*, so this is where a committed entry's `contentPath` used to
+  /// point.
+  late StagingHandle staging;
+  var stagingSeq = 0;
 
   /// A real PNG from the fixture generator: the asset fetcher verifies by
   /// magic number AND enforces a minimum byte count, so a 70-byte 1x1 image
@@ -35,9 +38,9 @@ void main() {
   final pngBytes = panelPng(entry: 1, index: 1);
 
   setUp(() async {
-    db = AppDatabase.forTesting(NativeDatabase.memory());
     root = Directory.systemTemp.createTempSync('webread_docsave');
     store = FileStore(root);
+    stagingSeq = 0;
     Directory('${root.path}/library').createSync(recursive: true);
     Directory('${root.path}/tmp').createSync(recursive: true);
 
@@ -56,7 +59,6 @@ void main() {
 
   tearDown(() async {
     await server.close(force: true);
-    await db.close();
     if (root.existsSync()) root.deleteSync(recursive: true);
   });
 
@@ -107,11 +109,11 @@ void main() {
     ],
   );
 
-  SaveEngine engineFor(FakeBrowser browser) => SaveEngine(
+  SaveEngine engineFor(FakeBrowser browser, StagingHandle into) => SaveEngine(
     browser: browser,
-    db: db,
     fileStore: store,
     downloader: AssetFetcher(browser: browser, config: kDefaultSaveConfig),
+    sink: StagedPackageSink(into),
   );
 
   Future<EntrySaveResult> save(
@@ -126,13 +128,21 @@ void main() {
     if (provideDocument) {
       browser.addDocument(url, document ?? rawDocument(imageUrls: imageUrls));
     }
-    return engineFor(browser).saveCurrentPage(
+    staging = await store.beginEntry(
+      collectionId: null,
+      entryId: 'entry-${++stagingSeq}',
+    );
+    return engineFor(browser, staging).saveCurrentPage(
       collectionId: null,
       entryOrder: 1,
       visitedNormalized: {},
       captureMode: mode,
     );
   }
+
+  /// The structured document the capture wrote into staging.
+  StructuredDocument stagedDocument() =>
+      StructuredDocument.decode(staging.documentFile.readAsStringSync());
 
   group('text only', () {
     test('produces a structured-document package with no assets', () async {
@@ -141,18 +151,17 @@ void main() {
       expect(result.status, SaveStatus.complete);
       expect(result.captureMode, CaptureMode.textOnly);
       expect(result.manifest!.artifact, ArtifactFormat.structuredDocument);
+      expect(result.manifest!.captureMode, 'textOnly');
       expect(result.manifest!.document, isNotNull);
       expect(result.manifest!.assets, isEmpty);
 
-      final entry = (await db.entryById(result.entryId))!;
-      expect(entry.artifactFormat, 'structuredDocument');
-      expect(entry.captureMode, 'textOnly');
-
-      final document = await store.readDocument(entry.contentPath!);
-      expect(document!.blockCount, 4);
+      final document = stagedDocument();
+      expect(document.blockCount, 4);
       expect(document.textLength, greaterThan(0));
       expect(
-        Directory('${store.resolve(entry.contentPath!)}/assets').listSync(),
+        Directory(
+          '${staging.dir.path}/${FileStore.assetsFolderName}',
+        ).listSync(),
         isEmpty,
       );
     });
@@ -164,10 +173,8 @@ void main() {
       );
       expect(result.storedImages, 0);
       expect(result.detectedImages, 0);
-      final document = await store.readDocument(
-        (await db.entryById(result.entryId))!.contentPath!,
-      );
-      expect(document!.blocks.any((b) => b.isImage), isFalse);
+      final document = stagedDocument();
+      expect(document.blocks.any((b) => b.isImage), isFalse);
     });
 
     test('fewer than three images is not a failure for a text save', () async {
@@ -190,9 +197,8 @@ void main() {
       expect(result.detectedImages, 2);
       expect(result.storedImages, 2);
 
-      final entry = (await db.entryById(result.entryId))!;
-      final manifest = (await store.readManifest(entry.contentPath!))!;
-      final document = (await store.readDocument(entry.contentPath!))!;
+      final manifest = result.manifest!;
+      final document = stagedDocument();
 
       final images = document.blocks.where((b) => b.isImage).toList();
       expect(images, hasLength(2));
@@ -202,9 +208,7 @@ void main() {
       for (final block in images) {
         final asset = manifest.assetByIndex(block.assetIndex!)!;
         expect(
-          File(
-            '${store.resolve(entry.contentPath!)}/${asset.relativePath}',
-          ).existsSync(),
+          File('${staging.dir.path}/${asset.relativePath}').existsSync(),
           isTrue,
         );
       }
@@ -220,9 +224,8 @@ void main() {
       expect(result.isUsable, isTrue);
       expect(result.storedImages, 1);
 
-      final entry = (await db.entryById(result.entryId))!;
-      expect(entry.saveStatus, 'partial');
-      final document = (await store.readDocument(entry.contentPath!))!;
+      expect(result.manifest!.status, SaveStatus.partial);
+      final document = stagedDocument();
       final images = document.blocks.where((b) => b.isImage).toList();
       expect(images[0].assetIndex, isNotNull);
       // The failed one keeps its place and its source, with no asset.
@@ -238,9 +241,7 @@ void main() {
 
       expect(result.status, SaveStatus.partial);
       expect(result.isUsable, isTrue);
-      final document = (await store.readDocument(
-        (await db.entryById(result.entryId))!.contentPath!,
-      ))!;
+      final document = stagedDocument();
       expect(document.textLength, greaterThan(0));
       expect(document.storedImageBlocks, isEmpty);
       expect(document.missingImageBlocks, hasLength(2));
@@ -250,9 +251,7 @@ void main() {
       final result = await save(CaptureMode.textAndImages);
       expect(result.status, SaveStatus.complete);
       expect(result.detectedImages, 0);
-      final document = (await store.readDocument(
-        (await db.entryById(result.entryId))!.contentPath!,
-      ))!;
+      final document = stagedDocument();
       expect(document.blocks.any((b) => b.isImage), isFalse);
     });
   });
@@ -295,27 +294,44 @@ void main() {
       final result = await save(CaptureMode.textOnly, provideDocument: false);
       expect(result.status, SaveStatus.failed);
       expect(Directory('${root.path}/library').listSync().length, before);
-      // And no staging left behind.
-      expect(Directory('${root.path}/tmp').listSync(), isEmpty);
+      // And nothing staged behind: the directory the caller opened is still
+      // as empty as it was handed over.
+      expect(
+        Directory(
+          '${root.path}/tmp',
+        ).listSync(recursive: true).whereType<File>(),
+        isEmpty,
+      );
     });
   });
 
   group('re-saving across formats', () {
-    test('a format change keeps the fraction and resets the anchor', () async {
-      // Save as text, then read halfway, then re-save as an image sequence.
-      final first = await save(CaptureMode.textOnly);
-      await db.writeEntryReading(
-        first.entryId,
-        const EntriesCompanion(
-          readStatus: drift.Value('inProgress'),
-          progressFraction: drift.Value(0.6),
-          progressPageIndex: drift.Value(14),
-          progressOffsetInPage: drift.Value(0.5),
-        ),
-      );
+    /// The previous capture of this page, as the seam hands it back — read
+    /// most of the way through, in [artifactFormat].
+    CapturedEntry readHalfWay(String artifactFormat) => CapturedEntry(
+      id: 'entry-1',
+      title: 'A readable page',
+      sourceUrl: 'https://example.com/text/1',
+      urlKey: 'https://example.com/text/1',
+      host: 'example.com',
+      contentKind: 'article',
+      contentKindConfidence: 'high',
+      contentKindIsUserSet: false,
+      artifactFormat: artifactFormat,
+      saveStatus: 'complete',
+      savedAt: DateTime(2026, 7, 1),
+      readStatus: 'inProgress',
+      progressFraction: 0.6,
+      progressPageIndex: 14,
+      progressOffsetInPage: 0.5,
+    );
 
-      final existing = (await db.entryById(first.entryId))!;
-      final carried = carryReading(existing, ArtifactFormat.imageSequence);
+    test('a format change keeps the fraction and resets the anchor', () {
+      // Saved as text, then read halfway, then re-saved as an image sequence.
+      final carried = carryReading(
+        readHalfWay('structuredDocument'),
+        ArtifactFormat.imageSequence,
+      );
 
       expect(carried.anchorReset, isTrue);
       expect(carried.readStatus, 'inProgress');
@@ -327,43 +343,14 @@ void main() {
       expect(carried.offsetInPage, 0);
     });
 
-    test('re-saving in the same format keeps the exact anchor', () async {
-      final first = await save(CaptureMode.textOnly);
-      await db.writeEntryReading(
-        first.entryId,
-        const EntriesCompanion(
-          readStatus: drift.Value('inProgress'),
-          progressFraction: drift.Value(0.6),
-          progressPageIndex: drift.Value(14),
-          progressOffsetInPage: drift.Value(0.5),
-        ),
+    test('re-saving in the same format keeps the exact anchor', () {
+      final carried = carryReading(
+        readHalfWay('structuredDocument'),
+        ArtifactFormat.structuredDocument,
       );
-
-      final existing = (await db.entryById(first.entryId))!;
-      final carried = carryReading(existing, ArtifactFormat.structuredDocument);
       expect(carried.anchorReset, isFalse);
       expect(carried.pageIndex, 14);
       expect(carried.offsetInPage, 0.5);
-    });
-
-    test('a re-save replaces the package without losing the old one', () async {
-      final first = await save(CaptureMode.textOnly);
-      final path = (await db.entryById(first.entryId))!.contentPath!;
-      expect((await store.readDocument(path))!.blockCount, 4);
-
-      final second = await save(
-        CaptureMode.textAndImages,
-        imageUrls: ['$origin/a.png'],
-      );
-      // Same URL, so the same entry row and the same directory.
-      expect(second.entryId, first.entryId);
-      final after = (await db.entryById(first.entryId))!;
-      expect(after.captureMode, 'textAndImages');
-      expect(after.storedAssetCount, 1);
-      expect(
-        Directory('${store.resolve(path)}.previous').existsSync(),
-        isFalse,
-      );
     });
   });
 }

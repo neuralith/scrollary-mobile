@@ -6,8 +6,7 @@ import 'package:flutter/foundation.dart';
 
 import '../browser/browser_controller.dart';
 import '../capability/internal_build.dart';
-
-import '../storage/database.dart';
+import '../data/schema.dart';
 import '../storage/file_store.dart';
 
 /// Whether the destructive development reset may be shown at all.
@@ -72,7 +71,7 @@ class ResetReport {
 ///
 /// ### Why the database file is emptied rather than deleted
 ///
-/// Deleting the file means disposing the live `AppDatabase` — and every
+/// Deleting the file means disposing the live [LibraryDatabase] — and every
 /// provider, stream and service in the running app holds it. Tearing that
 /// graph down mid-session and rebuilding it is exactly the kind of
 /// half-initialised state that produces bugs which look like product bugs.
@@ -88,7 +87,7 @@ class LocalResetService {
     this.clearCookies,
   });
 
-  final AppDatabase db;
+  final LibraryDatabase db;
   final FileStore fileStore;
   final BrowserController browser;
 

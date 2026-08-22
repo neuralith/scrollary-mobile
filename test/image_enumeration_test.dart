@@ -1,13 +1,12 @@
 import 'dart:io';
 
-import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:web_reader/browser/page_data.dart';
 import 'package:web_reader/core/config.dart';
 import 'package:web_reader/save/asset_fetcher.dart';
 import 'package:web_reader/save/capture_mode.dart';
 import 'package:web_reader/save/save_engine.dart';
-import 'package:web_reader/storage/database.dart';
+import 'package:web_reader/save/save_result_sink.dart';
 import 'package:web_reader/storage/file_store.dart';
 import 'package:web_reader/storage/manifest.dart';
 
@@ -28,11 +27,15 @@ import 'helpers/fake_browser.dart';
 /// cap is deliberately tiny so every boundary and every failure mode is cheap
 /// to state.
 void main() {
-  late AppDatabase db;
   late Directory root;
   late FileStore store;
   late HttpServer server;
   late String origin;
+
+  /// The directory the last capture filled. The engine stops at *the package
+  /// is staged*, so this is where its bytes are.
+  late StagingHandle staging;
+  var stagingSeq = 0;
 
   const cap = 4;
 
@@ -49,9 +52,9 @@ void main() {
   );
 
   setUp(() async {
-    db = AppDatabase.forTesting(NativeDatabase.memory());
     root = Directory.systemTemp.createTempSync('webread_enum');
     store = FileStore(root);
+    stagingSeq = 0;
     Directory('${root.path}/library').createSync(recursive: true);
     Directory('${root.path}/tmp').createSync(recursive: true);
 
@@ -67,7 +70,6 @@ void main() {
 
   tearDown(() async {
     await server.close(force: true);
-    await db.close();
     if (root.existsSync()) root.deleteSync(recursive: true);
   });
 
@@ -104,12 +106,36 @@ void main() {
     return b;
   }
 
-  SaveEngine engineFor(FakeBrowser b, {SaveConfig c = cfg}) => SaveEngine(
+  SaveEngine engineFor(
+    FakeBrowser b, {
+    required SaveResultSink sink,
+    SaveConfig c = cfg,
+  }) => SaveEngine(
     browser: b,
-    db: db,
     fileStore: store,
     downloader: AssetFetcher(browser: b, config: c),
+    sink: sink,
     config: c,
+  );
+
+  /// A previous capture of the same address, as the seam hands one back.
+  ///
+  /// Only [storedAssetCount] reaches the guard below; the rest is the minimum
+  /// a [CapturedEntry] needs to exist.
+  CapturedEntry priorCapture(String url, int storedAssetCount) => CapturedEntry(
+    id: 'prior-entry',
+    title: 'A long entry',
+    sourceUrl: url,
+    urlKey: url,
+    host: 'x.example',
+    contentKind: 'unknownWebContent',
+    contentKindConfidence: 'low',
+    contentKindIsUserSet: false,
+    artifactFormat: 'imageSequence',
+    saveStatus: 'complete',
+    savedAt: DateTime(2026, 7, 1),
+    detectedAssetCount: storedAssetCount,
+    storedAssetCount: storedAssetCount,
   );
 
   Future<EntrySaveResult> save(
@@ -117,23 +143,35 @@ void main() {
     CaptureMode? mode = CaptureMode.imageSequence,
     SaveConfig c = cfg,
     bool replaceExisting = false,
-  }) => engineFor(b, c: c).saveCurrentPage(
-    collectionId: null,
-    entryOrder: 1,
-    visitedNormalized: {},
-    captureMode: mode,
-    replaceExisting: replaceExisting,
-  );
+    CapturedEntry? existing,
+  }) async {
+    staging = await store.beginEntry(
+      collectionId: null,
+      entryId: 'entry-${++stagingSeq}',
+    );
+    return engineFor(
+      b,
+      sink: existing == null
+          ? StagedPackageSink(staging)
+          : _PriorCaptureSink(staging, existing),
+      c: c,
+    ).saveCurrentPage(
+      collectionId: null,
+      entryOrder: 1,
+      visitedNormalized: {},
+      captureMode: mode,
+      replaceExisting: replaceExisting,
+    );
+  }
 
   group('a page within one slice is unaffected', () {
     test('below the boundary saves complete', () async {
       const url = 'https://x.example/e/below';
       final result = await save(browserFor(url, cap - 1));
-      final entry = await db.entryById(result.entryId);
 
       expect(result.status, SaveStatus.complete);
       expect(result.detectedImages, cap - 1);
-      expect(entry!.saveError, isNull);
+      expect(result.manifest!.statusReason, isNull);
       expect(result.storedImages, cap - 1);
     });
 
@@ -157,12 +195,11 @@ void main() {
       const url = 'https://x.example/e/one-above';
       final b = browserFor(url, cap + 1);
       final result = await save(b);
-      final entry = await db.entryById(result.entryId);
 
       expect(result.status, SaveStatus.complete);
       expect(result.detectedImages, cap + 1);
       expect(result.storedImages, cap + 1);
-      expect(entry!.saveError, isNull);
+      expect(result.manifest!.statusReason, isNull);
       expect(b.sliceOffsets, isNotEmpty);
     });
 
@@ -171,13 +208,12 @@ void main() {
       const count = cap * 5 + 3;
       final b = browserFor(url, count);
       final result = await save(b);
-      final entry = await db.entryById(result.entryId);
 
       expect(result.status, SaveStatus.complete);
       expect(result.detectedImages, count);
-      expect(entry!.detectedAssetCount, count);
-      expect(entry.storedAssetCount, count);
-      expect(entry.saveStatus, 'complete');
+      expect(result.manifest!.detectedAssetCount, count);
+      expect(result.manifest!.storedAssetCount, count);
+      expect(result.manifest!.status, SaveStatus.complete);
     });
 
     test('the reassembled order is document order', () async {
@@ -245,17 +281,15 @@ void main() {
         const url = 'https://x.example/e/over-ceiling';
         const count = cap * 5;
         final result = await save(browserFor(url, count), c: bounded);
-        final entry = await db.entryById(result.entryId);
 
         expect(result.status, SaveStatus.partial);
-        expect(entry!.saveStatus, 'partial');
+        expect(result.manifest!.status, SaveStatus.partial);
         expect(
           result.manifest!.statusReason,
           contains('imagesTruncated:'),
           reason: 'the shortfall has to be machine-testable, not just prose',
         );
         expect(result.manifest!.statusReason, contains('/$count'));
-        expect(entry.saveError, contains('of $count images'));
         expect(
           result.detectedImages,
           lessThan(count),
@@ -301,27 +335,23 @@ void main() {
 
       // A good, complete save first.
       final first = await save(browserFor(url, cap * 5));
-      final before = await db.entryById(first.entryId);
-      expect(before!.saveStatus, 'complete');
-      expect(before.storedAssetCount, cap * 5);
-      final keptPath = before.contentPath;
+      expect(first.manifest!.status, SaveStatus.complete);
+      expect(first.manifest!.storedAssetCount, cap * 5);
+      final kept = staging;
 
       // Now the same page, read under a ceiling that cannot see it all.
       final second = await save(
         browserFor(url, cap * 5),
         c: bounded,
         replaceExisting: true,
+        existing: priorCapture(url, cap * 5),
       );
-      final after = await db.entryById(first.entryId);
 
       expect(second.status, SaveStatus.failed);
       expect(second.error, contains('existing save'));
-      expect(after!.saveStatus, 'complete', reason: 'the good row survives');
-      expect(after.storedAssetCount, cap * 5);
-      expect(after.contentPath, keptPath);
 
       final files = Directory(
-        '${root.path}/$keptPath/assets',
+        '${kept.dir.path}/${FileStore.assetsFolderName}',
       ).listSync().whereType<File>().length;
       expect(files, cap * 5, reason: 'and so do its files on disk');
     });
@@ -345,18 +375,18 @@ void main() {
         );
 
         final first = await save(browserFor(url, cap), c: cfg);
-        expect((await db.entryById(first.entryId))!.storedAssetCount, cap);
+        expect(first.manifest!.storedAssetCount, cap);
 
         final second = await save(
           browserFor(url, cap * 6),
           c: bounded,
           replaceExisting: true,
+          existing: priorCapture(url, cap),
         );
-        final after = await db.entryById(first.entryId);
 
         expect(second.status, SaveStatus.partial);
-        expect(after!.storedAssetCount, greaterThan(cap));
-        expect(after.saveStatus, 'partial');
+        expect(second.manifest!.storedAssetCount, greaterThan(cap));
+        expect(second.manifest!.status, SaveStatus.partial);
       },
     );
   });
@@ -365,7 +395,11 @@ void main() {
     test('cancelling during enumeration writes nothing', () async {
       const url = 'https://x.example/e/cancel';
       final b = browserFor(url, cap * 20);
-      final engine = engineFor(b);
+      final handle = await store.beginEntry(
+        collectionId: null,
+        entryId: 'entry-cancel',
+      );
+      final engine = engineFor(b, sink: StagedPackageSink(handle));
       b.onImageSlice = (offset) {
         if (offset >= cap * 3) engine.cancel();
       };
@@ -379,7 +413,6 @@ void main() {
 
       expect(result.status, SaveStatus.failed);
       expect(result.error, 'cancelled');
-      expect(await db.entryById(result.entryId), isNull);
       final lib = Directory('${root.path}/library');
       expect(
         lib.listSync().whereType<Directory>().isEmpty,
@@ -543,4 +576,20 @@ void main() {
       },
     );
   });
+}
+
+/// A [StagedPackageSink] that answers the re-save lookup with a capture that
+/// already exists.
+///
+/// The engine's "never trade a good copy for a shorter one" guard reads
+/// exactly one thing off the seam — how much the previous capture of this
+/// address holds — and there is no library left in this lane to hold it. This
+/// supplies that one answer and nothing else: the package still stays staged.
+class _PriorCaptureSink extends StagedPackageSink {
+  _PriorCaptureSink(super.staging, this.existing);
+
+  final CapturedEntry existing;
+
+  @override
+  Future<CapturedEntry?> findExistingEntry(String urlKey) async => existing;
 }

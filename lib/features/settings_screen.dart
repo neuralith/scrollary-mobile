@@ -13,7 +13,8 @@ import '../ui/status_style.dart';
 import 'appearance_selector.dart';
 import 'browser_data_dialogs.dart';
 import 'foreground_gate_sheet.dart';
-import 'library_formats.dart';
+import 'page_hints_screen.dart' show libraryPageHintsProvider;
+import 'storage_screen.dart' show formatBytes;
 import '../library/entry_labels.dart';
 
 /// Settings is a list of doors, not a control panel. Everything that changes
@@ -52,12 +53,10 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final rules = ref.watch(pageHintsStreamProvider).value;
-    final entries = ref.watch(entriesStreamProvider).value;
-    final storedBytes =
-        entries?.fold<int>(0, (sum, c) => sum + c.byteSize) ?? 0;
-    final offlineEntries =
-        entries?.where((c) => c.contentPath != null).length ?? 0;
+    final rules = ref.watch(libraryPageHintsProvider).value;
+    final holdings = ref.watch(offlineHoldingsProvider).value;
+    final storedBytes = holdings?.bytes ?? 0;
+    final offlineEntries = holdings?.entries ?? 0;
 
     final savedSites = ref.watch(savedSitesProvider).value;
     final visits = ref.watch(browsingHistoryProvider).value;
@@ -136,17 +135,13 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             leading: const Icon(Icons.storage),
             title: const Text('Storage'),
             subtitle: Text(
-              entries == null
+              holdings == null
                   ? 'Loading…'
                   : '${formatBytes(storedBytes)} used · '
                         '${kPlainEntryLabels.count(offlineEntries)} offline',
             ),
             trailing: const Icon(Icons.chevron_right),
             onTap: () => LeaveBrowserGuard.push(context, '/storage'),
-          ),
-          _SettingsNote(
-            'What happens to a finished entry\'s downloaded files is set '
-            'per collection — open a collection and use Downloaded entries.',
           ),
           const SectionLabel('SAVING & SOURCES'),
           const KeepWorkingSettingRow(),
