@@ -202,7 +202,7 @@ Columns: **ID · outcome · scope · depends · owns · parallel-safe with · va
 
 | ID | Outcome | Depends | Owns | Validation | Class |
 |---|---|---|---|---|---|
-| **D1** | Library shelf over the Folder tree | Gate C | `lib/library_ui/shelf_*` | Widget tests; empty and deep-nesting states | Functionality · **done** |
+| **D1** | Library shelf over the Folder tree — one page, Folders as collapsible sections (V2-D43) | Gate C | `lib/library_ui/shelf_*` | Widget tests; empty and deep-nesting states | Functionality · **done** |
 | **D2** | Folder management: create, rename, move, delete | C3 | `lib/library_ui/folder_*` | Delete shows reparent, never data loss | Functionality · **done** |
 | **D3** | Collection detail: **one** Entry list, availability as row state | C4, C5 | `lib/library_ui/collection_*` | No separate download-oriented list exists | Functionality · **done** |
 | **D4** | Source presentation and preferred-source switch | C4 | `lib/library_ui/source_*` | Dead sources shown honestly | Functionality · **done** |

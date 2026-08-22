@@ -18,8 +18,9 @@ void main() {
   setUp(() => h = UiHarness());
   tearDown(() => h.close());
 
-  Future<void> openFolderMenu(WidgetTester tester) async {
-    await tapAndPump(tester, find.byTooltip('Folder actions'));
+  /// Every Folder is a section on the one Library page, with its own menu.
+  Future<void> openFolderMenu(WidgetTester tester, String folderId) async {
+    await tapAndPump(tester, find.byKey(ValueKey('folderMenu-$folderId')));
   }
 
   screenTest('creating a folder names it and puts it in this folder', (
@@ -30,7 +31,9 @@ void main() {
     await tester.pumpWidget(h.app(const ShelfScreen()));
     await pumpUntil(tester, find.text('Your library is empty'));
 
-    await tapAndPump(tester, find.byTooltip('New folder'));
+    // Making a Folder is a Library action, not a header button.
+    await tapAndPump(tester, find.byKey(const ValueKey('libraryMenu')));
+    await tapAndPump(tester, find.text('New folder'));
     await tester.enterText(
       find.byKey(const ValueKey('folderNameField')),
       'Reference',
@@ -38,19 +41,19 @@ void main() {
     await tapAndPump(tester, find.text('Create'));
     await pumpUntil(tester, find.text('Reference'));
 
-    expect(find.text('FOLDERS · 1'), findsOneWidget);
+    expect(find.byKey(const ValueKey('libraryMenu')), findsOneWidget);
   });
 
-  screenTest('renaming a folder changes what the shelf is called', (
+  screenTest('renaming a folder changes what its section is called', (
     tester,
   ) async {
     final root = await h.root();
     final weekly = await h.folder('Weekly', parentId: root.id);
 
-    await tester.pumpWidget(h.app(ShelfScreen(folderId: weekly.id)));
+    await tester.pumpWidget(h.app(const ShelfScreen()));
     await pumpUntil(tester, find.text('Weekly'));
 
-    await openFolderMenu(tester);
+    await openFolderMenu(tester, weekly.id);
     await tapAndPump(tester, find.text('Rename folder'));
     await tester.enterText(
       find.byKey(const ValueKey('folderNameField')),
@@ -67,10 +70,10 @@ void main() {
     final moving = await h.folder('Weekly', parentId: root.id);
     final target = await h.folder('Reference', parentId: root.id);
 
-    await tester.pumpWidget(h.app(ShelfScreen(folderId: moving.id)));
+    await tester.pumpWidget(h.app(const ShelfScreen()));
     await pumpUntil(tester, find.text('Weekly'));
 
-    await openFolderMenu(tester);
+    await openFolderMenu(tester, moving.id);
     await tapAndPump(tester, find.text('Move folder'));
     await pumpUntil(tester, find.byKey(ValueKey('folderOption-${target.id}')));
     await tapAndPump(tester, find.byKey(ValueKey('folderOption-${target.id}')));
@@ -89,10 +92,10 @@ void main() {
     final parent = await h.folder('Weekly', parentId: root.id);
     final child = await h.folder('Monday', parentId: parent.id);
 
-    await tester.pumpWidget(h.app(ShelfScreen(folderId: parent.id)));
+    await tester.pumpWidget(h.app(const ShelfScreen()));
     await pumpUntil(tester, find.text('Monday'));
 
-    await openFolderMenu(tester);
+    await openFolderMenu(tester, parent.id);
     await tapAndPump(tester, find.text('Move folder'));
     await pumpUntil(tester, find.byKey(ValueKey('folderOption-${child.id}')));
     await tapAndPump(tester, find.byKey(ValueKey('folderOption-${child.id}')));
@@ -114,10 +117,10 @@ void main() {
       title: 'A one-off piece',
     );
 
-    await tester.pumpWidget(h.app(ShelfScreen(folderId: weekly.id)));
+    await tester.pumpWidget(h.app(const ShelfScreen()));
     await pumpUntil(tester, find.text('Serial Alpha'));
 
-    await openFolderMenu(tester);
+    await openFolderMenu(tester, weekly.id);
     await tapAndPump(tester, find.text('Delete folder'));
 
     // The confirmation states the reparent in the repository's own counts,
@@ -146,10 +149,10 @@ void main() {
     final root = await h.root();
     final empty = await h.folder('Reference', parentId: root.id);
 
-    await tester.pumpWidget(h.app(ShelfScreen(folderId: empty.id)));
-    await pumpUntil(tester, find.text('This folder is empty'));
+    await tester.pumpWidget(h.app(const ShelfScreen()));
+    await pumpUntil(tester, find.byKey(ValueKey('folderEmpty-${empty.id}')));
 
-    await openFolderMenu(tester);
+    await openFolderMenu(tester, empty.id);
     await tapAndPump(tester, find.text('Delete folder'));
     expect(find.textContaining('This folder is empty'), findsWidgets);
     expect(find.textContaining('moves up to'), findsNothing);

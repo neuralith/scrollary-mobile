@@ -63,7 +63,10 @@ in [docs/DECISIONS.md](docs/DECISIONS.md).
   `lib/data/schema.dart`), and offline read through `OfflineCopy`. The two
   reviewed port seams are recorded in
   [docs/V2_PORT_CHECKLIST.md](docs/V2_PORT_CHECKLIST.md) §17.
-- **Library UX** (`lib/library_ui`, D1–D7) — shelf, folders, collection detail
+- **Library UX** (`lib/library_ui`, D1–D7) — the one-page Library (root
+  Collections listed directly, Folders as collapsible sections, Continue
+  Reading and the Settings/Activity doors in its header — V2-D43), folder
+  actions, collection detail
   (one list, with a NEEDS PLACEMENT section), sources, entry actions including
   queue wiring, the placement dialog, the sync status section.
 - **Sync** (`lib/sync`, G1–G7) — push, pull, identity canonicalisation, merge,

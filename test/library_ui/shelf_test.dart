@@ -1,5 +1,5 @@
 /// The Library shelf (D1): what is on it, what it says when it is empty, and
-/// how it moves between Folders.
+/// how Folders group it on the one page without hiding any of it.
 ///
 /// The property this file guards hardest: **an item is on the shelf because it
 /// is in the library**. Nothing here is downloaded, and everything renders.
@@ -38,9 +38,9 @@ void main() {
     await pumpUntil(tester, find.text('Serial Alpha'));
 
     expect(find.text('Library'), findsOneWidget);
-    expect(find.text('FOLDERS · 1'), findsOneWidget);
+    // One count for the library: what is in it, wherever it is filed.
+    expect(find.text('MY LIBRARY · 2'), findsOneWidget);
     expect(find.text('Weekly'), findsOneWidget);
-    expect(find.text('COLLECTIONS · 1'), findsOneWidget);
     // The reading signal: what is in the library, and how much is unread.
     // Not what has been downloaded — nothing here has.
     expect(find.text('3 items · 2 unread'), findsOneWidget);
@@ -74,7 +74,7 @@ void main() {
     expect(find.textContaining('not because this device'), findsOneWidget);
   });
 
-  screenTest('tapping a folder navigates into it, scoped to that folder', (
+  screenTest('a folder is a section on the same page, never a screen', (
     tester,
   ) async {
     final root = await h.root();
@@ -83,13 +83,27 @@ void main() {
     await h.collection('Inside Work', folderId: weekly.id);
 
     await tester.pumpWidget(h.app(const ShelfScreen()));
-    await pumpUntil(tester, find.text('Root Work'));
-
-    await tapAndPump(tester, find.byKey(ValueKey('folderRow-${weekly.id}')));
     await pumpUntil(tester, find.text('Inside Work'));
 
-    expect(find.text('Weekly'), findsOneWidget); // now the title
-    expect(find.text('Root Work'), findsNothing);
+    // Both Collections are on the page at once: the one at the root and the
+    // one filed under Weekly, under Weekly's header.
+    expect(find.text('Root Work'), findsOneWidget);
+    expect(find.text('Weekly'), findsOneWidget);
+    expect(find.text('1 collection'), findsOneWidget);
+    expect(find.byTooltip('Back'), findsNothing);
+    expect(find.text('Library'), findsOneWidget);
+    final header = tester.getTopLeft(
+      find.byKey(ValueKey('folderSection-${weekly.id}')),
+    );
+    expect(
+      tester.getTopLeft(find.text('Inside Work')).dy,
+      greaterThan(header.dy),
+    );
+    // Filed, and drawn in from the edge to say so.
+    expect(
+      tester.getTopLeft(find.text('Inside Work')).dx,
+      greaterThan(tester.getTopLeft(find.text('Root Work')).dx),
+    );
   });
 
   screenTest('an empty folder says it is empty, not that the library is', (
@@ -101,13 +115,13 @@ void main() {
 
     await tester.pumpWidget(h.app(const ShelfScreen()));
     await pumpUntil(tester, find.text('Root Work'));
-    await tapAndPump(tester, find.byKey(ValueKey('folderRow-${empty.id}')));
-    await pumpUntil(tester, find.text('This folder is empty'));
 
+    expect(find.byKey(ValueKey('folderEmpty-${empty.id}')), findsOneWidget);
+    expect(find.text('Empty'), findsOneWidget);
     expect(find.text('Your library is empty'), findsNothing);
   });
 
-  screenTest('nesting is navigable to any depth, one shelf per level', (
+  screenTest('nesting is drawn to any depth, one section inside another', (
     tester,
   ) async {
     final root = await h.root();
@@ -117,19 +131,18 @@ void main() {
     await h.collection('Deep Work', folderId: c.id);
 
     await tester.pumpWidget(h.app(const ShelfScreen()));
-    await pumpUntil(tester, find.text('Weekly'));
-
-    await tapAndPump(tester, find.byKey(ValueKey('folderRow-${a.id}')));
-    await pumpUntil(tester, find.byKey(ValueKey('folderRow-${b.id}')));
-    await tapAndPump(tester, find.byKey(ValueKey('folderRow-${b.id}')));
-    await pumpUntil(tester, find.byKey(ValueKey('folderRow-${c.id}')));
-    await tapAndPump(tester, find.byKey(ValueKey('folderRow-${c.id}')));
     await pumpUntil(tester, find.text('Deep Work'));
 
-    expect(find.text('Morning'), findsOneWidget); // the title, at depth three
-    // No tree widget anywhere: each level is its own shelf, and the way back
-    // is the route stack.
-    expect(find.byTooltip('Back'), findsOneWidget);
+    // Every level is on the page, and no navigation happened to get there.
+    for (final folder in [a, b, c]) {
+      expect(
+        find.byKey(ValueKey('folderSection-${folder.id}')),
+        findsOneWidget,
+      );
+    }
+    expect(find.byTooltip('Back'), findsNothing);
+    // Each header counts everything beneath it.
+    expect(find.text('1 collection'), findsNWidgets(3));
   });
 
   screenTest('header actions are HeaderIconButtons at the header size', (
@@ -141,10 +154,13 @@ void main() {
     await tester.pumpWidget(h.app(const ShelfScreen()));
     await pumpUntil(tester, find.text('Weekly'));
 
-    // Root: new folder only. Renaming, moving and deleting the root are not
-    // offered at all, so the control that would carry them is absent.
-    expect(find.byTooltip('New folder'), findsOneWidget);
-    expect(find.byTooltip('Folder actions'), findsNothing);
+    // The header is the app's doors. Making a Folder is in the Library menu,
+    // and the root is not the user's to rename, move or delete, so no folder
+    // menu stands beside the title.
+    expect(find.byTooltip('Settings'), findsOneWidget);
+    expect(find.byTooltip('Activity'), findsOneWidget);
+    expect(find.byTooltip('Library actions'), findsOneWidget);
+    expect(find.byTooltip('New folder'), findsNothing);
     expect(find.byTooltip('Back'), findsNothing);
 
     for (final element in find.byType(HeaderIconButton).evaluate()) {
@@ -161,8 +177,9 @@ void main() {
       expect(icon.size, kHeaderIconSize);
     }
 
-    await tapAndPump(tester, find.byKey(ValueKey('folderRow-${weekly.id}')));
-    await pumpUntil(tester, find.byTooltip('Folder actions'));
-    expect(find.byTooltip('Back'), findsOneWidget);
+    // The Folder's own actions sit on its section.
+    expect(find.byKey(ValueKey('folderMenu-${weekly.id}')), findsOneWidget);
+    await tapAndPump(tester, find.byKey(const ValueKey('libraryMenu')));
+    expect(find.text('New folder'), findsOneWidget);
   });
 }

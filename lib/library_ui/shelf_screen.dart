@@ -1,11 +1,15 @@
-/// The Library shelf (roadmap D1).
+/// The Library (roadmap D1) — the app's home screen.
 ///
-/// One Folder's contents, drawn as one list: the Folders inside it, the
-/// Collections in it, and the standalone Entries that live in it directly.
-/// Tapping a Folder pushes **this same screen**, scoped to that Folder —
-/// flat-first, no tree widget, no expansion state to keep in sync with the
-/// database (V2-D21, open question O-A). The schema is hierarchical either
-/// way; only the presentation is flat.
+/// One page: what to pick up again, then everything in the library. The
+/// Collections and standalone Entries at the root are listed directly, and
+/// each Folder is a **section on the same page** — collapsible, never a screen
+/// of its own — so a Folder organises the library without hiding any of it
+/// (V2-D43). The schema is hierarchical either way; a Folder inside a Folder
+/// is a section inside a section.
+///
+/// The header carries the app-level doors: device storage, Activity and
+/// Settings. Making a Folder is an organisation action and lives in the
+/// Library menu, not beside the title.
 ///
 /// Nothing here asks whether a Collection or an Entry has been downloaded. An
 /// item is on the shelf because it is in the library (PRODUCT.md §1.2), and
@@ -16,7 +20,9 @@ library;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../data/schema.dart';
+import '../app.dart' show LeaveBrowserGuard;
+import '../features/storage_screen.dart' show StoragePill;
+import '../save/queue_task.dart';
 import '../ui/palette.dart';
 import '../ui/status_style.dart';
 import '../ui/theme.dart';
@@ -26,20 +32,17 @@ import 'continue_reading_strip.dart';
 import 'collection_screen.dart';
 import 'entry_offline.dart';
 import 'folder_actions.dart';
+import 'folder_models.dart';
 import 'library_widgets.dart';
 import 'providers.dart';
 import 'shelf_models.dart';
 
-/// The shelf for [folderId], or for the library root when it is null.
+/// The Library page, standing on the root Folder.
 class ShelfScreen extends ConsumerWidget {
-  const ShelfScreen({super.key, this.folderId});
-
-  final String? folderId;
+  const ShelfScreen({super.key});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final id = folderId;
-    if (id != null) return _Shelf(folderId: id);
     // "At the library root" means "in the root Folder", so the shelf always
     // stands on one.
     return ref
@@ -67,130 +70,73 @@ class _Shelf extends ConsumerWidget {
         child: shelf.when(
           loading: () => const Center(child: CircularProgressIndicator()),
           error: (error, _) => Center(child: Text('$error')),
+          // The root is never deleted (I5), so a null here is a database
+          // that has not minted one yet — the same picture as loading.
           data: (view) => view == null
-              ? Column(
-                  children: [
-                    LibraryHeader(title: 'Folder', onBack: _backOf(context)),
-                    const LibraryEmptyState(
-                      icon: Icons.folder_off_outlined,
-                      title: 'This folder is no longer here',
-                      body:
-                          'Everything that was inside it moved up to the '
-                          'folder above.',
-                    ),
-                  ],
-                )
-              : _ShelfBody(view: view),
+              ? const Center(child: CircularProgressIndicator())
+              : _LibraryBody(view: view),
         ),
       ),
     );
   }
 }
 
-class _ShelfBody extends ConsumerWidget {
-  const _ShelfBody({required this.view});
+class _LibraryBody extends ConsumerWidget {
+  const _LibraryBody({required this.view});
 
   final ShelfView view;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final resumable = ref.watch(continueReadingProvider).value ?? const [];
+    final itemCount = view.collectionCountDeep + view.entryCountDeep;
     return Column(
       children: [
         LibraryHeader(
-          title: view.isRoot ? 'Library' : view.folder.name,
-          onBack: _backOf(context),
+          title: 'Library',
           actions: [
+            const StoragePill(),
+            const _ActivityButton(),
             HeaderIconButton(
-              icon: Icons.create_new_folder_outlined,
-              tooltip: 'New folder',
-              onPressed: () =>
-                  createFolderIn(context, ref, parentId: view.folder.id),
+              key: const ValueKey('libraryAction-settings'),
+              icon: Icons.settings,
+              tooltip: 'Settings',
+              onPressed: () => LeaveBrowserGuard.push(context, '/settings'),
             ),
-            // Absent for the root, not disabled: the root is not the user's to
-            // rename, move or delete, so the control that offers those is not
-            // there at all.
-            if (!view.isRoot)
-              HeaderIconButton(
-                icon: Icons.more_horiz,
-                tooltip: 'Folder actions',
-                onPressed: () => showFolderMenu(
-                  context,
-                  ref,
-                  view.folder,
-                  onDeleted: () {
-                    if (Navigator.of(context).canPop()) {
-                      Navigator.of(context).pop();
-                    }
-                  },
-                ),
-              ),
+            HeaderIconButton(
+              key: const ValueKey('libraryMenu'),
+              icon: Icons.more_horiz,
+              tooltip: 'Library actions',
+              onPressed: () => _showLibraryMenu(context, ref, view),
+            ),
           ],
         ),
-        if (view.isRoot) const ContinueReadingStrip(),
         Expanded(
           child: ListView(
             padding: const EdgeInsets.only(bottom: 24),
             children: [
+              const ContinueReadingStrip(),
+              // A library with nothing in progress says so quietly, in the
+              // same place the strip would be. An empty library says nothing
+              // here: its own empty state below already covers it.
+              if (resumable.isEmpty && !view.isEmpty)
+                const _NothingInProgress(),
               if (view.isEmpty)
-                view.isRoot
-                    ? const LibraryEmptyState(
-                        icon: Icons.local_library_outlined,
-                        title: 'Your library is empty',
-                        body:
-                            'What you read is added here as Scrollary '
-                            'recognises it. An entry is in your library '
-                            'because you want to read it — not because this '
-                            'device has downloaded it.',
-                      )
-                    : const LibraryEmptyState(
-                        icon: Icons.folder_open,
-                        title: 'This folder is empty',
-                        body:
-                            'Move a collection or an entry into it, or '
-                            'create a folder inside it.',
-                      )
+                const LibraryEmptyState(
+                  icon: Icons.local_library_outlined,
+                  title: 'Your library is empty',
+                  body:
+                      'What you read is added here as Scrollary '
+                      'recognises it. An entry is in your library '
+                      'because you want to read it — not because this '
+                      'device has downloaded it.',
+                )
               else ...[
-                if (view.folders.isNotEmpty) ...[
-                  SectionLabel('FOLDERS · ${view.folders.length}'),
-                  const Divider(height: 1),
-                  for (final folder in view.folders) ...[
-                    _FolderRow(folder: folder),
-                    const Divider(height: 1),
-                  ],
-                ],
-                if (view.collections.isNotEmpty) ...[
-                  SectionLabel('COLLECTIONS · ${view.collections.length}'),
-                  const Divider(height: 1),
-                  for (final collection in view.collections) ...[
-                    _CollectionRow(collection: collection),
-                    const Divider(height: 1),
-                  ],
-                ],
-                if (view.entries.isNotEmpty) ...[
-                  SectionLabel(
-                    '${libraryEntryLabels.Many.toUpperCase()} · '
-                    '${view.entries.length}',
-                  ),
-                  const Divider(height: 1),
-                  for (final entry in view.entries) ...[
-                    EntryRowTile(
-                      view: entry,
-                      // The same menu from either control: reading opens from
-                      // a downloaded copy, and that lane is not built yet.
-                      onTap: () => showEntryMenu(context, ref, entry),
-                      onMenu: () => showEntryMenu(context, ref, entry),
-                      // A standalone Entry is downloaded the same way any
-                      // other is, so it says so in the same place.
-                      badges: [
-                        ?entryQueueChip(
-                          context,
-                          ref.watch(entrySaveTaskProvider(entry.id)),
-                        ),
-                      ],
-                    ),
-                    const Divider(height: 1),
-                  ],
-                ],
+                SectionLabel('MY LIBRARY · $itemCount'),
+                const Divider(height: 1),
+                ..._contentsOf(context, ref, view, depth: 0),
+                for (final folder in view.folders)
+                  _FolderSection(view: folder, depth: 0),
               ],
             ],
           ),
@@ -200,55 +146,257 @@ class _ShelfBody extends ConsumerWidget {
   }
 }
 
-/// A Folder navigates; it never expands. One screen per level keeps the state
-/// in the route stack instead of in a widget that has to be reconciled with
-/// the tree.
-class _FolderRow extends StatelessWidget {
-  const _FolderRow({required this.folder});
+/// The Collections and standalone Entries directly in [view] — not its
+/// Folders, which the caller draws as sections.
+List<Widget> _contentsOf(
+  BuildContext context,
+  WidgetRef ref,
+  ShelfView view, {
+  required int depth,
+}) => [
+  for (final collection in view.collections) ...[
+    _CollectionRow(collection: collection, depth: depth),
+    const Divider(height: 1),
+  ],
+  if (view.entries.isNotEmpty) ...[
+    SectionLabel(
+      '${libraryEntryLabels.Many.toUpperCase()} · ${view.entries.length}',
+      padding: EdgeInsets.fromLTRB(20 + _indent(depth), 14, 20, 6),
+    ),
+    const Divider(height: 1),
+    for (final entry in view.entries) ...[
+      Padding(
+        padding: EdgeInsets.only(left: _indent(depth)),
+        child: EntryRowTile(
+          view: entry,
+          // The same menu from either control: reading opens from a
+          // downloaded copy, and that lane is not built yet.
+          onTap: () => showEntryMenu(context, ref, entry),
+          onMenu: () => showEntryMenu(context, ref, entry),
+          // A standalone Entry is downloaded the same way any other is, so
+          // it says so in the same place.
+          badges: [
+            ?entryQueueChip(
+              context,
+              ref.watch(entrySaveTaskProvider(entry.id)),
+            ),
+          ],
+        ),
+      ),
+      const Divider(height: 1),
+    ],
+  ],
+];
 
-  final FolderRow folder;
+/// How far a Folder's contents sit in from the page edge. Capped: past three
+/// levels the indent would say more about the user's tidiness than the page
+/// has width for.
+double _indent(int depth) => 16.0 * depth.clamp(0, 3);
+
+/// Organisation actions for the whole library. One entry today; a sheet
+/// rather than a bare icon so the action is named before it is taken.
+Future<void> _showLibraryMenu(
+  BuildContext context,
+  WidgetRef ref,
+  ShelfView view,
+) async {
+  final create = await showModalBottomSheet<bool>(
+    context: context,
+    builder: (sheetContext) => SafeArea(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 14, 20, 8),
+            child: Text('Library', style: serifStyle(size: 20)),
+          ),
+          ListTile(
+            key: const ValueKey('libraryAction-newFolder'),
+            leading: const Icon(Icons.create_new_folder_outlined),
+            title: const Text('New folder'),
+            subtitle: const Text(
+              'Groups collections on this page. Nothing has to be in one.',
+            ),
+            onTap: () => Navigator.of(sheetContext).pop(true),
+          ),
+          const SizedBox(height: 8),
+        ],
+      ),
+    ),
+  );
+  if (create != true || !context.mounted) return;
+  await createFolderIn(context, ref, parentId: view.folder.id);
+}
+
+/// The door to Activity, with a dot while the queue has something to say —
+/// work waiting or running, or a failure still listed there. The dot is a
+/// pointer, not a count: the count lives on the operation indicator.
+class _ActivityButton extends ConsumerWidget {
+  const _ActivityButton();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final tasks = ref.watch(saveTasksByEntryProvider).value?.values;
+    final outstanding =
+        tasks?.any((t) => !t.isTerminal || t.state == SaveTaskState.failed) ??
+        false;
+    final palette = AppPalette.of(context);
+    return Stack(
+      clipBehavior: Clip.none,
+      children: [
+        HeaderIconButton(
+          key: const ValueKey('libraryAction-activity'),
+          icon: Icons.playlist_add_check,
+          tooltip: 'Activity',
+          onPressed: () => LeaveBrowserGuard.push(context, '/activity'),
+        ),
+        if (outstanding)
+          Positioned(
+            top: 8,
+            right: 8,
+            child: IgnorePointer(
+              child: Container(
+                key: const ValueKey('activityDot'),
+                width: 8,
+                height: 8,
+                decoration: BoxDecoration(
+                  color: palette.primary,
+                  shape: BoxShape.circle,
+                ),
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+class _NothingInProgress extends StatelessWidget {
+  const _NothingInProgress();
 
   @override
   Widget build(BuildContext context) {
     final palette = AppPalette.of(context);
-    return InkWell(
-      key: ValueKey('folderRow-${folder.id}'),
-      onTap: () => Navigator.of(context).push(
-        MaterialPageRoute<void>(
-          builder: (_) => ShelfScreen(folderId: folder.id),
-        ),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(18, 14, 16, 14),
-        child: Row(
-          children: [
-            Icon(Icons.folder, size: 22, color: palette.inkMuted),
-            const SizedBox(width: 13),
-            Expanded(
-              child: Text(
-                folder.name,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  fontSize: 15,
-                  fontVariations: wght(600),
-                  fontWeight: FontWeight.w600,
-                  color: palette.ink,
-                ),
-              ),
-            ),
-            Icon(Icons.chevron_right, size: 20, color: palette.inkFaint),
-          ],
-        ),
+    return Padding(
+      key: const ValueKey('continueReadingEmpty'),
+      padding: const EdgeInsets.fromLTRB(20, 12, 20, 0),
+      child: Text(
+        'Nothing in progress — entries you start reading show up here.',
+        style: TextStyle(fontSize: 12.5, color: palette.inkFaint),
       ),
     );
   }
 }
 
+/// One Folder as a section of the Library page: a header that expands and
+/// collapses it, then its contents drawn in place. A Folder inside it is a
+/// section one step further in.
+class _FolderSection extends ConsumerWidget {
+  const _FolderSection({required this.view, required this.depth});
+
+  final ShelfView view;
+  final int depth;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final collapsed = ref.watch(
+      collapsedFoldersProvider.select((ids) => ids.contains(view.id)),
+    );
+    final palette = AppPalette.of(context);
+    final count = view.collectionCountDeep + view.entryCountDeep;
+    final summary = count == 0
+        ? 'Empty'
+        : _join([
+            if (view.collectionCountDeep > 0)
+              '${view.collectionCountDeep} '
+                  '${view.collectionCountDeep == 1 ? 'collection' : 'collections'}',
+            if (view.entryCountDeep > 0)
+              libraryEntryLabels.count(view.entryCountDeep),
+          ]);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        InkWell(
+          key: ValueKey('folderSection-${view.id}'),
+          onTap: () =>
+              ref.read(collapsedFoldersProvider.notifier).toggle(view.id),
+          child: Padding(
+            padding: EdgeInsets.fromLTRB(12 + _indent(depth), 10, 4, 10),
+            child: Row(
+              children: [
+                Icon(
+                  collapsed ? Icons.chevron_right : Icons.expand_more,
+                  key: ValueKey(
+                    'folderChevron-${view.id}-'
+                    '${collapsed ? 'collapsed' : 'expanded'}',
+                  ),
+                  size: 20,
+                  color: palette.inkFaint,
+                ),
+                const SizedBox(width: 6),
+                Icon(Icons.folder, size: 20, color: palette.inkMuted),
+                const SizedBox(width: 11),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        folderDisplayName(view.folder),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 15,
+                          fontVariations: wght(600),
+                          fontWeight: FontWeight.w600,
+                          color: palette.ink,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(summary, style: monoStyle(color: palette.inkFaint)),
+                    ],
+                  ),
+                ),
+                IconButton(
+                  key: ValueKey('folderMenu-${view.id}'),
+                  tooltip: 'Folder actions',
+                  icon: const Icon(Icons.more_vert, size: 20),
+                  color: palette.inkFaint,
+                  onPressed: () => showFolderMenu(context, ref, view.folder),
+                ),
+              ],
+            ),
+          ),
+        ),
+        const Divider(height: 1),
+        if (!collapsed) ...[
+          if (view.isEmpty)
+            Padding(
+              key: ValueKey('folderEmpty-${view.id}'),
+              padding: EdgeInsets.fromLTRB(20 + _indent(depth + 1), 10, 20, 12),
+              child: Text(
+                'Nothing in this folder yet. Move a collection here from '
+                'its menu.',
+                style: TextStyle(fontSize: 12.5, color: palette.inkFaint),
+              ),
+            )
+          else ...[
+            ..._contentsOf(context, ref, view, depth: depth + 1),
+            for (final child in view.folders)
+              _FolderSection(view: child, depth: depth + 1),
+          ],
+        ],
+      ],
+    );
+  }
+}
+
+String _join(List<String> parts) => parts.join(' · ');
+
 class _CollectionRow extends StatelessWidget {
-  const _CollectionRow({required this.collection});
+  const _CollectionRow({required this.collection, required this.depth});
 
   final ShelfCollectionView collection;
+  final int depth;
 
   @override
   Widget build(BuildContext context) {
@@ -261,7 +409,7 @@ class _CollectionRow extends StatelessWidget {
         ),
       ),
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(16, 13, 16, 14),
+        padding: EdgeInsets.fromLTRB(16 + _indent(depth), 13, 16, 14),
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -317,6 +465,3 @@ class _CollectionRow extends StatelessWidget {
     );
   }
 }
-
-VoidCallback? _backOf(BuildContext context) =>
-    Navigator.of(context).canPop() ? () => Navigator.of(context).pop() : null;

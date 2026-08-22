@@ -1,10 +1,10 @@
 /// View models for the Library shelf (roadmap D1).
 ///
-/// A shelf is **one Folder's contents**: the Folders inside it, the
-/// Collections in it, and the standalone Entries that live in it directly. It
-/// is not a tree widget — hierarchy is in the schema from day one, and the
-/// first UI stays flat and navigates into a Folder (V2-D21, open question
-/// O-A).
+/// A shelf is **one Folder's contents**: the Collections in it, the standalone
+/// Entries that live in it directly, and the Folders inside it — each of
+/// which is a shelf of its own. The root's shelf is therefore the whole
+/// library, and the Library screen draws it as one page with Folders as
+/// collapsible sections rather than as screens to navigate into (V2-D43).
 ///
 /// What is deliberately absent: any notion of a shelf item being unavailable.
 /// Downloading is a per-device capability of an Entry, never the precondition
@@ -16,7 +16,7 @@ import '../domain/collection.dart';
 import '../domain/folder.dart';
 import 'collection_models.dart';
 
-/// What one Folder holds.
+/// What one Folder holds, down to every Folder inside it.
 class ShelfView {
   const ShelfView({
     required this.folder,
@@ -26,16 +26,31 @@ class ShelfView {
   });
 
   final FolderRow folder;
-  final List<FolderRow> folders;
+
+  /// The Folders inside this one, each with its own contents.
+  final List<ShelfView> folders;
   final List<ShelfCollectionView> collections;
 
   /// Standalone Entries: first-class library items, never wrapped in a
   /// Collection of one (V2_ARCHITECTURE.md §2.4).
   final List<EntryRowView> entries;
 
+  String get id => folder.id;
+
   bool get isRoot => folder.kind == FolderKind.root.name;
 
+  /// Nothing in this Folder at all — not a Collection, not an Entry, and no
+  /// Folder inside it either.
   bool get isEmpty => folders.isEmpty && collections.isEmpty && entries.isEmpty;
+
+  /// Collections in this Folder and every Folder below it.
+  int get collectionCountDeep =>
+      collections.length +
+      folders.fold(0, (sum, f) => sum + f.collectionCountDeep);
+
+  /// Standalone Entries in this Folder and every Folder below it.
+  int get entryCountDeep =>
+      entries.length + folders.fold(0, (sum, f) => sum + f.entryCountDeep);
 }
 
 /// One Collection on a shelf row, with the reading signal that belongs beside

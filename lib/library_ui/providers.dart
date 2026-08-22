@@ -141,8 +141,8 @@ final rootFolderProvider = FutureProvider<FolderRow>(
   (ref) => ref.watch(folderRepoProvider).ensureRoot(),
 );
 
-/// One Folder's contents: its subfolders, its Collections and the standalone
-/// Entries that live in it directly.
+/// One Folder's contents, down to every Folder inside it: the root's shelf is
+/// the whole library.
 ///
 /// Null means the Folder is gone — deleted from another surface while this
 /// one was open.
@@ -194,9 +194,28 @@ final entrySaveTaskProvider = Provider.family<SaveTask?, String>(
   (ref, entryId) => ref.watch(saveTasksByEntryProvider).value?[entryId],
 );
 
+/// Folders the user has collapsed on the Library page, by id.
+///
+/// Session state and nothing more: a Folder opens again on the next launch,
+/// which is the right default for a page whose job is to show the library,
+/// not to remember how it was last hidden (V2-D43). A collapsed set rather
+/// than an expanded one so a brand-new Folder is open without being asked.
+final collapsedFoldersProvider =
+    NotifierProvider<CollapsedFolders, Set<String>>(CollapsedFolders.new);
+
+class CollapsedFolders extends Notifier<Set<String>> {
+  @override
+  Set<String> build() => const {};
+
+  void toggle(String folderId) {
+    state = state.contains(folderId)
+        ? (Set.of(state)..remove(folderId))
+        : {...state, folderId};
+  }
+}
+
 /// The whole Folder tree, flattened with a depth for indentation — what the
-/// move picker offers. The schema is hierarchical from day one; the shelf
-/// itself stays flat and navigates (V2-D21, O-A).
+/// move picker offers.
 final folderTreeProvider = StreamProvider<List<FolderNode>>((ref) {
   final db = ref.watch(libraryDatabaseProvider);
   return db.select(db.folders).watch().map(flattenFolderTree);
@@ -282,61 +301,71 @@ Future<ShelfView?> _loadShelf(LibraryDatabase db, String folderId) async {
   )..where((f) => f.id.equals(folderId))).getSingleOrNull();
   if (folder == null) return null;
 
-  final subfolders =
-      await (db.select(db.folders)
-            ..where((f) => f.parentId.equals(folderId))
-            ..orderBy([
-              (f) => OrderingTerm.asc(f.sortKey),
-              (f) => OrderingTerm.asc(f.name),
-            ]))
+  // Every table once, then assembled: the Library page draws the whole tree
+  // at once, and one query per Folder would grow with the user's tidiness.
+  final folders =
+      await (db.select(db.folders)..orderBy([
+            (f) => OrderingTerm.asc(f.sortKey),
+            (f) => OrderingTerm.asc(f.name),
+          ]))
           .get();
-
   final collections =
-      await (db.select(db.collections)
-            ..where((c) => c.folderId.equals(folderId))
-            ..orderBy([
-              (c) => OrderingTerm.asc(c.sortKey),
-              (c) => OrderingTerm.asc(c.name),
-            ]))
+      await (db.select(db.collections)..orderBy([
+            (c) => OrderingTerm.asc(c.sortKey),
+            (c) => OrderingTerm.asc(c.name),
+          ]))
           .get();
-
-  // Standalone Entries are shelf items in their own right, beside the
-  // Collections rather than hidden inside one (I3).
-  final standalone =
-      await (db.select(db.entries)
-            ..where((e) => e.folderId.equals(folderId))
-            ..orderBy([
-              (e) => OrderingTerm.asc(e.sortKey),
-              (e) => OrderingTerm.asc(e.title),
-            ]))
+  final entries =
+      await (db.select(db.entries)..orderBy([
+            (e) => OrderingTerm.asc(e.sortKey),
+            (e) => OrderingTerm.asc(e.title),
+          ]))
           .get();
-
-  final collectionIds = [for (final c in collections) c.id];
-  final memberEntries = collectionIds.isEmpty
-      ? const <EntryRow>[]
-      : await (db.select(
-          db.entries,
-        )..where((e) => e.collectionId.isIn(collectionIds))).get();
-
   final status = await _statusByEntry(db);
   final offline = await _entriesWithAnActiveCopy(db);
-  final labels = await _sourceLabels(db, [for (final e in standalone) e.id]);
 
+  final foldersByParent = <String, List<FolderRow>>{};
+  for (final row in folders) {
+    final parent = row.parentId;
+    if (parent != null) foldersByParent.putIfAbsent(parent, () => []).add(row);
+  }
+  final collectionsByFolder = <String, List<CollectionRow>>{};
+  for (final row in collections) {
+    collectionsByFolder.putIfAbsent(row.folderId, () => []).add(row);
+  }
+  // Standalone Entries are shelf items in their own right, beside the
+  // Collections rather than hidden inside one (I3). Member Entries only feed
+  // their Collection's reading signal.
+  final standaloneByFolder = <String, List<EntryRow>>{};
   final total = <String, int>{};
   final unread = <String, int>{};
-  for (final entry in memberEntries) {
-    final id = entry.collectionId!;
-    total[id] = (total[id] ?? 0) + 1;
+  for (final entry in entries) {
+    final collectionId = entry.collectionId;
+    if (collectionId == null) {
+      final folder = entry.folderId;
+      if (folder != null) {
+        standaloneByFolder.putIfAbsent(folder, () => []).add(entry);
+      }
+      continue;
+    }
+    total[collectionId] = (total[collectionId] ?? 0) + 1;
     if ((status[entry.id] ?? ReadStatus.unread) != ReadStatus.completed) {
-      unread[id] = (unread[id] ?? 0) + 1;
+      unread[collectionId] = (unread[collectionId] ?? 0) + 1;
     }
   }
+  final labels = await _sourceLabels(db, [
+    for (final list in standaloneByFolder.values)
+      for (final e in list) e.id,
+  ]);
 
-  return ShelfView(
-    folder: folder,
-    folders: subfolders,
+  ShelfView build(FolderRow node) => ShelfView(
+    folder: node,
+    folders: [
+      for (final child in foldersByParent[node.id] ?? const <FolderRow>[])
+        build(child),
+    ],
     collections: [
-      for (final c in collections)
+      for (final c in collectionsByFolder[node.id] ?? const <CollectionRow>[])
         ShelfCollectionView(
           row: c,
           entryCount: total[c.id] ?? 0,
@@ -344,7 +373,7 @@ Future<ShelfView?> _loadShelf(LibraryDatabase db, String folderId) async {
         ),
     ],
     entries: [
-      for (final e in standalone)
+      for (final e in standaloneByFolder[node.id] ?? const <EntryRow>[])
         EntryRowView.from(
           row: e,
           status: status[e.id] ?? ReadStatus.unread,
@@ -353,6 +382,8 @@ Future<ShelfView?> _loadShelf(LibraryDatabase db, String folderId) async {
         ),
     ],
   );
+
+  return build(folder);
 }
 
 Future<CollectionView?> _loadCollection(

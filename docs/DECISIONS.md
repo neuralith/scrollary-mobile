@@ -498,6 +498,22 @@ above plus the OfflineCopy cascade (I14).
 
 ---
 
+### V2-D43 · The Library is one page; Folders are collapsible sections on it
+
+The first Library shelf drew one Folder per screen and navigated into a Folder
+(the "flat-first" reading of V2-D21 / O-A). In use that made the home screen a
+folder browser: the Collections were a level down, and the app-level doors —
+Settings, Activity, device storage — had no header to live in.
+
+The Library is the home screen and it is **one page**: Continue Reading, then
+the Collections and standalone Entries at the root listed directly, then every
+Folder as a section on the same page with its contents drawn in place. A
+section expands and collapses; the state is session memory only, never
+persisted and never synced. A Folder inside a Folder is a section inside a
+section. Nothing has to be in a Folder, and making one is a Library-menu action
+rather than a header button. The model is unchanged — single system root,
+conservative delete, Folder state syncs (V2-D21).
+
 ## Open
 
 Only items that are genuinely undecided **and** not already deferred to
@@ -505,7 +521,7 @@ Productization.
 
 | # | Question | Blocks |
 |---|---|---|
-| O-A | Whether the nested-folder UI ships in the first functional release, or only flat folders over the hierarchical schema | Lane D scope only. The schema supports both |
+| O-A | ~~Whether the nested-folder UI ships in the first functional release, or only flat folders over the hierarchical schema~~ Resolved by V2-D43: nested Folders are drawn in place as sections of the one Library page | Closed |
 
 Everything else previously open — authentication, monetization, tombstone
 retention, cross-device unreadable Sources, cross-source progress presentation,
