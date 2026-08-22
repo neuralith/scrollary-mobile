@@ -240,6 +240,15 @@ The hot path stays local:
 | Plausible new Entry of a followed Collection | Local, provisionally | Ordinal placement |
 | Unknown | Server arbitration | One round trip, deferrable |
 
+**What arbitration cannot answer.** It resolves evidence against Sources the
+server already holds — `url_key`, then `(host, path_key)`. A genuinely new host
+has neither, so the answer is `unresolved`, and no amount of matching titles
+changes that: deciding that two differently hosted works are the same one is
+the merge §4.3 refuses to make on a guess. That question is put to the user
+instead, by the save flow, and their answer creates the Source
+(docs/V2_SAVE_FLOW.md, V2-D45). Automatic cross-host matching is not
+implemented and is not planned.
+
 ### 4.3 Cross-source equivalence, and where it is refused
 
 Merging Entries across Sources needs something to key on. **Only an explicit
@@ -251,6 +260,12 @@ in rather than degrading silently:
 | `explicitNumericIndex` | **Available.** Equal ordinals merge |
 | `publicationDate` · `detectedNextLink` · `discoveryOrder` | **Not available.** Sources coexist and are readable; Entries are not merged |
 | `userDefinedManualOrder` | User-assisted placement only |
+
+One implementation decides this for every caller: `EntryReconciler`
+(`lib/recognition/reconcile.dart`), used by source discovery, by the update
+check and by every save. A page saved from the browser on a Source the library
+already holds goes through the same equivalence as a page found by reading that
+Source's listing — the entry point differs, the rule does not.
 
 Where merging is available, the rules are conservative:
 
