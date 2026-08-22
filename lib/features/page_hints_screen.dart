@@ -1,12 +1,20 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../library_ui/providers.dart';
 import '../save/page_hint_repository.dart';
 import '../save/page_hint.dart';
-import '../providers.dart';
 import '../ui/palette.dart';
 import '../ui/status_style.dart';
 import '../ui/theme.dart';
+
+/// The rules a person taught, from the V2 library's `page_hints` table —
+/// the one the capture path writes and this screen is the reader of.
+final libraryPageHintsProvider = StreamProvider<List<UserPageHint>>(
+  (ref) => PageHintRepository.forLibrary(
+    ref.watch(libraryDatabaseProvider),
+  ).watchAll(),
+);
 
 /// Saved site rules: what the user taught the app, and how to forget it.
 class PageHintsScreen extends ConsumerWidget {
@@ -14,8 +22,10 @@ class PageHintsScreen extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final rulesAsync = ref.watch(pageHintsStreamProvider);
-    final repo = PageHintRepository(ref.watch(databaseProvider));
+    final rulesAsync = ref.watch(libraryPageHintsProvider);
+    final repo = PageHintRepository.forLibrary(
+      ref.watch(libraryDatabaseProvider),
+    );
 
     return Scaffold(
       appBar: AppBar(title: const Text('Saved rules')),

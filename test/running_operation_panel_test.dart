@@ -39,6 +39,7 @@ import 'package:web_reader/recognition/check.dart';
 import 'package:web_reader/save/capture_mode.dart';
 import 'package:web_reader/save/entry_capture.dart';
 import 'package:web_reader/save/page_capture_source.dart';
+import 'package:web_reader/save/page_hint.dart';
 import 'package:web_reader/save/queue_runner.dart';
 import 'package:web_reader/save/queue_task.dart';
 import 'package:web_reader/save/stop_conditions.dart';
@@ -532,6 +533,8 @@ class _HeldCapture extends EntryCaptureService {
     String? locationId,
     bool captureModeIsUserSet = false,
     bool Function()? shouldContinue,
+    UserPageHint? readerHint,
+    UserPageHint? nextHint,
   }) async {
     await gate.future;
     return const EntryCaptureResult.failed(
@@ -550,6 +553,8 @@ class _UnusedCaptureSource implements PageCaptureSource {
     required StagingHandle staging,
     required CaptureMode? requestedMode,
     required bool Function() shouldContinue,
+    UserPageHint? readerHint,
+    UserPageHint? nextHint,
   }) => throw UnimplementedError('the capture itself is overridden');
 }
 

@@ -48,6 +48,7 @@ import '../storage/file_store.dart';
 import '../storage/manifest.dart';
 import 'capture_mode.dart';
 import 'capture_policy.dart';
+import 'page_hint.dart';
 import 'save_engine.dart';
 import 'save_result_sink.dart';
 import 'stop_conditions.dart';
@@ -78,7 +79,8 @@ class PageCaptureOutcome {
     this.publishedAt,
     this.nextUrl,
   }) : error = null,
-       stopReason = null;
+       stopReason = null,
+       needsReaderAreaAssist = false;
 
   /// Nothing was stored, and the reason is not the app's own policy: the page
   /// held nothing this app saves, the site stopped the run, the download
@@ -87,6 +89,7 @@ class PageCaptureOutcome {
     required this.pageUrl,
     required this.error,
     this.stopReason,
+    this.needsReaderAreaAssist = false,
   }) : title = '',
        artifact = ArtifactFormat.unknown,
        captureMode = null,
@@ -149,6 +152,15 @@ class PageCaptureOutcome {
   final String? error;
   final StopReason? stopReason;
 
+  /// Image extraction found too little, or a saved reader-area rule stopped
+  /// matching. The page could still be captured if a person points at the
+  /// container the entry is in — see `features/v2_save_flow.dart`.
+  ///
+  /// Only ever true alongside a failure, and only for an image sequence: a
+  /// prose page that extracted nothing is reported and walked past, because
+  /// this assistance hands back a container of *images*.
+  final bool needsReaderAreaAssist;
+
   bool get isCaptured =>
       status == SaveStatus.complete || status == SaveStatus.partial;
 
@@ -173,11 +185,18 @@ abstract interface class PageCaptureSource {
   /// and never mid-write; a `false` answer ends the capture with a
   /// [StopReason.cancelledByUser] failure and leaves staging for the caller to
   /// discard.
+  ///
+  /// [readerHint] and [nextHint] are the narrowest rules the user has taught
+  /// for this address, or null. They are passed through untouched — nothing
+  /// here infers one, and a rule exists only because a person tapped an
+  /// element.
   Future<PageCaptureOutcome> capturePage({
     required String url,
     required StagingHandle staging,
     required CaptureMode? requestedMode,
     required bool Function() shouldContinue,
+    UserPageHint? readerHint,
+    UserPageHint? nextHint,
   });
 }
 
@@ -230,6 +249,8 @@ class SaveEnginePageCaptureSource implements PageCaptureSource {
     required StagingHandle staging,
     required CaptureMode? requestedMode,
     required bool Function() shouldContinue,
+    UserPageHint? readerHint,
+    UserPageHint? nextHint,
   }) async {
     if (!shouldContinue()) return _cancelled(url);
 
@@ -258,6 +279,11 @@ class SaveEnginePageCaptureSource implements PageCaptureSource {
         // Null means "decide from the settled page", which is a decision made
         // where the measurement is. Passed straight through, never defaulted.
         captureMode: requestedMode,
+        // A reader-area rule is a rule about *images*; it has nothing to say
+        // about a text save, and the engine only consults it on the image
+        // path anyway. Exactly V1's condition.
+        readerHint: requestedMode?.isDocument == true ? null : readerHint,
+        nextHint: nextHint,
       );
     } finally {
       poll.cancel();
@@ -302,6 +328,10 @@ PageCaptureOutcome outcomeOf(
       stopReason: result.error == 'cancelled'
           ? StopReason.cancelledByUser
           : null,
+      // Read off the engine's own result, never re-derived: whether pointing
+      // at the reader area could help is a judgement made where the page was
+      // measured.
+      needsReaderAreaAssist: result.needsReaderAreaAssist,
     );
   }
   return PageCaptureOutcome.captured(

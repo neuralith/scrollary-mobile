@@ -16,6 +16,8 @@
 ///   cannot be queued again.
 library;
 
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -26,7 +28,9 @@ import 'package:web_reader/providers.dart';
 import 'package:web_reader/recognition/recognise.dart';
 import 'package:web_reader/save/capture_mode.dart';
 import 'package:web_reader/save/capture_policy.dart';
+import 'package:web_reader/save/page_hint.dart';
 import 'package:web_reader/save/queue_task.dart';
+import 'package:web_reader/save/selection_request.dart';
 import 'package:web_reader/ui/palette.dart';
 import 'package:web_reader/ui/theme.dart';
 
@@ -253,6 +257,84 @@ void main() {
       expect(find.byKey(const ValueKey('v2SaveButton')), findsNothing);
       expect(find.text('Queued — waiting for Start.'), findsOneWidget);
       expect((await theOnlyTask()).state, SaveTaskState.queued);
+    });
+  });
+
+  group('the reading-area hold', () {
+    /// What a capture that could not pick the entry's images out of the page
+    /// asks for. Built here rather than run through a capture, because what is
+    /// under test is the presentation: the sheet either holds or it does not.
+    SelectionRequest requestFor(String url) => SelectionRequest(
+      kind: HintKind.readerArea,
+      sourceUrl: url,
+      prompt: 'Select the reader area',
+      reason: 'automatic extraction found too little',
+    );
+
+    Future<V2AssistController> openPanel(WidgetTester tester) async {
+      browser
+        ..setUrl(_pageUrl)
+        ..addPage(_pageUrl, probeOf(_pageUrl));
+      await tester.pumpWidget(
+        app(const V2SavePanel(url: _pageUrl, pageTitle: _pageTitle)),
+      );
+      await pumpUntil(tester, find.byKey(const ValueKey('v2SaveButton')));
+      return ProviderScope.containerOf(
+        tester.element(find.byType(V2SavePanel)),
+      ).read(v2AssistProvider);
+    }
+
+    screenTest('is absent while nothing is holding', (tester) async {
+      await openPanel(tester);
+
+      expect(find.text('Show the app where the content is'), findsNothing);
+      expect(find.byKey(const ValueKey('v2SaveButton')), findsOneWidget);
+    });
+
+    screenTest('takes over the sheet exactly while a capture holds', (
+      tester,
+    ) async {
+      final assist = await openPanel(tester);
+
+      unawaited(assist.ask(requestFor(_pageUrl)));
+      await tester.pump();
+
+      expect(find.text('Show the app where the content is'), findsOneWidget);
+      expect(
+        find.textContaining('automatic extraction found too little'),
+        findsOneWidget,
+        reason: 'the user is told what failed, not asked to tap blindly',
+      );
+      expect(
+        find.byKey(const ValueKey('v2SaveButton')),
+        findsNothing,
+        reason: 'one slot: the hold replaces the sheet it interrupted',
+      );
+
+      await tapAndPump(tester, find.text('Cancel run'));
+
+      expect(find.text('Show the app where the content is'), findsNothing);
+      expect(find.byKey(const ValueKey('v2SaveButton')), findsOneWidget);
+      expect(assist.pendingSelection, isNull);
+    });
+
+    screenTest('offers the narrowest scope first, and teaches nothing until '
+        'something is tapped', (tester) async {
+      final assist = await openPanel(tester);
+
+      unawaited(assist.ask(requestFor(_pageUrl)));
+      await tester.pump();
+
+      expect(find.text('This collection on this host'), findsOneWidget);
+      expect(
+        find.textContaining('Nothing selected yet'),
+        findsOneWidget,
+        reason: 'a rule exists only because a person tapped an element',
+      );
+      expect(await h.db.select(h.db.pageHints).get(), isEmpty);
+
+      await assist.cancelSelection();
+      await tester.pump();
     });
   });
 }

@@ -15,6 +15,7 @@ import 'package:web_reader/save/queue_repository.dart';
 import 'package:web_reader/reading_v2/offline_read.dart';
 import 'package:web_reader/save/capture_mode.dart';
 import 'package:web_reader/save/capture_policy.dart';
+import 'package:web_reader/save/page_hint.dart';
 import 'package:web_reader/storage/document.dart';
 import 'package:web_reader/storage/file_store.dart';
 import 'package:web_reader/storage/manifest.dart';
@@ -103,7 +104,8 @@ class FakePageCaptureSource implements PageCaptureSource {
     this.title = 'Part 101',
     this.dimensionsVerified = true,
   }) : _kind = _Kind.images,
-       _failure = null;
+       _failure = null,
+       hintAlsoFails = false;
 
   FakePageCaptureSource.document({
     this.status = SaveStatus.complete,
@@ -112,6 +114,7 @@ class FakePageCaptureSource implements PageCaptureSource {
   }) : _kind = _Kind.document,
        pageCount = 0,
        dimensionsVerified = true,
+       hintAlsoFails = false,
        _failure = null;
 
   /// The page could not be read. Nothing is staged.
@@ -122,7 +125,22 @@ class FakePageCaptureSource implements PageCaptureSource {
       status = SaveStatus.failed,
       landedUrl = null,
       title = '',
+      hintAlsoFails = false,
       dimensionsVerified = true;
+
+  /// Image extraction found too little, exactly as the engine reports a page
+  /// whose panels it could not pick out. Given a reader-area rule it stages
+  /// [pageCount] images instead — unless [hintAlsoFails], which is how a rule
+  /// that matches nothing on this page looks from here.
+  FakePageCaptureSource.needingReaderAreaAssist({
+    this.pageCount = 2,
+    this.hintAlsoFails = false,
+    this.title = 'Part 101',
+  }) : _kind = _Kind.needsAssist,
+       _failure = 'Only 0 content images found (need 3)',
+       status = SaveStatus.complete,
+       landedUrl = null,
+       dimensionsVerified = true;
 
   /// The implementation's own landed-URL boundary refused. This is the shape a
   /// real one reports a redirect onto a restricted service in.
@@ -133,6 +151,7 @@ class FakePageCaptureSource implements PageCaptureSource {
       status = SaveStatus.failed,
       landedUrl = null,
       title = '',
+      hintAlsoFails = false,
       dimensionsVerified = true;
 
   final _Kind _kind;
@@ -145,11 +164,20 @@ class FakePageCaptureSource implements PageCaptureSource {
   final String title;
   final bool dimensionsVerified;
 
+  /// A reader-area rule that still matches nothing, which is the other half of
+  /// what `needsReaderAreaAssist` covers.
+  final bool hintAlsoFails;
+
   /// Every URL this source was asked for, in order.
   final List<String> requested = <String>[];
 
   /// What [PageCaptureSource.capturePage] was told to produce, in order.
   final List<CaptureMode?> modes = <CaptureMode?>[];
+
+  /// The rules handed to each capture, in order. Null is a capture that ran
+  /// with no rule at all.
+  final List<UserPageHint?> readerHints = <UserPageHint?>[];
+  final List<UserPageHint?> nextHints = <UserPageHint?>[];
 
   @override
   Future<PageCaptureOutcome> capturePage({
@@ -157,9 +185,13 @@ class FakePageCaptureSource implements PageCaptureSource {
     required StagingHandle staging,
     required CaptureMode? requestedMode,
     required bool Function() shouldContinue,
+    UserPageHint? readerHint,
+    UserPageHint? nextHint,
   }) async {
     requested.add(url);
     modes.add(requestedMode);
+    readerHints.add(readerHint);
+    nextHints.add(nextHint);
     final landed = landedUrl ?? url;
 
     switch (_kind) {
@@ -167,6 +199,17 @@ class FakePageCaptureSource implements PageCaptureSource {
         return PageCaptureOutcome.failed(pageUrl: landed, error: _failure);
       case _Kind.refused:
         return PageCaptureOutcome.refused(pageUrl: landed);
+      case _Kind.needsAssist:
+        if (readerHint == null || hintAlsoFails) {
+          return PageCaptureOutcome.failed(
+            pageUrl: landed,
+            error: readerHint == null
+                ? _failure
+                : 'saved reader-area rule no longer matches',
+            needsReaderAreaAssist: true,
+          );
+        }
+        return _stageImages(staging, landed);
       case _Kind.images:
         return _stageImages(staging, landed);
       case _Kind.document:
@@ -255,4 +298,4 @@ class FakePageCaptureSource implements PageCaptureSource {
   }
 }
 
-enum _Kind { images, document, failed, refused }
+enum _Kind { images, document, failed, refused, needsAssist }
