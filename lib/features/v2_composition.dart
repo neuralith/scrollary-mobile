@@ -46,6 +46,10 @@ class V2Services {
   /// Set by the shell: ensure the Browser surface, then start the runner.
   Future<void> Function()? startQueue;
 
+  /// Set by the shell: ask the foreground gate, then run a Collection check.
+  Future<void> Function(String collectionId, String collectionName)?
+  checkCollection;
+
   Future<void> dispose() async {
     runner.dispose();
     check.dispose();

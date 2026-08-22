@@ -26,6 +26,7 @@ import 'browser_page_actions.dart';
 import 'browser_states.dart';
 import 'browser_toolbar.dart';
 import 'browser_url_editor.dart';
+import 'running_operation_panel.dart';
 import 'saved_site_sheets.dart';
 
 /// The browser *and* the save surface. One WebView, kept alive and mounted
@@ -486,6 +487,9 @@ class _BrowserScreenState extends ConsumerState<BrowserScreen> {
                 ],
               ),
             ),
+            // Docked under the WebView, never over it: while this app drives
+            // the Browser the user can see what it is doing and end it.
+            const RunningOperationPanel(),
           ],
         ),
       ),

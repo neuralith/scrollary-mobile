@@ -161,6 +161,10 @@ class _AppBootState extends State<AppBoot> with WidgetsBindingObserver {
                 libui.saveQueueStarterProvider.overrideWithValue(
                   () async => _startup.v2.startQueue?.call(),
                 ),
+                libui.collectionCheckerProvider.overrideWithValue(
+                  (id, name) async =>
+                      _startup.v2.checkCollection?.call(id, name),
+                ),
                 libui.placementSubmitProvider.overrideWithValue(
                   placementSubmitOver(_startup.v2),
                 ),

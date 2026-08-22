@@ -204,6 +204,7 @@ class OperationIndicator extends ConsumerStatefulWidget {
 class _OperationIndicatorState extends ConsumerState<OperationIndicator> {
   late final QueueRunner _run;
   late final CheckController _checker;
+  late final ValueNotifier<bool> _surfacePainted;
   late final ValueNotifier<bool> _browserOnScreen;
   late final ReaderChromeVisibility _readerChromeVisible;
 
@@ -212,11 +213,13 @@ class _OperationIndicatorState extends ConsumerState<OperationIndicator> {
     super.initState();
     _run = ref.read(queueRunnerProvider);
     _checker = ref.read(checkControllerProvider);
+    _surfacePainted = ref.read(browserSurfacePaintedProvider);
     _browserOnScreen = ref.read(browserOnScreenProvider);
     _readerChromeVisible = ref.read(readerChromeVisibleProvider);
     for (final source in [
       _run,
       _checker,
+      _surfacePainted,
       _browserOnScreen,
       _readerChromeVisible,
     ]) {
@@ -229,6 +232,7 @@ class _OperationIndicatorState extends ConsumerState<OperationIndicator> {
     for (final source in [
       _run,
       _checker,
+      _surfacePainted,
       _browserOnScreen,
       _readerChromeVisible,
     ]) {
@@ -243,10 +247,24 @@ class _OperationIndicatorState extends ConsumerState<OperationIndicator> {
 
   /// True when the operation will not move again until a person does
   /// something. Distinct from merely waiting, which resolves itself.
-  /// The V2 flows hold nothing on the user mid-run: a save either moves or
+  /// The V2 flows hold nothing **on the user** mid-run: a save either moves or
   /// ends in a named outcome, and a check is cancellable but never blocked on
-  /// an answer. Kept as a hook because the wiring above it is device-tested.
+  /// an answer. User-assisted selection — V1's one producer of this state — has
+  /// no host on the V2 capture path, so answering true here would be inventing
+  /// a state nothing can enter or leave. Kept as a hook because the wiring
+  /// above it is device-tested, and because restoring user assist restores
+  /// this with it.
   bool get _needsUser => false;
+
+  /// Held, and expected to continue on its own — docs/FOREGROUND_MULTITASKING.md
+  /// §5's *Waiting*.
+  ///
+  /// In V2 there is no pause flag to read, and there deliberately is not one:
+  /// the ported engine's own render guards hold a capture the moment its
+  /// surface stops painting and resume when it returns, so "held" *is* "the
+  /// run is live and the app is not drawing the WebView". Reading the
+  /// condition rather than a mirror of it is what stops the two disagreeing.
+  bool get _paused => _run.isRunning && !_surfacePainted.value;
 
   @override
   Widget build(BuildContext context) {
@@ -255,7 +273,7 @@ class _OperationIndicatorState extends ConsumerState<OperationIndicator> {
       tasks: tasks,
       runningWithoutTask: _run.isRunning || _checker.isRunning,
       needsUser: _needsUser,
-      paused: false,
+      paused: _paused,
     );
 
     if (!activity.isPresent ||

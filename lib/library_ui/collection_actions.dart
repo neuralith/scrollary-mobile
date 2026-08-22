@@ -32,7 +32,7 @@ import 'providers.dart';
 
 // ─── collection ─────────────────────────────────────────────────────────────
 
-enum _CollectionAction { archive, follow, move }
+enum _CollectionAction { check, archive, follow, move }
 
 Future<void> showCollectionMenu(
   BuildContext context,
@@ -54,6 +54,22 @@ Future<void> showCollectionMenu(
               style: serifStyle(size: 20),
             ),
           ),
+          // Free, and never gated: what the app will *do* for a user is not
+          // smaller without Pro. Absent for an archived collection, because
+          // archiving is exactly "stop keeping this current" — offering a
+          // check there would contradict the sentence beside it.
+          if (!view.archived && ref.read(collectionCheckerProvider) != null)
+            ListTile(
+              key: const ValueKey('collectionCheck'),
+              leading: const Icon(Icons.search),
+              title: const Text('Check for new entries'),
+              subtitle: const Text(
+                'Reads this collection\'s site in the Browser. Nothing is '
+                'downloaded.',
+              ),
+              onTap: () =>
+                  Navigator.of(sheetContext).pop(_CollectionAction.check),
+            ),
           if (view.archived)
             ListTile(
               key: const ValueKey('collectionFollow'),
@@ -93,6 +109,9 @@ Future<void> showCollectionMenu(
 
   final repository = ref.read(collectionRepoProvider);
   switch (action) {
+    case _CollectionAction.check:
+      final checker = ref.read(collectionCheckerProvider);
+      if (checker != null) await checker(view.collection.id, view.name);
     case _CollectionAction.archive:
       final violation = await repository.archive(view.collection.id);
       if (!context.mounted) return;

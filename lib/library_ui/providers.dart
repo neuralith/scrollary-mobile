@@ -522,6 +522,15 @@ typedef EntryOpener = Future<void> Function(String entryId);
 
 final entryOpenerProvider = Provider<EntryOpener?>((ref) => null);
 
+/// Checks one Collection's preferred Source for new entries — the composition
+/// supplies the run, because driving the Browser is not this layer's to do.
+/// Null (the default) means no checker is wired, and the action that depends
+/// on it is simply not offered rather than offered and inert.
+typedef CollectionChecker =
+    Future<void> Function(String collectionId, String collectionName);
+
+final collectionCheckerProvider = Provider<CollectionChecker?>((ref) => null);
+
 /// One resumable read: an Entry someone is partway through, newest first.
 class ContinueReadItem {
   const ContinueReadItem({

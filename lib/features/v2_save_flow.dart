@@ -1,14 +1,18 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../core/config.dart';
 import '../data/recognition_index.dart';
 import '../domain/domain.dart';
 import '../library_ui/providers.dart';
+import '../providers.dart';
 import '../recognition/history.dart';
 import '../recognition/recognise.dart';
+import '../save/capture_mode.dart';
 import '../save/capture_policy.dart';
 import '../save/queue_task.dart';
 import '../ui/palette.dart';
+import 'capture_mode_section.dart';
 
 /// The Browser's save flow over the V2 library.
 ///
@@ -70,6 +74,8 @@ Future<String?> v2SavePage(
   WidgetRef ref, {
   required String url,
   required String pageTitle,
+  CaptureMode? captureMode,
+  bool captureModeIsUserSet = false,
 }) async {
   if (!v2SaveAvailable(url)) return kCaptureRestrictedMessage;
   final services = ref.read(libraryUiServicesProvider);
@@ -134,6 +140,11 @@ Future<String?> v2SavePage(
     entryId: entryId,
     locationId: locationId,
     locationUrl: url,
+    // Carried onto the row, never re-derived later: what the user asked for is
+    // decided here, on the page they were looking at. Null is a real answer —
+    // "decide from the settled page" — and never a default about what to take.
+    captureMode: captureMode,
+    captureModeIsUserSet: captureModeIsUserSet,
   );
   if (enqueue.refusedReason != null) return enqueue.refusedReason;
   return null;
@@ -167,10 +178,43 @@ class _V2SavePanelState extends ConsumerState<V2SavePanel> {
   String? _message;
   bool _busy = false;
 
+  /// What this page can honestly be saved as. Measured once, when the sheet
+  /// opens, so it offers what is actually possible rather than failing after
+  /// the choice. A probe that fails degrades to "not analysed", which offers
+  /// every mode and says so — not being able to classify a page is a normal
+  /// outcome and must never stop the user saving it.
+  CaptureCapabilities _capabilities = const CaptureCapabilities.unanalysed();
+  CaptureMode? _mode;
+
+  /// True once the user has moved the selection off the detected default. It
+  /// travels onto the queue row, because "the page chose this" and "the person
+  /// chose this" are different facts about the same value.
+  bool _modeIsUserSet = false;
+
   @override
   void initState() {
     super.initState();
     _refresh();
+    _analyse();
+  }
+
+  Future<void> _analyse() async {
+    final browser = ref.read(browserProvider);
+    CaptureCapabilities capabilities;
+    try {
+      final probe = await browser.probe(withLinks: true);
+      capabilities = detectCaptureCapabilities(
+        probe,
+        config: kDefaultSaveConfig,
+      );
+    } catch (_) {
+      capabilities = const CaptureCapabilities.unanalysed();
+    }
+    if (!mounted) return;
+    setState(() {
+      _capabilities = capabilities;
+      _mode = capabilities.defaultMode;
+    });
   }
 
   Future<void> _refresh() async {
@@ -184,6 +228,8 @@ class _V2SavePanelState extends ConsumerState<V2SavePanel> {
       ref,
       url: widget.url,
       pageTitle: widget.pageTitle,
+      captureMode: _mode,
+      captureModeIsUserSet: _modeIsUserSet,
     );
     if (!mounted) return;
     setState(() {
@@ -245,14 +291,19 @@ class _V2SavePanelState extends ConsumerState<V2SavePanel> {
       }
     }
 
+    // A page that can hold nothing offers no save — the sheet says so in the
+    // detection line instead of putting up a button that would refuse.
     final canSave =
-        status != null && (task == null || task.state.isTerminal) && !_busy;
+        status != null &&
+        (task == null || task.state.isTerminal) &&
+        !_busy &&
+        _capabilities.canSaveAnything;
     final canStart =
         task != null && task.state == SaveTaskState.queued && !_busy;
     final source = result is RecognisedSource ? result : null;
 
     return SafeArea(
-      child: Padding(
+      child: SingleChildScrollView(
         padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -269,6 +320,15 @@ class _V2SavePanelState extends ConsumerState<V2SavePanel> {
               for (final line in lines)
                 Padding(padding: const EdgeInsets.only(bottom: 4), child: line),
             ],
+            const SizedBox(height: 12),
+            CaptureModeSection(
+              capabilities: _capabilities,
+              selected: _mode,
+              onSelect: (mode) => setState(() {
+                _mode = mode;
+                _modeIsUserSet = true;
+              }),
+            ),
             const SizedBox(height: 8),
             if (source != null && !source.followed)
               TextButton(

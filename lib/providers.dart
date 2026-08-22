@@ -412,6 +412,22 @@ final browserOnScreenProvider = Provider<ValueNotifier<bool>>((ref) {
   return notifier;
 });
 
+/// True when the app is actually compositing the WebView.
+///
+/// The same value the shell publishes to [BrowserController.surfaceIsPainted],
+/// exposed here as well because it is what *held* means: the ported engine's
+/// render guards stop a capture the moment its surface stops painting and
+/// resume when it returns, so there is no pause flag to read and deliberately
+/// should not be one. Written by the same owner as [keepBrowserPaintedProvider]
+/// and read by the running-operation indicator, which floats above the router
+/// and must not reach into `AppServices` to answer a question the shell has
+/// already answered.
+final browserSurfacePaintedProvider = Provider<ValueNotifier<bool>>((ref) {
+  final notifier = ValueNotifier<bool>(true);
+  ref.onDispose(notifier.dispose);
+  return notifier;
+});
+
 /// True unless the Reader is hiding its chrome.
 ///
 /// The Reader is the one writer: it publishes its own bar visibility here and
