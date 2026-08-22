@@ -173,6 +173,54 @@ void main() {
     });
   });
 
+  group('the cloud-sync gate', () {
+    test('unknown and free are both outside it; only Pro is inside', () {
+      expect(cloudSyncAvailableFor(Entitlement.unknown), isFalse);
+      expect(cloudSyncAvailableFor(Entitlement.free), isFalse);
+      expect(cloudSyncAvailableFor(Entitlement.pro), isTrue);
+    });
+
+    test('the holder answers the same question the seam does', () {
+      final c = ForegroundMultitasking();
+      expect(c.cloudSyncAvailable, isFalse, reason: 'Free by default');
+
+      c.override = EntitlementOverride.forcePro;
+      expect(c.cloudSyncAvailable, isTrue);
+
+      c.override = EntitlementOverride.forceFree;
+      expect(c.cloudSyncAvailable, isFalse, reason: 'and it goes away again');
+    });
+
+    test('no preference is involved, in either direction', () {
+      // Unlike foreground multitasking, this capability has nothing the user
+      // asks for: the service is either available or it is not. A preference
+      // must neither grant it nor withhold it.
+      final free = ForegroundMultitasking()..preference = true;
+      expect(free.cloudSyncAvailable, isFalse);
+
+      final pro = ForegroundMultitasking()
+        ..override = EntitlementOverride.forcePro;
+      expect(pro.preference, isFalse);
+      expect(pro.cloudSyncAvailable, isTrue);
+    });
+
+    test('forcing Pro in a production build grants no service at all', () {
+      for (final override in EntitlementOverride.values) {
+        expect(
+          cloudSyncAvailableFor(
+            resolveEntitlement(
+              production: Entitlement.free,
+              override: override,
+              internalBuild: false,
+            ),
+          ),
+          isFalse,
+          reason: '$override must not buy a server-cost capability',
+        );
+      }
+    });
+  });
+
   group('what entitlement must never reach', () {
     /// Reading, finishing an entry and removing its downloads are things the
     /// app does for everyone. The cheapest way to keep it that way is to keep
@@ -196,6 +244,41 @@ void main() {
           reason:
               'reading and finished-entry cleanup are not Pro features, so '
               'this file has no business seeing an entitlement',
+        );
+      });
+    }
+
+    /// The same rule, widened from a file list to whole trees.
+    ///
+    /// docs/V2_PRODUCTIZATION.md P2 is binding: local writes and the outbox
+    /// are never gated, `lib/capability/` stays the only entitlement reader,
+    /// and any gate sits on the network drain alone. The cheapest way to hold
+    /// that line is for the trees that *record*, *store*, *organise* and
+    /// *read* to be unable to see an entitlement at all — a repository that
+    /// could read one could condition a write on one, and the gate would have
+    /// moved off the drain without anybody deciding to move it.
+    const ungatedTrees = [
+      'lib/sync/',
+      'lib/data/',
+      'lib/library_ui/',
+      'lib/reading_v2/',
+    ];
+
+    for (final tree in ungatedTrees) {
+      test('nothing under $tree can see the capability layer', () {
+        final offenders = <String>[];
+        for (final file in Directory(tree).listSync(recursive: true)) {
+          if (file is! File || !file.path.endsWith('.dart')) continue;
+          if (file.readAsStringSync().contains('capability/')) {
+            offenders.add(file.path.replaceAll(r'\', '/'));
+          }
+        }
+        expect(
+          offenders,
+          isEmpty,
+          reason:
+              'recording, storing, organising and reading are ungated for '
+              'everyone; only the network drain may ask what a user has',
         );
       });
     }

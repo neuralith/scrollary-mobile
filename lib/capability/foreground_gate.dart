@@ -26,6 +26,10 @@ enum ForegroundGateAction {
   startEntrySave,
   leaveBrowser,
   settingsPreference,
+
+  /// The locked Sync row in Settings. Copy only — the cloud-sync gate itself
+  /// is [cloudSyncAvailableFor], and it decides nothing about the Browser.
+  settingsCloudSync,
 }
 
 /// How a start will actually run.

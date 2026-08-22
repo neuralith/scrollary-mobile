@@ -76,6 +76,22 @@ bool foregroundMultitaskingActive({
   required bool preferenceEnabled,
 }) => proCapabilityAvailable(effective) && preferenceEnabled;
 
+/// **May this device use the cloud service?**
+///
+/// The boundary this predicate draws is narrow and deliberate: it gates
+/// *using the network* — the drain that sends the outbox and pulls other
+/// devices' changes — and nothing else. Recording a change, organising the
+/// library, reading, and everything already on disk are ungated for everyone
+/// and cannot be gated; the outbox keeps accumulating whatever this returns,
+/// so nothing is lost and nothing has to be replayed when the answer changes
+/// (docs/DECISIONS.md V2-D7).
+///
+/// Same rule as [proCapabilityAvailable] today, and named separately anyway:
+/// two capabilities that happen to share an answer are still two questions,
+/// and a caller asking the one it means is how they stay separable.
+bool cloudSyncAvailableFor(Entitlement effective) =>
+    proCapabilityAvailable(effective);
+
 /// Today's production entitlement source.
 ///
 /// There is no billing in this build, so the honest answer is [Entitlement.free]
