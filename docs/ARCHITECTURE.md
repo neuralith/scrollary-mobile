@@ -10,16 +10,20 @@
 > [STORE_POLICY_MAP.md](./STORE_POLICY_MAP.md); data flows in
 > [PRIVACY.md](./PRIVACY.md).
 >
-> **The V2 direction is planned and not built.** Scrollary is evolving into a
-> cross-platform reading library in which an Entry belongs to the library
-> because the user wants to read it, not because it has been downloaded, and in
-> which library state can follow the user across their own devices. That work is
-> specified in [V2_ARCHITECTURE.md](./V2_ARCHITECTURE.md) and
-> [V2_SYNC.md](./V2_SYNC.md), decided in [DECISIONS.md](./DECISIONS.md), and
-> sequenced in [V2_ROADMAP.md](./V2_ROADMAP.md). Where one of those and this
-> document disagree, **this one is right about the present**. §1 below describes
-> the current implementation, in which the library is still effectively
-> organised around what has been downloaded — [V2_ARCHITECTURE.md
+> **The V2 data and sync layers are built; the V1 UI below is still the running
+> app.** Scrollary is evolving into a cross-platform reading library in which
+> an Entry belongs to the library because the user wants to read it, not
+> because it has been downloaded, and in which library state can follow the
+> user across their own devices. The domain, persistence, recognition, capture
+> and sync work for that is built and merged — see
+> [V2_ARCHITECTURE.md](./V2_ARCHITECTURE.md) and
+> [V2_ROADMAP.md](./V2_ROADMAP.md) for what exists and its current status —
+> decided in [DECISIONS.md](./DECISIONS.md). What has not yet merged is the
+> composition that makes the V2 screens the running app in place of the one
+> this document describes. Until that lands, **this document is right about
+> what the app does today**. §1 below describes the current implementation, in
+> which the library is still effectively organised around what has been
+> downloaded — [V2_ARCHITECTURE.md
 > §7](./V2_ARCHITECTURE.md) itemises every place that is true and what it
 > becomes.
 

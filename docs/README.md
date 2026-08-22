@@ -31,7 +31,7 @@ happens to live at. The full statement is [PRODUCT.md](./PRODUCT.md).
 | [FOREGROUND_MULTITASKING.md](./FOREGROUND_MULTITASKING.md) | Specification for one user-started operation continuing while the user reads, and **§10.0, the current Free/Pro boundary** |
 | [FOREGROUND_MULTITASKING_PLAN.md](./FOREGROUND_MULTITASKING_PLAN.md) | The implementation checklist for that specification, its validation record, and the device and accessibility tests still outstanding |
 
-### V2 — designed; only the backend foundation is built
+### V2 — domain, data, sync and backend layers built; composition in integration
 
 | Document | What it is |
 |---|---|
@@ -66,10 +66,15 @@ When two disagree, resolve in this order:
 
 **Two rules that cut across that order.**
 
-*Built beats designed.* The `V2_*` documents describe work that does not exist
-yet, apart from the backend foundation in `../scrollary-backend/`. Where one of them and
-ARCHITECTURE.md describe the same thing differently, ARCHITECTURE.md is right
-about the present and the V2 document is the plan.
+*Built beats designed.* The `V2_*` documents describe the domain, data,
+recognition, capture, library-UX, sync and backend layers that are now built
+and merged — `lib/domain`, `lib/data`, `lib/recognition`, `lib/save`,
+`lib/library_ui`, `lib/sync` and `../scrollary-backend/`. What has not yet
+merged is the composition that wires those V2 screens up as the running app in
+place of V1's ([V2_ROADMAP.md](./V2_ROADMAP.md) §12); until it does, the app a
+user opens is still the V1 shell ARCHITECTURE.md describes. Where a `V2_*`
+document and ARCHITECTURE.md describe the same *running* behaviour
+differently, ARCHITECTURE.md is right about what the user sees today.
 
 *V2 supersedes V1 where they conflict about intent.* ARCHITECTURE.md describes a
 library organised around what has been downloaded. That is accurate about the

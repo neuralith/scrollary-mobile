@@ -1,7 +1,8 @@
 # V2 architecture — domain, ownership, local model
 
-> **Status: final design, not built.** This document owns the V2 domain model,
-> its invariants, the state-ownership matrix and the local (device) architecture.
+> **Status: built and merged on `master`.** This document owns the V2 domain
+> model, its invariants, the state-ownership matrix and the local (device)
+> architecture — `lib/domain` and `lib/data` implement it as described below.
 >
 > Product intent: [PRODUCT.md](./PRODUCT.md) · Sync, backend boundary and client
 > contract: [V2_SYNC.md](./V2_SYNC.md) · Sequencing:
@@ -9,8 +10,11 @@
 > [V2_PRODUCTIZATION.md](./V2_PRODUCTIZATION.md) · Decisions:
 > [DECISIONS.md](./DECISIONS.md).
 >
-> [ARCHITECTURE.md](./ARCHITECTURE.md) remains the record of **V1 as built** and
-> is the authority on current behaviour. Nothing here exists yet.
+> [ARCHITECTURE.md](./ARCHITECTURE.md) remains the record of **V1 as built** —
+> the app a user runs today. The composition that makes the screens over this
+> domain the running app in place of V1's has not yet merged
+> ([V2_ROADMAP.md](./V2_ROADMAP.md) §12); until it does, ARCHITECTURE.md is the
+> authority on current running behaviour.
 
 ## 1. The axiom being replaced
 
@@ -359,15 +363,33 @@ Designed from the domain rather than one table per noun.
 | `reading_states` | User | One row per Entry, own clock. **Separate table so the hot mutation does not bump Entry metadata revisions** |
 | `measurements` | User | `PRIMARY KEY(entry_id, source_id)`, fraction, observed at |
 | `offline_copies` | **Device** | One active per Entry; provenance as values; anchor; artifact; path; bytes |
-| `download_requests` | User | Mirrored from the server, plus local claim state |
+| `download_requests` | User | Mirrored from the server, plus this device's own claim state (`local_save_task_id`) |
 | `history` | **Device** | Unchanged in spirit from V1's `browsing_history` |
 | `outbox` | **Device** | Append-only, ordered, mutation ids |
-| `sync_state` | **Device** | Cursor, last success, last error, pending count |
-| `save_queue`, `save_runs` | **Device** | Ported from V1, retargeted to `(entry, location)` |
+| `sync_state` | **Device** | Cursor, last-success and last-attempt time, last error |
+| `save_queue` | **Device** | Ported from V1's `queue_tasks`, retargeted to `(entry, location)` |
 | `page_hints`, `saved_sites`, `favicons`, `settings` | **Device** | Carried over unchanged |
 
 **Server ids are nullable columns on each synced table**, never a separate
 mapping table and never written over the local primary key.
+
+**`save_runs` is deliberately absent.** It would be the resume record of a
+Browser-driven traversal, and that orchestration does not exist in V2 yet (see
+the header of `lib/data/schema.dart` and `lib/save/entry_capture.dart` for the
+seam it waits on). Writing the table before its only writer would be a guessed
+shape with no caller.
+
+**`sync_state` has no pending-count column.** The count Settings shows is a
+live read of unsent `outbox` rows, not a cached number — there is nothing to
+keep in sync with the outbox draining.
+
+**There is no local `tombstones` table.** A device's own deletions are outbox
+`delete` rows, which *are* the record until the push lands; a remote
+tombstone is applied by deleting the local row outright (guarded by
+`tombstoneWins` against a racing local write), so there is nothing for the
+device to remember afterwards. The server's `tombstones` table is what a
+client that was offline needs to catch up on; a client that is caught up needs
+none of its own.
 
 ## 7. What does not change from V1
 

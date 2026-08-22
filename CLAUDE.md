@@ -31,7 +31,7 @@ Do not write code, comments, tests, fixtures, docs or store copy that position i
 as any of those. `test/repository_cleanliness_test.dart` enforces part of this
 and will fail the build.
 
-### V2 is a rewrite in planning; almost every standing rule below survives it
+### V2 replaces V1; the data and sync layers are built, composition is in integration
 
 The V2 direction is a **recognition-driven, cross-platform reading library**: you
 read, Scrollary recognises what it is, and your library stays current across your
@@ -45,9 +45,43 @@ Specified in [docs/PRODUCT.md](docs/PRODUCT.md),
 [docs/V2_PRODUCTIZATION.md](docs/V2_PRODUCTIZATION.md); every decision recorded
 in [docs/DECISIONS.md](docs/DECISIONS.md).
 
-**Only the backend foundation exists** (`../scrollary-backend/`). No mobile V2 code is
-written. Do not start the Flutter rewrite without an explicit request, and never
-describe planned work as though it were built.
+**What is built and merged on `master`, by layer:**
+
+- **Backend** (`../scrollary-backend/`, B1–B11) — `/healthz`, `/version`,
+  `/identity/arbitrate`, `/mutations`, `/changes?cursor=`,
+  `/entries/{id}/placement`, `/download-requests` (+ `/claim`, `/resolve`), and
+  the dev `X-Scrollary-Library` header. Both stores are conformance-identical;
+  revisions are allocated inside the write transaction; the feed reads from one
+  snapshot; measurement tombstones are scoped by `source_id`.
+- **Mobile domain and persistence** (`lib/domain`, `lib/data`) — the fresh
+  schema, repositories, outbox and recognition index.
+- **Recognition** (`lib/recognition`) — the pipeline, source-scoped discovery,
+  the preferred-source check, placement, history and promotion.
+- **Capture and offline read** (`lib/save`, `lib/reading_v2`) — capture
+  retargeted to `(Entry, Location)`, the V2 save queue (`save_queue`;
+  `save_runs` is deliberately absent — see the header of
+  `lib/data/schema.dart`), and offline read through `OfflineCopy`. The two
+  reviewed port seams are recorded in
+  [docs/V2_PORT_CHECKLIST.md](docs/V2_PORT_CHECKLIST.md) §17.
+- **Library UX** (`lib/library_ui`, D1–D7) — shelf, folders, collection detail
+  (one list, with a NEEDS PLACEMENT section), sources, entry actions including
+  queue wiring, the placement dialog, the sync status section.
+- **Sync** (`lib/sync`, G1–G7) — push, pull, identity canonicalisation, merge,
+  session, scheduler, retry, status, download-intent consumption, device
+  label, transport.
+
+**Not yet on `master`:** the composition that wires these V2 screens up as the
+running app in place of V1's (retiring the V1 library screens, queue and
+checker), and the end-to-end harness (Lane H, H2–H4). Until that composition
+merges, the app a user runs is still the V1 shell — do not describe the V2
+screens as the running app, and do not describe this work as planned rather
+than built.
+
+Rules that still bind while that finishes: the port checklist
+([docs/V2_PORT_CHECKLIST.md](docs/V2_PORT_CHECKLIST.md)) governs any further
+change to a ported file; the shared contract (`contracts/`) is frozen and
+changes only through `contracts/README.md`'s protocol; the guard tests in
+`test/` gate every change in either half.
 
 Three things future agents get wrong here:
 

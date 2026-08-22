@@ -67,11 +67,14 @@ the gate artefact is on `master`.
 |---|---|---|
 | **Gate A · Domain accepted** | `V2_ARCHITECTURE.md` §2–§5 merged, invariants I1–I17 fixed | B, C |
 | **Gate B · Contract frozen** | `contracts/openapi.yaml` merged; evidence and mutation payloads fixed | B6–B11, G |
-| **Gate C · Local persistence stable** | C1–C10 merged, invariant tests green, schema file frozen for the phase | D, E, F |
+| **Gate C · Local persistence stable** | C1–C2 merged, invariant tests green, schema frozen | D, E, F |
 | **Gate D · Capture integration stable** | E1–E3 merged, port checklist signed off, fixture capture green | E4 |
 | **Gate E · Local-first sync end to end** | H2 and H3 green | Extension work, cleanup passes |
 
 **Gate A is passed.** This document set is the artefact.
+
+**Gate D has passed at host/fixture level** — E1–E3 are merged and the port
+checklist is signed off; device validation (H6) is still pending.
 
 ## 5. Phases and maximum useful parallelism
 
@@ -90,6 +93,12 @@ the same central file are kept serial even when they look independent.
 **Do not run more agents than the table allows.** Higher numbers would mean two
 agents editing the same schema, contract or provider graph, and the merge cost
 exceeds the parallel gain.
+
+**Sequencing note.** Phase 4 (B10, E4, D4–D7, G5–G7) merged ahead of Gate E:
+none of that work depended on the end-to-end harness to be correct on its own
+terms, and holding it for H2/H3 would have idled three worktrees against a gate
+that only the harness itself can close. Gate E remains open — it is what
+Phase 5's `wt/v2-e2e` is closing now.
 
 ## 6. Dependency graph
 
@@ -153,10 +162,10 @@ Columns: **ID · outcome · scope · depends · owns · parallel-safe with · va
 | ID | Outcome | Scope | Depends | Owns | Validation | Class |
 |---|---|---|---|---|---|---|
 | **A1** | Domain model, invariants I1–I17, ownership matrix fixed | `docs/V2_*`, `PRODUCT.md`, `DECISIONS.md` | — | `docs/**` | Docs consistency, guard tests | Foundation · **done** |
-| **A2** | OpenAPI document for evidence, mutations, changes, download requests | `contracts/openapi.yaml` | A1 | `contracts/**` | Schema lints; example payloads validate | Foundation |
-| **A3** | Shared refusal and error vocabulary — named reasons, not free text | `contracts/errors.yaml` | A2 | `contracts/**` | Enumerated, no duplicates | Foundation |
-| **A4** | Evidence payload spec: what a client submits and what it must never invent | `contracts/evidence.yaml` | A2 | `contracts/**` | Round-trip examples from real fixtures | Foundation |
-| **A5** | Contract change protocol: how a lane requests a change without forking it | `contracts/README.md` | A2 | `contracts/**` | — | Foundation |
+| **A2** | OpenAPI document for evidence, mutations, changes, download requests | `contracts/openapi.yaml` | A1 | `contracts/**` | Schema lints; example payloads validate | Foundation · **done** |
+| **A3** | Shared refusal and error vocabulary — named reasons, not free text | `contracts/errors.yaml` | A2 | `contracts/**` | Enumerated, no duplicates | Foundation · **done** |
+| **A4** | Evidence payload spec: what a client submits and what it must never invent | `contracts/evidence.yaml` | A2 | `contracts/**` | Round-trip examples from real fixtures | Foundation · **done** |
+| **A5** | Contract change protocol: how a lane requests a change without forking it | `contracts/README.md` | A2 | `contracts/**` | — | Foundation · **done** |
 
 ### Lane B — Backend
 
@@ -166,79 +175,79 @@ Columns: **ID · outcome · scope · depends · owns · parallel-safe with · va
 | **B2** | Go domain types + invariant tests | `scrollary-backend/internal/domain` | A1 | `scrollary-backend/**` | C1, E1 | `go test ./internal/domain` | Foundation · **done** |
 | **B3** | Storage interfaces + in-memory implementation | `scrollary-backend/internal/storage` | B2 | `scrollary-backend/**` | C1, E1 | `go test ./internal/storage` | Foundation · **done** |
 | **B4** | Fresh Postgres schema as migrations | `scrollary-backend/migrations` | B2 | `scrollary-backend/migrations` | C2, E1 | Schema-shape test parses SQL and asserts every domain table and constraint | Foundation · **done** |
-| **B5** | Postgres repository over pgx | `scrollary-backend/internal/storage/postgres` | B4, Gate B | `scrollary-backend/**` | C3+, F1+ | Integration tests, skipped without `DATABASE_URL` | Functionality |
-| **B6** | Revision counter and `GET /changes` feed | `internal/api`, `internal/sync` | B5 | `scrollary-backend/**` | C, F, E | Cursor tests over interleaved creates, updates, tombstones | Functionality |
-| **B7** | `POST /mutations` with the idempotency ledger | same | B5 | `scrollary-backend/**` | C, F, E | Duplicate mutation ids produce one effect | Functionality |
-| **B8** | Identity arbitration: evidence → canonical or `unresolved` | `internal/identity` | B5, A4 | `scrollary-backend/**` | C, F, E | Convergence tests **including the cases that must not merge** | Functionality |
-| **B9** | Ordinal placement arbitration | `internal/identity` | B8 | `scrollary-backend/**` | C, F, E | Two-device conflicting placement detected centrally | Functionality |
-| **B10** | DownloadRequest create, claim, resolve | `internal/api` | B7 | `scrollary-backend/**` | D, G | Single-winner claim; at most one non-terminal per `(library, entry)` | Functionality |
-| **B11** | Dev library namespace middleware behind `SCROLLARY_DEV_MODE` | `internal/api` | B1 | `scrollary-backend/**` | anything | Server refuses to start without the flag | Functionality |
+| **B5** | Postgres repository over pgx | `scrollary-backend/internal/storage/postgres` | B4, Gate B | `scrollary-backend/**` | C3+, F1+ | Integration tests, skipped without `DATABASE_URL` | Functionality · **done** |
+| **B6** | Revision counter and `GET /changes` feed | `internal/api`, `internal/sync` | B5 | `scrollary-backend/**` | C, F, E | Cursor tests over interleaved creates, updates, tombstones | Functionality · **done** |
+| **B7** | `POST /mutations` with the idempotency ledger | same | B5 | `scrollary-backend/**` | C, F, E | Duplicate mutation ids produce one effect | Functionality · **done** |
+| **B8** | Identity arbitration: evidence → canonical or `unresolved` | `internal/identity` | B5, A4 | `scrollary-backend/**` | C, F, E | Convergence tests **including the cases that must not merge** | Functionality · **done** |
+| **B9** | Ordinal placement arbitration | `internal/identity` | B8 | `scrollary-backend/**` | C, F, E | Two-device conflicting placement detected centrally | Functionality · **done** |
+| **B10** | DownloadRequest create, claim, resolve | `internal/api` | B7 | `scrollary-backend/**` | D, G | Single-winner claim; at most one non-terminal per `(library, entry)` | Functionality · **done** |
+| **B11** | Dev library namespace middleware behind `SCROLLARY_DEV_MODE` | `internal/api` | B1 | `scrollary-backend/**` | anything | Server refuses to start without the flag | Functionality · **done** |
 
 ### Lane C — Mobile Domain & Persistence
 
 | ID | Outcome | Scope | Depends | Owns | Parallel with | Validation | Class |
 |---|---|---|---|---|---|---|---|
-| **C1** | Domain entities and pure rules | `lib/domain/**` | A1 | `lib/domain/**` | B1–B4, E1 | Invariant unit tests I1–I17 | Foundation |
-| **C2** | Fresh local schema with CHECK constraints for I3, I6, I8 | `lib/data/schema.dart` | C1 | `lib/data/schema.dart` **exclusively** | B4, E1 | Clean-schema test; constraint-violation tests | Foundation |
-| **C3** | Folder repository: create, rename, move, delete-with-reparent | `lib/data/folder_*` | Gate C | those files | C4–C10 | Reparent never deletes content; cycle refusal | Functionality |
-| **C4** | Collection + Source repository: follow, archive, preferred, lifecycle | `lib/data/collection_*` | Gate C | those files | C3, C5–C10 | Lifecycle transitions; `resolvedInto` chains | Functionality |
-| **C5** | Entry + Location repository, placement and unplaced | `lib/data/entry_*` | Gate C | those files | C3, C4, C6+ | I6 uniqueness; unplaced round-trip | Functionality |
-| **C6** | Reading-state repository, serialised, own clock | `lib/data/reading_*` | C5 | those files | C3, C4, C7+ | Concurrent-write ordering, ported from V1's queue tests | Functionality |
-| **C7** | Measurement repository, scoped `(entry, source)` | `lib/data/measurement_*` | C5 | those files | C3–C6, C8+ | Scope never dropped | Functionality |
-| **C8** | OfflineCopy repository with provenance snapshot | `lib/data/offline_*` | C5 | those files | C3–C7 | Provenance survives Source deletion; I13 | Functionality |
-| **C9** | Local recognition indexes | `lib/data/recognition_index.dart` | C5 | that file | C3–C8 | Single-lookup benchmark; offline correctness | Functionality |
-| **C10** | Outbox storage and `sync_state` | `lib/data/outbox_*` | C2 | those files | C3–C9 | Every repository write produces exactly one entry | Foundation |
+| **C1** | Domain entities and pure rules | `lib/domain/**` | A1 | `lib/domain/**` | B1–B4, E1 | Invariant unit tests I1–I17 | Foundation · **done** |
+| **C2** | Fresh local schema with CHECK constraints for I3, I6, I8 | `lib/data/schema.dart` | C1 | `lib/data/schema.dart` **exclusively** | B4, E1 | Clean-schema test; constraint-violation tests | Foundation · **done** |
+| **C3** | Folder repository: create, rename, move, delete-with-reparent | `lib/data/folder_*` | Gate C | those files | C4–C10 | Reparent never deletes content; cycle refusal | Functionality · **done** |
+| **C4** | Collection + Source repository: follow, archive, preferred, lifecycle | `lib/data/collection_*` | Gate C | those files | C3, C5–C10 | Lifecycle transitions; `resolvedInto` chains | Functionality · **done** |
+| **C5** | Entry + Location repository, placement and unplaced | `lib/data/entry_*` | Gate C | those files | C3, C4, C6+ | I6 uniqueness; unplaced round-trip | Functionality · **done** |
+| **C6** | Reading-state repository, serialised, own clock | `lib/data/reading_*` | C5 | those files | C3, C4, C7+ | Concurrent-write ordering, ported from V1's queue tests | Functionality · **done** |
+| **C7** | Measurement repository, scoped `(entry, source)` | `lib/data/measurement_*` | C5 | those files | C3–C6, C8+ | Scope never dropped | Functionality · **done** |
+| **C8** | OfflineCopy repository with provenance snapshot | `lib/data/offline_*` | C5 | those files | C3–C7 | Provenance survives Source deletion; I13 | Functionality · **done** |
+| **C9** | Local recognition indexes | `lib/data/recognition_index.dart` | C5 | that file | C3–C8 | Single-lookup benchmark; offline correctness | Functionality · **done** |
+| **C10** | Outbox storage and `sync_state` | `lib/data/outbox_*` | C2 | those files | C3–C9 | Every repository write produces exactly one entry | Foundation · **done** |
 
 ### Lane D — Mobile Library UX · after Gate C
 
 | ID | Outcome | Depends | Owns | Validation | Class |
 |---|---|---|---|---|---|
-| **D1** | Library shelf over the Folder tree | Gate C | `lib/library_ui/shelf_*` | Widget tests; empty and deep-nesting states | Functionality |
-| **D2** | Folder management: create, rename, move, delete | C3 | `lib/library_ui/folder_*` | Delete shows reparent, never data loss | Functionality |
-| **D3** | Collection detail: **one** Entry list, availability as row state | C4, C5 | `lib/library_ui/collection_*` | No separate download-oriented list exists | Functionality |
-| **D4** | Source presentation and preferred-source switch | C4 | `lib/library_ui/source_*` | Dead sources shown honestly | Functionality |
-| **D5** | Entry actions: read, open at source, download, remove offline, remove from library | C5, C8 | `lib/library_ui/entry_*` | Each verb's blast radius matches PRODUCT.md §2.4 | Functionality |
-| **D6** | Unplaced Entry surface and placement action | C5, B9 | `lib/library_ui/placement_*` | Refusal is visible, never silent | Functionality |
-| **D7** | Sync status in Settings, invisible when healthy | G7 | `lib/library_ui/sync_status_*` | Nothing appears in the reader | Functionality |
+| **D1** | Library shelf over the Folder tree | Gate C | `lib/library_ui/shelf_*` | Widget tests; empty and deep-nesting states | Functionality · **done** |
+| **D2** | Folder management: create, rename, move, delete | C3 | `lib/library_ui/folder_*` | Delete shows reparent, never data loss | Functionality · **done** |
+| **D3** | Collection detail: **one** Entry list, availability as row state | C4, C5 | `lib/library_ui/collection_*` | No separate download-oriented list exists | Functionality · **done** |
+| **D4** | Source presentation and preferred-source switch | C4 | `lib/library_ui/source_*` | Dead sources shown honestly | Functionality · **done** |
+| **D5** | Entry actions: read, open at source, download, remove offline, remove from library | C5, C8 | `lib/library_ui/entry_*` | Each verb's blast radius matches PRODUCT.md §2.4 | Functionality · **done** |
+| **D6** | Unplaced Entry surface and placement action | C5, B9 | `lib/library_ui/placement_*` | Refusal is visible, never silent | Functionality · **done** |
+| **D7** | Sync status in Settings, invisible when healthy | G7 | `lib/library_ui/sync_status_*` | Nothing appears in the reader | Functionality · **done** |
 
 ### Lane E — Capture & Save Integration · after Gate C
 
 | ID | Outcome | Depends | Owns | Validation | Class |
 |---|---|---|---|---|---|
-| **E1** | **Port inventory executed and checklist signed** (§9) | A1 | `docs/V2_PORT_CHECKLIST.md` + moves | Ported tests green **unchanged** | Foundation |
-| **E2** | Capture retargeted to `(Entry, Location)`; writes OfflineCopy | Gate C, E1 | `lib/save/**` call sites | Fixture capture; byte and provenance integrity | Functionality |
-| **E3** | New queue unit of work | E2 | `lib/save/queue_*` | Single-winner cancellation preserved | Functionality |
-| **E4** | DownloadRequest consumption → local queue | Gate D, B10 | `lib/save/download_intent_*` | Capture policy still evaluated on device; failure leaves membership intact | Functionality |
-| **E5** | Offline reader reads through OfflineCopy | E2 | reader call sites | Position restore unchanged | Functionality |
+| **E1** | **Port inventory executed and checklist signed** (§9) | A1 | `docs/V2_PORT_CHECKLIST.md` + moves | Ported tests green **unchanged** | Foundation · **done** |
+| **E2** | Capture retargeted to `(Entry, Location)`; writes OfflineCopy | Gate C, E1 | `lib/save/**` call sites | Fixture capture; byte and provenance integrity | Functionality · **done** |
+| **E3** | New queue unit of work | E2 | `lib/save/queue_*` | Single-winner cancellation preserved | Functionality · **done** |
+| **E4** | DownloadRequest consumption → local queue | Gate D, B10 | `lib/save/download_intent_*` | Capture policy still evaluated on device; failure leaves membership intact | Functionality · **done** |
+| **E5** | Offline reader reads through OfflineCopy | E2 | reader call sites | Position restore unchanged | Functionality · **done** |
 
 ### Lane F — Recognition, Source & Update · after Gate C
 
 | ID | Outcome | Depends | Owns | Validation | Class |
 |---|---|---|---|---|---|
-| **F1** | Recognition pipeline with the local fast path | C9 | `lib/recognition/recognise_*` | Known URL resolves with no network | Functionality |
-| **F2** | Evidence extraction and submission | A4, F1 | `lib/recognition/evidence_*` | Payloads validate against `contracts/evidence.yaml` | Functionality |
-| **F3** | Source-scoped discovery; `ObservedEntryWindow` per Source | C4, C5 | `lib/recognition/discovery_*` | I15: Source A never retracts Source B | Functionality |
-| **F4** | Preferred-source update checking; explicit check-other-sources | F3 | `lib/recognition/check_*` | One Source per ordinary check | Functionality |
-| **F5** | Cross-source placement and refusal surfacing | B9, F3 | `lib/recognition/placement_*` | 100 vs 99.5 stays two Entries | Functionality |
-| **F6** | History capture and promote-to-library | C3, F1 | `lib/recognition/history_*` | Unfollowed reading never expands the synced library | Functionality |
+| **F1** | Recognition pipeline with the local fast path | C9 | `lib/recognition/recognise_*` | Known URL resolves with no network | Functionality · **done** |
+| **F2** | Evidence extraction and submission | A4, F1 | `lib/recognition/evidence_*` | Payloads validate against `contracts/evidence.yaml` | Functionality · **done** |
+| **F3** | Source-scoped discovery; `ObservedEntryWindow` per Source | C4, C5 | `lib/recognition/discovery_*` | I15: Source A never retracts Source B | Functionality · **done** |
+| **F4** | Preferred-source update checking; explicit check-other-sources | F3 | `lib/recognition/check_*` | One Source per ordinary check | Functionality · **done** |
+| **F5** | Cross-source placement and refusal surfacing | B9, F3 | `lib/recognition/placement_*` | 100 vs 99.5 stays two Entries | Functionality · **done** |
+| **F6** | History capture and promote-to-library | C3, F1 | `lib/recognition/history_*` | Unfollowed reading never expands the synced library | Functionality · **done** |
 
 ### Lane G — Sync · after Gate B and Gate C
 
 | ID | Outcome | Depends | Owns | Validation | Class |
 |---|---|---|---|---|---|
-| **G1** | Outbox drain (push) with mutation ids | C10, B7 | `lib/sync/push_*` | Duplicate submission is idempotent | Functionality |
-| **G2** | Change-feed pull, applied **through repositories** | B6, C3–C8 | `lib/sync/pull_*` | Never writes the DAO directly; batch in one transaction | Functionality |
-| **G3** | Provisional identity canonicalisation | B8, G1, G2 | `lib/sync/identity_*` | **Serial** — touches every repository. Local ids never rewritten | Functionality |
-| **G4** | Merge rules: scalar LWW, add-wins sets, keyed scalars | G2 | `lib/sync/merge_*` | Every row of `V2_SYNC.md §4.2` | Functionality |
-| **G5** | Automatic scheduling: launch, resume, reconnect, idle, manual | G1, G2 | `lib/sync/scheduler_*` | Nothing runs while the app is not in front, beyond platform-supported windows | Functionality |
-| **G6** | Retry, backoff, interruption safety | G5 | `lib/sync/retry_*` | Kill at every step leaves recoverable state | Functionality |
-| **G7** | Sync status state for Settings | G5 | `lib/sync/status_*` | Healthy sync produces no UI event | Functionality |
+| **G1** | Outbox drain (push) with mutation ids | C10, B7 | `lib/sync/push_*` | Duplicate submission is idempotent | Functionality · **done** |
+| **G2** | Change-feed pull, applied **through repositories** | B6, C3–C8 | `lib/sync/pull_*` | Never writes the DAO directly; batch in one transaction | Functionality · **done** |
+| **G3** | Provisional identity canonicalisation | B8, G1, G2 | `lib/sync/identity_*` | **Serial** — touches every repository. Local ids never rewritten | Functionality · **done** |
+| **G4** | Merge rules: scalar LWW, add-wins sets, keyed scalars | G2 | `lib/sync/merge_*` | Every row of `V2_SYNC.md §4.2` | Functionality · **done** |
+| **G5** | Automatic scheduling: launch, resume, reconnect, idle, manual | G1, G2 | `lib/sync/scheduler_*` | Nothing runs while the app is not in front, beyond platform-supported windows | Functionality · **done** |
+| **G6** | Retry, backoff, interruption safety | G5 | `lib/sync/retry_*` | Kill at every step leaves recoverable state | Functionality · **done** |
+| **G7** | Sync status state for Settings | G5 | `lib/sync/status_*` | Healthy sync produces no UI event | Functionality · **done** |
 
 ### Lane H — Integration & Regression
 
 | ID | Outcome | Depends | Validation | Class |
 |---|---|---|---|---|
-| **H1** | Fixture server gains multi-source scenarios | Gate C | Two Sources of one Collection, one dead, one renumbering | Integration |
+| **H1** | Fixture server gains multi-source scenarios | Gate C | Two Sources of one Collection, one dead, one renumbering | Integration · **done** |
 | **H2** | End-to-end: client action → backend → phone library | Gate E prerequisites | Runs against a real Postgres and the fixture server | Integration |
 | **H3** | End-to-end: phone offline mutation → reconnect → second client | H2 | Includes interrupted pull and duplicate mutation | Integration |
 | **H4** | End-to-end: Download to Mobile → local queue → capture → OfflineCopy | E4, B10 | **Asserts the backend made no outbound request** | Integration |
@@ -318,38 +327,29 @@ X and passes Y.* Never *"it looks unused"*.
 | **G** | Offline mutation → reconnect; duplicate mutation; interrupted pull; provisional canonicalisation; Folder moves; deletion conflicts; DownloadRequest delivery |
 | **H** | The three end-to-end scenarios, plus **an assertion that the backend never made an outbound request** |
 
-## 12. Next worktrees
+## 12. Status
 
-**Gate A is passed.** Phase 0's remaining work is Lane A's contract, and it is
-serial.
+**Historical — this section once listed the next worktrees to start when Gate
+A had just passed and Phase 0 was the frontier.** That plan has since been
+carried out: every lane below merged to `master`, phase by phase, in the order
+§5 sequenced them. It is kept here as a status readout, updated in place,
+rather than deleted — the worktree plan it replaces is history, not a
+document a future contributor should read as current.
 
-### Start now — one worktree
+**Merged, lane by lane:** A1–A5 · B1–B11 · C1–C10 · D1–D7 · E1–E5 · F1–F6 ·
+G1–G7 · H1. Gates A through D have passed — Gate D at host/fixture level, with
+device validation (H6) still pending (§4).
 
-```
-wt/v2-contracts          Lane A · tasks A2, A3, A4, A5
-```
+**In integration, not yet on `master`:**
 
-| | |
-|---|---|
-| **Branch purpose** | Author the OpenAPI document, evidence payload spec, shared error vocabulary and contract change protocol |
-| **May modify** | `contracts/**` only. `docs/**` for cross-links |
-| **Must not modify** | `scrollary-backend/**`, `lib/**`, `pubspec.yaml` |
-| **Prerequisite state** | This document set on `master` |
-| **Merge order** | First. Gate B depends on it |
-
-### Start immediately after Gate B — three worktrees, no overlap
-
-```
-wt/v2-backend-api        Lane B · B5, B6, B7, B11    owns backend/**
-wt/v2-mobile-domain      Lane C · C1, C2             owns lib/domain/**, lib/data/schema.dart
-wt/v2-port-validation    Lane E · E1                  owns docs/V2_PORT_CHECKLIST.md + file moves
-```
-
-These three share no files. `wt/v2-port-validation` moves files but changes no
-internals, so its conflict surface is import paths only.
-
-**Not yet:** Lanes D, F and G. All three depend on Gate C, and starting them
-early means building against a schema that is still moving.
+- **The composition branch** — wiring the V2 screens in `lib/library_ui` up as
+  the running app in place of V1's, and the V1 cleanup passes that follow
+  (§10). Phase 4 (B10, E4, D4–D7, G5–G7) landed ahead of this and ahead of
+  Gate E (§5's sequencing note); the cutover itself has not.
+- **The end-to-end harness, H2–H4.** H1 is merged; H2 and H3 are Gate E's own
+  artefact and are the immediate next work in `wt/v2-e2e`.
+- **H5 cleanup and H6 device validation**, which depend on the two items
+  above.
 
 ---
 
