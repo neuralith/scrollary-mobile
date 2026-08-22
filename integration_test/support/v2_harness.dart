@@ -450,7 +450,6 @@ class V2App {
       }
     }
     await _closeQuietly(library.close, 'library');
-    await _closeQuietly(db.close, 'app');
   }
 
   /// Close a database, and **give up rather than hang**.
