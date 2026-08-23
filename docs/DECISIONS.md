@@ -628,6 +628,41 @@ Finding Entries and downloading them stay two acts (PRODUCT.md §2.4): the walk
 writes Entries and Locations and queues rows, and not a byte is captured until
 the explicit Start.
 
+### V2-D48 · Archiving marks a Collection; it does not move it to another screen
+
+V1 had an Archived screen. V2 has one Library page (V2-D43), so archiving
+writes `lifecycle` and the row keeps its place with an *Archived* chip. Nothing
+is hidden, so nothing has to be gone looking for — which is what "archived
+content remains discoverable" actually requires. A second screen would be a
+second place for the same rows to be, kept in step by hand.
+
+### V2-D49 · The save preflight offers only the states V2 can tell apart
+
+V1 classified six already-saved states and offered eleven choices, several of
+them resumes. V2's capture has no resume: a re-save reads the page from the
+start. So the preflight asks one question in two forms — *already downloaded,
+download again?* and *this copy is incomplete, download again?*, the second
+naming how many images are missing — and offers nothing else.
+
+Offering a recovery the engine cannot perform is worse than not offering one.
+The V1 choices that described a resume are not restored, and
+`unknownEntryEstimate` is not restored either: an estimate for a Collection
+nothing has been downloaded from is a guess wearing an estimate's clothes, so
+the sheet says nothing about size instead.
+
+### V2-D50 · A Collection's check state is session memory
+
+V1 persisted four check columns per Collection. V2 keeps the same information
+— *Not checked yet · Checking · N new · Checked ‹when› · Check failed*, the
+vocabulary `checkLook()` already had — in memory for as long as the app runs,
+for the reason V2-D43 gives for collapsed Folders: the schema is frozen at
+version 1 with no migration path, and a check is cheap to repeat.
+
+*Not checked yet* on a fresh launch is honest, and is exactly what a user who
+has not checked since launching should see. A reading that concluded nothing
+never stamps a time: "Checked 2 minutes ago" over a site that would not load is
+the same lie the old single sentence told.
+
 ## Open
 
 Only items that are genuinely undecided **and** not already deferred to

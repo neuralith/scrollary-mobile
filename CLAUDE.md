@@ -63,6 +63,13 @@ in [docs/DECISIONS.md](docs/DECISIONS.md).
   `lib/data/schema.dart`), and offline read through `OfflineCopy`. The two
   reviewed port seams are recorded in
   [docs/V2_PORT_CHECKLIST.md](docs/V2_PORT_CHECKLIST.md) §17.
+- **Operations you can see** (`lib/features/operation_progress.dart`,
+  `lib/library_ui/run_summary.dart`, `lib/features/check_state.dart`,
+  `lib/features/library_check_flow.dart`) — a run says which entry it is on
+  and how many images of it, a finished run says what it came to with *Retry
+  failed* and *Details*, a Collection carries its last check state, and
+  *Check all collections* is back. **Seeing what the device is doing is never
+  gated** — the parity contract pins it, and it was lost once already.
 - **The save flow** (`lib/features/v2_save_flow.dart`, `lib/recognition/adopt.dart`,
   `lib/save/save_scope.dart`) — a page becomes library through the matrix in
   [docs/V2_SAVE_FLOW.md](docs/V2_SAVE_FLOW.md): what the page *is* comes from

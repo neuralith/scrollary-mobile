@@ -613,7 +613,7 @@ executed from any source.
 WHERE THINGS ARE
 
 - Capture mode and how many entries to save: Browser → Save
-- Queue, progress, cancel, retry: Library → Activity (top of the Library screen)
+- Queue, cancel, retry and the last run's summary: Library → Activity (top of the Library screen). Live progress appears wherever the run is visible
 - Delete saved files, keeping the library entry: Collection detail → select →
   Remove offline files; or Settings → Storage
 - Delete a whole collection permanently, files and records together:
