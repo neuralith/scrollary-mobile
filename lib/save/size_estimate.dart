@@ -40,9 +40,9 @@ class DownloadEstimate {
 /// What [entries] more of this collection would be expected to cost, given
 /// [alreadyDownloaded] byte sizes from it.
 ///
-/// The **median** rather than the mean: one enormous entry — a chapter that
-/// happened to be a single tall image, a gallery — should not drag the figure
-/// for the twenty ordinary ones after it.
+/// The **median** rather than the mean: one enormous entry — one that
+/// happened to be a single tall image, or a gallery — should not drag the
+/// figure for the twenty ordinary ones after it.
 DownloadEstimate estimateDownload({
   required List<int> alreadyDownloaded,
   required int entries,

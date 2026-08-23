@@ -25,8 +25,8 @@ void main() {
   });
 
   test('one enormous entry does not drag the figure', () {
-    // The median, not the mean: a chapter that happened to be one tall image
-    // should not set expectations for the twenty ordinary ones after it.
+    // The median, not the mean: an entry that happened to be one tall
+    // image should not set expectations for the ordinary ones after it.
     final estimate = estimateDownload(
       alreadyDownloaded: [10 * mb, 11 * mb, 12 * mb, 900 * mb],
       entries: 1,
