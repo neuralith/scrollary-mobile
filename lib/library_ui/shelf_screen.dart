@@ -7,9 +7,9 @@
 /// (V2-D43). The schema is hierarchical either way; a Folder inside a Folder
 /// is a section inside a section.
 ///
-/// The header carries the app-level doors: device storage, Activity and
-/// Settings. Making a Folder is an organisation action and lives in the
-/// Library menu, not beside the title.
+/// The header carries the app-level doors: Activity and Settings. Making a
+/// Folder is an organisation action and sits beside the MY LIBRARY heading,
+/// not in the app header.
 ///
 /// Nothing here asks whether a Collection or an Entry has been downloaded. An
 /// item is on the shelf because it is in the library (PRODUCT.md §1.2), and
@@ -21,7 +21,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../app.dart' show LeaveBrowserGuard;
-import '../features/storage_screen.dart' show StoragePill;
 import '../save/queue_task.dart';
 import '../ui/palette.dart';
 import '../ui/status_style.dart';
@@ -89,25 +88,19 @@ class _LibraryBody extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final resumable = ref.watch(continueReadingProvider).value ?? const [];
+    final palette = AppPalette.of(context);
     final itemCount = view.collectionCountDeep + view.entryCountDeep;
     return Column(
       children: [
         LibraryHeader(
           title: 'Library',
           actions: [
-            const StoragePill(),
             const _ActivityButton(),
             HeaderIconButton(
               key: const ValueKey('libraryAction-settings'),
               icon: Icons.settings,
               tooltip: 'Settings',
               onPressed: () => LeaveBrowserGuard.push(context, '/settings'),
-            ),
-            HeaderIconButton(
-              key: const ValueKey('libraryMenu'),
-              icon: Icons.more_horiz,
-              tooltip: 'Library actions',
-              onPressed: () => _showLibraryMenu(context, ref, view),
             ),
           ],
         ),
@@ -121,6 +114,27 @@ class _LibraryBody extends ConsumerWidget {
               // here: its own empty state below already covers it.
               if (resumable.isEmpty && !view.isEmpty)
                 const _NothingInProgress(),
+              // The heading and its one action stand even over an empty
+              // library: a Folder can be made before anything is in it.
+              SectionLabel(
+                'MY LIBRARY · $itemCount',
+                trailing: IconButton(
+                  key: const ValueKey('libraryAction-newFolder'),
+                  tooltip: 'New folder',
+                  icon: const Icon(Icons.create_new_folder_outlined, size: 22),
+                  color: palette.inkMuted,
+                  // A finger-sized target, whatever density the theme sets.
+                  constraints: const BoxConstraints.tightFor(
+                    width: 44,
+                    height: 44,
+                  ),
+                  padding: EdgeInsets.zero,
+                  // The one Folder creation flow, named for the root: a
+                  // Folder made here stands at the top of the library.
+                  onPressed: () =>
+                      createFolderIn(context, ref, parentId: view.folder.id),
+                ),
+              ),
               if (view.isEmpty)
                 const LibraryEmptyState(
                   icon: Icons.local_library_outlined,
@@ -132,7 +146,6 @@ class _LibraryBody extends ConsumerWidget {
                       'device has downloaded it.',
                 )
               else ...[
-                SectionLabel('MY LIBRARY · $itemCount'),
                 const Divider(height: 1),
                 ..._contentsOf(context, ref, view, depth: 0),
                 for (final folder in view.folders)
@@ -192,41 +205,6 @@ List<Widget> _contentsOf(
 /// levels the indent would say more about the user's tidiness than the page
 /// has width for.
 double _indent(int depth) => 16.0 * depth.clamp(0, 3);
-
-/// Organisation actions for the whole library. One entry today; a sheet
-/// rather than a bare icon so the action is named before it is taken.
-Future<void> _showLibraryMenu(
-  BuildContext context,
-  WidgetRef ref,
-  ShelfView view,
-) async {
-  final create = await showModalBottomSheet<bool>(
-    context: context,
-    builder: (sheetContext) => SafeArea(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(20, 14, 20, 8),
-            child: Text('Library', style: serifStyle(size: 20)),
-          ),
-          ListTile(
-            key: const ValueKey('libraryAction-newFolder'),
-            leading: const Icon(Icons.create_new_folder_outlined),
-            title: const Text('New folder'),
-            subtitle: const Text(
-              'Groups collections on this page. Nothing has to be in one.',
-            ),
-            onTap: () => Navigator.of(sheetContext).pop(true),
-          ),
-          const SizedBox(height: 8),
-        ],
-      ),
-    ),
-  );
-  if (create != true || !context.mounted) return;
-  await createFolderIn(context, ref, parentId: view.folder.id);
-}
 
 /// The door to Activity, with a dot while the queue has something to say —
 /// work waiting or running, or a failure still listed there. The dot is a

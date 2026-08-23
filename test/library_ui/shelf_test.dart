@@ -7,6 +7,7 @@ library;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:web_reader/features/storage_screen.dart' show StoragePill;
 import 'package:web_reader/library_ui/shelf_screen.dart';
 import 'package:web_reader/ui/status_style.dart';
 
@@ -154,13 +155,15 @@ void main() {
     await tester.pumpWidget(h.app(const ShelfScreen()));
     await pumpUntil(tester, find.text('Weekly'));
 
-    // The header is the app's doors. Making a Folder is in the Library menu,
+    // The header is the app's doors and nothing else: no storage telemetry,
+    // no overflow menu. Making a Folder sits beside the MY LIBRARY heading,
     // and the root is not the user's to rename, move or delete, so no folder
     // menu stands beside the title.
     expect(find.byTooltip('Settings'), findsOneWidget);
     expect(find.byTooltip('Activity'), findsOneWidget);
-    expect(find.byTooltip('Library actions'), findsOneWidget);
-    expect(find.byTooltip('New folder'), findsNothing);
+    expect(find.byTooltip('Library actions'), findsNothing);
+    expect(find.byKey(const ValueKey('libraryMenu')), findsNothing);
+    expect(find.byType(StoragePill), findsNothing);
     expect(find.byTooltip('Back'), findsNothing);
 
     for (final element in find.byType(HeaderIconButton).evaluate()) {
@@ -177,9 +180,15 @@ void main() {
       expect(icon.size, kHeaderIconSize);
     }
 
-    // The Folder's own actions sit on its section.
+    // The Folder's own actions sit on its section; New folder on the heading,
+    // below the app header and at a touch-target size.
     expect(find.byKey(ValueKey('folderMenu-${weekly.id}')), findsOneWidget);
-    await tapAndPump(tester, find.byKey(const ValueKey('libraryMenu')));
-    expect(find.text('New folder'), findsOneWidget);
+    final newFolder = find.byTooltip('New folder');
+    expect(newFolder, findsOneWidget);
+    expect(
+      tester.getTopLeft(newFolder).dy,
+      greaterThan(tester.getBottomLeft(find.text('Library')).dy),
+    );
+    expect(tester.getSize(newFolder).shortestSide, greaterThanOrEqualTo(44));
   });
 }

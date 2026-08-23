@@ -31,9 +31,8 @@ void main() {
     await tester.pumpWidget(h.app(const ShelfScreen()));
     await pumpUntil(tester, find.text('Your library is empty'));
 
-    // Making a Folder is a Library action, not a header button.
-    await tapAndPump(tester, find.byKey(const ValueKey('libraryMenu')));
-    await tapAndPump(tester, find.text('New folder'));
+    // New folder sits beside the MY LIBRARY heading — one tap, no menu.
+    await tapAndPump(tester, find.byTooltip('New folder'));
     await tester.enterText(
       find.byKey(const ValueKey('folderNameField')),
       'Reference',
@@ -41,7 +40,8 @@ void main() {
     await tapAndPump(tester, find.text('Create'));
     await pumpUntil(tester, find.text('Reference'));
 
-    expect(find.byKey(const ValueKey('libraryMenu')), findsOneWidget);
+    expect(find.text('MY LIBRARY · 0'), findsOneWidget);
+    expect(find.text('Empty'), findsOneWidget); // the new section's own count
   });
 
   screenTest('renaming a folder changes what its section is called', (
