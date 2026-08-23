@@ -13,8 +13,9 @@
 ///
 /// Three rules it carries:
 ///
-/// * **Seeing what the device is doing is never gated.** Nothing here reads an
-///   entitlement, and nothing above it may (docs/V2_CAPABILITY_PARITY.md).
+/// * **Seeing what the device is doing is never gated.** Nothing here asks
+///   what a user has, and nothing above it may
+///   (docs/V2_CAPABILITY_PARITY.md).
 /// * **The log is not the interface.** It is kept for the moment something
 ///   goes wrong and someone needs the detail; the routine surface shows counts.
 /// * **Bounded, like everything else.** The log keeps its last
