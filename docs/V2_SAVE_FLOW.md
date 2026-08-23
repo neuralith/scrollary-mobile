@@ -74,8 +74,115 @@ Rules that bind every row:
   Collection downloads nothing; downloading one Entry follows nothing. The
   sheet may offer both in one tap, but they remain two operations
   (PRODUCT.md §2.4).
+- **A count that may open a page is authorised before it opens one.** The
+  count sheet asks *how much*; the start sheet asks *where you wait while it
+  is found*. See §4.
 
-## 4. How much
+## 4. How much, and how far
+
+**What a typed count means.** It counts the Entry in front of the user as the
+first one. Ten, from entry 101, means 101 through 110 — not 101 plus ten more.
+The sheet says "from this page onward" and the planner walks the Collection's
+order from the starting Entry inclusive; both halves have meant this since the
+count was restored, and nothing below changes it.
+
+Two operations answer that count, and they are not the same question:
+
+| | **Download the ones I have** | **Download the next N from here** |
+|---|---|---|
+| The count is a claim about | the library | the **Source** |
+| Opens a page | never | only for the ones the library is missing |
+| Missing Entries | reported as a short plan | found by reading forward on this Source |
+| Implemented by | `SaveScopePlanner` | `SourceWalk` (`lib/recognition/walk.dart`), then the planner |
+
+The second is what people mean when they are reading entry 101 and ask for ten:
+the library usually knows four of them, and stopping at four because the rest
+had never been seen is the limitation this exists to remove. It is chosen in
+the sheet (`SaveScopeChoice.discoverMissing`), because it opens the site — and
+content-affecting source automation is always user-started, visible, bounded
+and cancellable, exactly like the update check.
+
+### What the sheet asks, in its own words
+
+Three ranges, of which two take a count. The typed number means the same thing
+in both, and the sheet says so instead of leaving it to be inferred:
+
+| Range | Returns | The sentence under it |
+|---|---|---|
+| **This entry** | `currentPageOnly`, `discoverMissing: false` | "Only the page you are on." |
+| **Entries from here** | `fixedCount`, `discoverMissing: true` | "Type how many to download from this page onward — up to *N*." |
+| **Entries already in your library** | `fixedCount`, `discoverMissing: false` | "The same count, but only the ones your library already knows." |
+
+The field asks it in its own label — **"How many entries, counting this
+one?"** — so the inclusive count is stated where the number is typed rather
+than left to be inferred from it. Under the field, the sentence that tells the
+two counted ranges apart says it again in numbers. For *Entries from here*:
+
+> 5 means this entry and the next four. If your library does not have the
+> later ones yet, Scrollary opens this site and reads forward from this page
+> to find them. Nothing else is downloaded, and you can stop it at any point.
+
+and for *Entries already in your library*:
+
+> 5 means this entry and the next four. Only entries your library already
+> knows are queued, and this site is not opened — if it knows fewer than you
+> ask for, that is what gets queued and Scrollary says so.
+
+The ceiling stays where it always was — stated in the range's own line and
+enforced by `SaveLimits.forScope` — and so does every part of the recovered
+numeric interaction: digits only, a blank and a zero refused where they were
+typed, and an OK bar for the number pad iOS gives no return key.
+
+### The gate, because it navigates
+
+A run that may open pages goes through `showStartOptionsSheet`
+(`ForegroundGateAction.startEntrySave`) before anything is opened — the same
+sheet, and the same three answers, as `startCollectionCheck`. It names the
+bound in words:
+
+> Download *N* entries from here? Scrollary downloads up to *N* entries, from
+> this page onward — counting this one. For any your library does not have
+> yet, it opens this site in the Browser and reads forward to find them, at
+> most `kMaxWalkPages` pages. Nothing else is downloaded, and you can stop it
+> at any point.
+
+It is asked whenever the count is a claim about the Source *and* is more than
+one, because whether a page has to be opened is what the walk finds out: a
+sheet that appeared only once a gap was found would be asking permission after
+the app had already gone to the site. A count of one is the page in front of
+the user and opens nothing, and the library-only range opens nothing either —
+neither is ever gated.
+
+The gate decides **where the user waits**, never whether the work happens
+(CLAUDE.md, "Free and Pro"). Backing out starts nothing and changes nothing,
+and there is no second question anywhere on this path. When the user also asked
+for *Start now*, the queue's own Start is authorised after the reading, through
+`startQueuedDownloads` — the two acts stay two acts, and each is authorised
+where it happens.
+
+Reading forward is visible and stoppable in the compact running surface
+(`features/running_operation_panel.dart`), beside *Downloading* and *Checking*
+and drawn the same way: a label, an indeterminate bar and a Stop that ends it
+at the next page boundary. That panel draws its two existing states over
+controllers publishing exactly *is it running* and *stop it*, and the walk is
+shown through the same pair — no third kind of status surface, and no control
+that claims more than the walk knows. Entries already resolved stay in the
+library.
+
+The walk is bounded twice: by the typed count, and by `kMaxWalkPages` pages
+opened. It follows only what the page's own links assert, through the same
+`resolveNextPage` capture uses — a number in a URL never manufactures the
+address after it. Every page it reads is reconciled through `EntryReconciler`
+before anything is queued, so an Entry the Collection already holds at that
+position gains a Location rather than a twin, and an address already held is
+reused untouched. A next address that is not on this Source ends the walk.
+
+Ending is never failure: `countReached` and `endOfSource` are both normal, and
+"there were only six" is an answer about the Source. A walk that stops early —
+a page that would not render, a next control only the user can point at, a
+cancellation — keeps every Entry it had already resolved.
+
+## 5. How much (the bound)
 
 The count is `SaveScope.fixedCount` with a typed number, clamped by
 `SaveLimits.forScope` to `SaveConfig.maxEntriesPerRun` — the V1 rule,
@@ -84,17 +191,21 @@ scope.
 
 `SaveScopePlanner` turns (start Entry, limits) into the (Entry, Location)
 pairs to queue, walking the Collection's own order upward from the Entry the
-user was on. It reads the library and nothing else: it opens no page. When
-the library knows fewer Entries than were asked for, the plan is short and
-says so — finding more is the update check, which is a separate, visible,
-bounded and cancellable act, and the sheet offers it in those words.
+user was on. It reads the library and nothing else: it opens no page. When the
+library knows fewer Entries than were asked for, the plan is short and says so.
+
+That is one of the two operations in §4 — *Entries already in your library* —
+and it is not what a typed count means by default. The default is *Entries
+from here*, where the count is a claim about the Source and what the library
+is missing is found by reading that Source forward. A short plan is the
+quieter range's honest answer, never the intended semantics of a count.
 
 Capture itself is unchanged: each planned save is one `save_queue` row against
 `(Entry, Location)`, run by the V2 `QueueRunner` into an `OfflineCopy`.
 Nothing here starts a run — a queued row waits for an explicit Start, as it
 always has.
 
-## 5. Cross-source equivalence
+## 6. Cross-source equivalence
 
 Entry reconciliation has exactly one implementation, `EntryReconciler`
 (`lib/recognition/reconcile.dart`), used by `SourceDiscovery` and by every

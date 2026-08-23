@@ -19,6 +19,14 @@
 /// ceiling is a number the user can see, and **a queued download waits for an
 /// explicit Start**. *Start now* is that Start, taken in the same tap — it is
 /// not a second kind of start, and nothing here runs anything on its own.
+///
+/// **Two ranges take a count, and they answer different questions**
+/// (docs/V2_SAVE_FLOW.md §4). *Entries from here* counts on the **Source**:
+/// the ones the library has not seen are found by reading this site forward
+/// from the page in front of the user. *Entries already in your library*
+/// counts on the library and opens nothing. Both count the entry the user is
+/// on as the first one, and the sheet says so in words rather than leaving it
+/// to be inferred from a number.
 library;
 
 import 'package:flutter/material.dart';
@@ -30,7 +38,11 @@ import '../ui/status_style.dart';
 
 /// The range the user chose, and whether they asked for it to start.
 class SaveScopeChoice {
-  const SaveScopeChoice({required this.limits, required this.startNow});
+  const SaveScopeChoice({
+    required this.limits,
+    required this.startNow,
+    this.discoverMissing = false,
+  });
 
   /// Built only ever through [SaveLimits.forScope], so there is no
   /// representation of an unbounded run in this file.
@@ -39,6 +51,15 @@ class SaveScopeChoice {
   /// True for *Start now*: authorise the waiting queue as well as adding to
   /// it. False leaves the rows waiting, which is what they do by default.
   final bool startNow;
+
+  /// True when the count is a claim about the **Source** rather than about
+  /// the library: if the later Entries are not known yet, read forward on
+  /// this site to find them (docs/V2_SAVE_FLOW.md §4).
+  ///
+  /// False is *Entries already in your library* — queue what the library
+  /// already holds and say how many that was, opening nothing. Both are real
+  /// answers, and the one that opens a site is the one the user picked.
+  final bool discoverMissing;
 }
 
 /// Ask how much of [collectionName] to download, starting from this page.
@@ -85,6 +106,13 @@ class _SaveScopeSheetState extends State<_SaveScopeSheet> {
   final _countFocus = FocusNode(debugLabel: 'saveCountField');
 
   SaveScope _scope = SaveScope.currentPageOnly;
+
+  /// Which of the two counted ranges is selected, while [_scope] is
+  /// [SaveScope.fixedCount]. It survives a switch to *This entry* for the same
+  /// reason the typed number does: coming back and finding the answer changed
+  /// would be the sheet forgetting something the user said.
+  bool _discoverMissing = true;
+
   String? _countError;
   bool _busy = false;
 
@@ -170,6 +198,9 @@ class _SaveScopeSheetState extends State<_SaveScopeSheet> {
         // number to the same ceiling the sentence above states.
         limits: SaveLimits.forScope(_scope, requestedCount: count),
         startNow: startNow,
+        // *This entry* is the page already in front of the user: there is
+        // nothing after it to look for, so it never asks a site for anything.
+        discoverMissing: _scope == SaveScope.fixedCount && _discoverMissing,
       ),
     );
   }
@@ -243,12 +274,28 @@ class _SaveScopeSheetState extends State<_SaveScopeSheet> {
                       sub:
                           'Type how many to download from this page onward — '
                           'up to $_ceiling.',
-                      selected: typed,
+                      selected: typed && _discoverMissing,
                       // The range and the keys arrive together: choosing this
                       // range is asking to type a number, and the field
                       // autofocuses when it is built.
                       onTap: () => setState(() {
                         _scope = SaveScope.fixedCount;
+                        _discoverMissing = true;
+                        _countError = null;
+                      }),
+                    ),
+                    const SizedBox(height: 7),
+                    _RangeOption(
+                      key: const ValueKey('saveScopeKnownOnly'),
+                      icon: Icons.library_books_outlined,
+                      title: 'Entries already in your library',
+                      sub:
+                          'The same count, but only the ones your library '
+                          'already knows.',
+                      selected: typed && !_discoverMissing,
+                      onTap: () => setState(() {
+                        _scope = SaveScope.fixedCount;
+                        _discoverMissing = false;
                         _countError = null;
                       }),
                     ),
@@ -281,17 +328,35 @@ class _SaveScopeSheetState extends State<_SaveScopeSheet> {
                         // tap region and so is not "elsewhere".
                         onTapOutside: (_) => _countFocus.unfocus(),
                         decoration: InputDecoration(
-                          labelText: 'How many entries?',
+                          // The count's meaning, at the point it is typed:
+                          // ten from entry 101 is 101 through 110, and a
+                          // sheet that leaves that to be inferred has told
+                          // half its readers the wrong thing.
+                          labelText: 'How many entries, counting this one?',
                           errorText: _countError,
                           errorMaxLines: 2,
                         ),
                       ),
                       const SizedBox(height: 8),
                       Text(
-                        'The library is read, not searched: if it knows fewer '
-                        'entries than you ask for, that is what gets queued '
-                        'and Scrollary says so. Checking the collection for '
-                        'more is a separate, visible act you start yourself.',
+                        _discoverMissing
+                            // What the walk is, in the words the user can act
+                            // on: which site, how far, what it does not do,
+                            // and that it ends when they say so.
+                            ? '5 means this entry and the next four. If your '
+                                  'library does not have the later ones yet, '
+                                  'Scrollary opens this site and reads '
+                                  'forward from this page to find them. '
+                                  'Nothing else is downloaded, and you can '
+                                  'stop it at any point.'
+                            : '5 means this entry and the next four. Only '
+                                  'entries your library already knows are '
+                                  'queued, and this site is not opened — if '
+                                  'it knows fewer than you ask for, that is '
+                                  'what gets queued and Scrollary says so.',
+                        key: _discoverMissing
+                            ? const ValueKey('saveScopeReadsForwardNote')
+                            : const ValueKey('saveScopeLibraryOnlyNote'),
                         style: TextStyle(
                           fontSize: 11.5,
                           height: 1.45,
