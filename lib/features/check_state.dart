@@ -32,7 +32,7 @@ class CollectionCheckState {
     this.checking = false,
     this.failed = false,
     this.checkedAt,
-    this.newCount = 0,
+    this.newEntryIds = const {},
   });
 
   /// A check is reading this Collection's site right now.
@@ -46,12 +46,19 @@ class CollectionCheckState {
   /// the site did not check it.
   final DateTime? checkedAt;
 
-  /// Entries that check brought in. Zero after a check that found none, which
-  /// is what makes *Up to date* different from *Not checked yet*.
-  final int newCount;
+  /// The Entries the last check brought in.
+  ///
+  /// **Library state, not download state.** A new Entry belongs to the
+  /// Collection whether or not this device ever holds bytes for it; the ids
+  /// are kept so the Collection can mark them, not so they can be queued
+  /// (PRODUCT.md §2.3 — known, in the library, downloaded and read are four
+  /// independent facts).
+  final Set<String> newEntryIds;
+
+  int get newCount => newEntryIds.length;
 
   /// Whether this Collection is worth opening because of its last check.
-  bool get hasNews => newCount > 0;
+  bool get hasNews => newEntryIds.isNotEmpty;
 }
 
 /// Every Collection's last check, for this run of the app.
@@ -67,9 +74,8 @@ class CheckStateStore extends ChangeNotifier {
     final previous = of(collectionId);
     _byCollection[collectionId] = CollectionCheckState(
       checking: true,
-      failed: false,
       checkedAt: previous.checkedAt,
-      newCount: previous.newCount,
+      newEntryIds: previous.newEntryIds,
     );
     notifyListeners();
   }
@@ -86,7 +92,7 @@ class CheckStateStore extends ChangeNotifier {
       final previous = of(collectionId);
       _byCollection[collectionId] = CollectionCheckState(
         checkedAt: previous.checkedAt,
-        newCount: previous.newCount,
+        newEntryIds: previous.newEntryIds,
       );
       notifyListeners();
       return;
@@ -96,11 +102,13 @@ class CheckStateStore extends ChangeNotifier {
     // must not stamp a time — "Checked 2 minutes ago" over a site that would
     // not load is the same lie the old single sentence told.
     final concluded = outcome.stopReason == null;
-    final found = outcome.newEntryIds.length;
+    final found = outcome.newEntryIds.toSet();
     _byCollection[collectionId] = CollectionCheckState(
-      failed: !concluded && found == 0,
+      failed: !concluded && found.isEmpty,
       checkedAt: concluded ? at : of(collectionId).checkedAt,
-      newCount: found > 0 ? found : (concluded ? 0 : of(collectionId).newCount),
+      newEntryIds: found.isNotEmpty
+          ? found
+          : (concluded ? const {} : of(collectionId).newEntryIds),
     );
     notifyListeners();
   }
@@ -108,7 +116,7 @@ class CheckStateStore extends ChangeNotifier {
   /// The user has seen what the check found.
   void clearNews(String collectionId) {
     final previous = of(collectionId);
-    if (previous.newCount == 0) return;
+    if (previous.newEntryIds.isEmpty) return;
     _byCollection[collectionId] = CollectionCheckState(
       checking: previous.checking,
       failed: previous.failed,

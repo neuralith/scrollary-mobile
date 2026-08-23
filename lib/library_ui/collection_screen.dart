@@ -25,6 +25,7 @@ import 'collection_actions.dart';
 import 'collection_models.dart';
 import 'entry_offline.dart';
 import 'library_widgets.dart';
+import 'new_entries_bar.dart';
 import 'placement_actions.dart';
 import 'providers.dart';
 import 'source_section.dart';
@@ -143,6 +144,9 @@ class _CollectionDetail extends ConsumerWidget {
                     ),
                   ),
                 ),
+              // What the last check brought in. Library state, offered for
+              // download — never presented as an incomplete download.
+              NewEntriesBar(collectionId: view.collection.id),
               // Where this collection is published, every site of it,
               // whatever state each one is in (D4).
               CollectionSourcesSection(collectionId: view.collection.id),

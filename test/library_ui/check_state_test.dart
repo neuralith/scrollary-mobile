@@ -55,9 +55,13 @@ void main() {
     );
   });
 
-  test('a check that found entries counts them', () {
+  test('a check that found entries remembers which ones', () {
     store.recordCheck('alpha', outcome(found: 3), at: at);
 
+    // The ids, not just a count: the Collection marks the rows, and a new
+    // Entry is library state whether or not this device ever holds bytes for
+    // it (PRODUCT.md §2.3).
+    expect(store.of('alpha').newEntryIds, {'entry-0', 'entry-1', 'entry-2'});
     expect(store.of('alpha').newCount, 3);
     expect(store.of('alpha').hasNews, isTrue);
     expect(store.of('alpha').checkedAt, at);
