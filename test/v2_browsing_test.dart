@@ -312,10 +312,7 @@ void main() {
         isFalse,
         reason: 'history has no Entry to be a fraction of',
       );
-      expect(
-        await v2.library.select(v2.library.measurements).get(),
-        isEmpty,
-      );
+      expect(await v2.library.select(v2.library.measurements).get(), isEmpty);
     });
   });
 }

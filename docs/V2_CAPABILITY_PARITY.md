@@ -53,7 +53,8 @@ expected to carry one.
 | Add this site as another Source of a Collection | same, choose an existing Collection | Free | `recognition/adopt.dart` | `test/recognition/adopt_test.dart` | — |
 | Download this entry | save sheet → **Download this entry** | Free | `features/v2_add_flow.dart` | `test/save_v2/add_flow_test.dart` | — |
 | Download a number of entries I type | save sheet → **Entries from here** → count | Free | `library_ui/save_scope_sheet.dart` | `test/library_ui/save_scope_sheet_test.dart` | — |
-| Download the next N even if the library doesn't know them | same, count > what is held | Free | `recognition/walk.dart` | `test/recognition/walk_test.dart` | — |
+| Download the next N even if the library doesn't know them | same, count > what is held | Free | `recognition/walk.dart` | `test/save_v2/capture_journey_test.dart` | — |
+| Get N entries on this device from a count of N | same | Free | `features/v2_add_flow.dart` | `test/save_v2/capture_journey_test.dart` | — |
 | Download entries the library already has | save sheet → **Entries already in your library** | Free | `save/save_scope.dart` | `test/save_v2/save_scope_test.dart` | — |
 | See how far a download has got | anywhere a run is visible | **Free** | `features/operation_progress.dart` | `test/library_ui/operation_progress_test.dart` | — |
 | See images found and saved for the entry running | same | **Free** | `features/operation_progress.dart` | `test/library_ui/operation_progress_test.dart` | — |
@@ -70,6 +71,13 @@ expected to carry one.
 | Be told when a Source stops listing something | check result | Free | `features/v2_check_flow.dart` | `test/v2_check_flow_test.dart` | — |
 | Download the new entries a check found | Collection → **Download new** | Free | `library_ui/collection_screen.dart` | `test/library_ui/collection_test.dart` | — |
 | Read the next entry from the reader | reader → **Next** | Free | `reading_v2/` | `test/library_ui/reader_navigation_test.dart` | — |
+| Open an entry at its source and land on it | entry menu → **Open at source** | Free | `features/open_in_browser.dart` | `test/open_in_browser_test.dart` | — |
+| Keep how far through I am, on a page I have not downloaded | Browser, reading a known entry | Free | `reading_v2/source_reading.dart` | `test/library_ui/reading_progress_test.dart` | — |
+| See how far through an entry I am | Library → collection rows | Free | `library_ui/collection_models.dart` | `test/library_ui/reading_progress_test.dart` | — |
+| Not be asked what to save every single time | save sheet, after answering once | Free | `save/capture_preference.dart` | `test/library_ui/save_panel_test.dart` | — |
+| Change what a Collection is saved as | Library → collection menu → **What to save** | Free | `library_ui/collection_actions.dart` | `test/v2_check_flow_test.dart` | — |
+| Queue work without starting it | save sheet → **Queue only** | Free | `library_ui/save_scope_sheet.dart` | `test/library_ui/save_panel_test.dart` | — |
+| Start what I queued, from where I am | Activity · Browser panel | **Free** | `library_ui/entry_offline.dart` | `test/activity_screen_test.dart` | — |
 | Point at the next-entry control when the app can't find it | Browser → assist overlay | Free | `features/selection_overlay.dart` | `integration_test/user_assist_test.dart` | **yes** |
 | Find my archived Collections | Library → **Show archived** | Free | `library_ui/shelf_screen.dart` | `test/library_ui/shelf_test.dart` | — |
 | Dismiss a discovered entry I don't want | entry menu → **Remove from library** | Free | `library_ui/collection_actions.dart` | `test/library_ui/collection_test.dart` | — |

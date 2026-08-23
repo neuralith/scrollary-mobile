@@ -138,9 +138,9 @@ void main() {
     await tester.runAsync(() => runner.start());
   }
 
-  Future<List<OfflineCopyRow>> copies() async =>
-      (h.db.select(h.db.offlineCopies)..where((c) => c.active.equals(true)))
-          .get();
+  Future<List<OfflineCopyRow>> copies() async => (h.db.select(
+    h.db.offlineCopies,
+  )..where((c) => c.active.equals(true))).get();
 
   testWidgets('a count of three from here puts three entries on this '
       'device', (tester) async {
@@ -171,12 +171,18 @@ void main() {
     expect(
       pages.requested,
       [partUrl(kHostA, 101), partUrl(kHostA, 102), partUrl(kHostA, 103)],
-      reason: 'three captures, in reading order, from the page they started '
+      reason:
+          'three captures, in reading order, from the page they started '
           'at',
     );
     final held = await copies();
-    expect(held, hasLength(3), reason: 'the deliverable is entries on this '
-        'device, not entries discovered');
+    expect(
+      held,
+      hasLength(3),
+      reason:
+          'the deliverable is entries on this '
+          'device, not entries discovered',
+    );
     for (final copy in held) {
       expect(copy.artifactFormat, ArtifactFormat.imageSequence.name);
       expect(h.fileStore.entryExists(copy.contentPath), isTrue);
@@ -210,7 +216,8 @@ void main() {
     expect(
       entries.where((e) => e.ordinal == null),
       hasLength(2),
-      reason: 'unplaced, and downloaded anyway — position is organisation, '
+      reason:
+          'unplaced, and downloaded anyway — position is organisation, '
           'not permission',
     );
   });
@@ -295,15 +302,13 @@ void main() {
     expect(pages.requested, isEmpty);
     expect(await copies(), isEmpty);
     expect(services.queue.saveStartAuthorised, isFalse);
-    expect(
-      [for (final t in await services.queue.pending()) t.state],
-      everyElement(SaveTaskState.queued),
-    );
+    expect([
+      for (final t in await services.queue.pending()) t.state,
+    ], everyElement(SaveTaskState.queued));
     expect(
       await services.queue.eligible(),
       isEmpty,
       reason: 'nothing may be claimed until somebody presses Start',
     );
   });
-
 }

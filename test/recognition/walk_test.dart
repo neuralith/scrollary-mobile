@@ -552,7 +552,8 @@ void main() {
     expect(
       locations.single.sourceLabel,
       'Part 102',
-      reason: 'and the Location keeps what this Source printed, as a listing '
+      reason:
+          'and the Location keeps what this Source printed, as a listing '
           'row does',
     );
   });

@@ -676,3 +676,82 @@ Everything else previously open — authentication, monetization, tombstone
 retention, cross-device unreadable Sources, cross-source progress presentation,
 privacy and store declarations — is deferred deliberately and lives in
 [V2_PRODUCTIZATION.md](./V2_PRODUCTIZATION.md).
+
+### V2-D51 · A count means captures, and the walk's own answer is what gets queued
+
+`v2AddAndDownload` planned against the library, walked the Source for the
+shortfall, and then **re-planned against the library** to decide what to queue.
+That looks equivalent and is not. `SaveScopePlanner` takes a Collection's rows
+in ordinal order from the starting Entry, and `EntryReconciler` writes an Entry
+with no position whenever the page printed no number *or* the Collection's
+ordering basis does not support cross-source merging (V2-D16). Those Entries
+are real, addressed and downloadable — position is organisation, not permission
+— and the re-plan could not see them, so a count the Source had just satisfied
+came back with nothing queued for them.
+
+A `WalkedEntry` already names the Entry and the Location. Those are the
+targets: the library's plan first, then the walk's own entries, de-duplicated
+by Entry so a merge is not a second row. The count means **captures**, not
+discoveries, and `test/save_v2/capture_journey_test.dart` asserts it as
+OfflineCopies on the device rather than as rows in a queue.
+
+### V2-D52 · One launch decision, carried to the thing that starts
+
+Starting was split across two sheets that did not know about each other:
+`SaveScopeChoice.startNow` decided whether the queue's Start was called, and a
+separate `showStartOptionsSheet` — asked to authorise the reading — returned an
+answer the save flow could only honour by flipping the shell tab. *Add to
+queue* followed by *Start in Browser* therefore showed the user the Browser and
+started nothing, and a user who chose *Start now* was asked twice more where
+they would like to wait.
+
+The sheet that asks *how many* now asks *and what happens next*, with three
+values on `SaveStartMode`: **Queue only**, **Start now**, **Start and keep
+using Scrollary**. The rows are the foreground gate's own widget, supplied by
+`features/v2_save_flow.dart` because `lib/library_ui/` may not import
+`capability/`; the answer travels to the Start as `StartWhere`, so nothing asks
+again. Consent for opening the site is unchanged and still comes first — it is
+the sentence under the count, before anything is opened.
+
+### V2-D53 · A Collection remembers what it is saved as; the page still decides
+
+Capture mode was a queue-row column, so *What to save* was asked identically on
+the first entry of a work and the five-hundredth. `CapturePreferenceStore`
+keeps the user's **explicit** answer per Collection in the settings table —
+which documents itself as the home for a preference that would otherwise be a
+column, a migration and a registry entry, and which keeps the schema frozen.
+
+Three rules make it safe. It records only a choice the user made, because a
+detected mode is the page's answer about that page. It never forces one:
+`CaptureCapabilities.resolve` — which already described itself as "the one
+place a stale collection preference is stopped from forcing an impossible
+save" — falls back on a page that cannot honour it, and the preference is left
+alone, because it was an answer about the work. And a standalone save writes no
+preference at all, so an Entry-specific choice cannot redefine a Collection it
+has nothing to do with. *Ask each time*, on the Collection menu, stays
+expressible: there is no safest capture mode, so no answer has to remain a
+statable one.
+
+### V2-D54 · Reading at a Source is measured; reading a copy is anchored
+
+V2 has had a Measurement model keyed `(entry, source)` since Gate C and nothing
+in the app ever wrote one — `MeasurementRepository.put`'s only caller was the
+sync *pull* path, so every measurement a device held had been taken somewhere
+else. Reading an Entry on its own site recorded that it had been opened and
+nothing about how far, and `EntryProgressRing` existed, was tested, and was
+drawn on no screen.
+
+`SourceReadingMeter` writes a Measurement from the page's own geometry, for the
+Entry the composition has just recognised. It refuses a page no taller than the
+viewport — that page has no position to be at, and a figure for it would be a
+claim about a reading nobody can observe — refuses a probe of an address it is
+not watching, and never lowers a stored fraction, because a reload and a scroll
+back to check a name are not un-reading. It is never taken while automation
+owns the Browser: a capture scrolls to the bottom to enumerate a page, and
+counting that as a reading would mark an Entry read by downloading it.
+
+The OfflineCopy half is unchanged in what it stores — the anchor, an index into
+*these* bytes — and now *derives* the fraction from the panel count the
+manifest already carries, so a reopened image reader shows the right percentage
+on its first frame instead of 0% until it has measured itself. A document keeps
+0: a paragraph has no height until it is laid out at this width.

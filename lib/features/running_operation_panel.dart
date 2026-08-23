@@ -88,9 +88,7 @@ class _WaitingQueue extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final tasks = ref.watch(indicatorTasksProvider).value ?? const <SaveTask>[];
-    final waiting = tasks
-        .where((t) => t.state == SaveTaskState.queued)
-        .length;
+    final waiting = tasks.where((t) => t.state == SaveTaskState.queued).length;
     if (waiting == 0) return const SizedBox.shrink();
 
     final palette = AppPalette.of(context);
@@ -105,7 +103,11 @@ class _WaitingQueue extends ConsumerWidget {
                     : '$waiting downloads waiting for you to start them.',
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,
-                style: TextStyle(fontSize: 12, height: 1.35, color: palette.ink),
+                style: TextStyle(
+                  fontSize: 12,
+                  height: 1.35,
+                  color: palette.ink,
+                ),
               ),
             ),
             const SizedBox(width: 8),

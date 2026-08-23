@@ -448,7 +448,9 @@ Future<Map<String, double>> _progressByEntry(LibraryDatabase db) async {
   final furthest = <String, double>{};
   for (final row in rows) {
     final held = furthest[row.entryId];
-    if (held == null || row.fraction > held) furthest[row.entryId] = row.fraction;
+    if (held == null || row.fraction > held) {
+      furthest[row.entryId] = row.fraction;
+    }
   }
   return furthest;
 }

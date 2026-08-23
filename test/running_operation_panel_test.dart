@@ -369,7 +369,6 @@ void main() {
       expect(h.starts, 1);
     });
   });
-
 }
 
 // ─── driving two real operations ────────────────────────────────────────────

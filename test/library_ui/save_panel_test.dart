@@ -743,7 +743,8 @@ void main() {
       expect(
         key('startKeepUsingAppLocked'),
         findsOneWidget,
-        reason: 'named and tappable, never a disabled control that explains '
+        reason:
+            'named and tappable, never a disabled control that explains '
             'nothing',
       );
 
@@ -768,6 +769,60 @@ void main() {
         findsNothing,
         reason: 'the gate was answered here; nothing asks again',
       );
+    });
+  });
+
+  // ─── the routine flow, end to end ───────────────────────────────────────
+
+  group('a collection the app already knows', () {
+    // The shape this pass is aiming at, asserted rather than described:
+    //
+    //     Collection · Alpha
+    //     Entry · 12
+    //     Source · reading.example.com
+    //
+    //     Images only        [what this collection is usually saved as]
+    //     Download this entry
+    //     Download entries…
+    //
+    // Two taps to the ordinary download, and every question already
+    // answered — which is the point of items 5, 6 and 8 together.
+    screenTest('is two taps and no questions', (tester) async {
+      final root = await h.root();
+      final collection = await h.collection('Alpha', folderId: root.id);
+      final source = await h.source(collection.id, pathKey: '/works/alpha');
+      final entry = await h.entryIn(
+        collection.id,
+        title: _entryTitle,
+        ordinal: 12,
+      );
+      await h.location(entry.id, _entryUrl, sourceId: source.id);
+      reportedCollectionId = collection.id;
+      await CapturePreferenceStore(
+        LocalSettingsStore(h.db),
+      ).remember(collection.id, CaptureMode.imageSequence);
+
+      await openPanel(tester, _entryUrl, _entryTitle);
+      await pumpUntil(tester, key('captureModeRemembered'));
+
+      // Context: where it is and what it is, each said once.
+      expect(find.text('Collection · Alpha'), findsOneWidget);
+      expect(find.text('Entry · 12'), findsOneWidget);
+      expect(
+        find.text('In your library.'),
+        findsNothing,
+        reason: 'the collection name is already the answer to that',
+      );
+      // The capture question, answered.
+      expect(find.text('What to save'), findsNothing);
+      expect(find.text('Images only'), findsOneWidget);
+
+      // And the download is the next tap, with nothing in between.
+      await tapAndPump(tester, key('v2DownloadEntry'));
+      expect(adds, hasLength(1));
+      expect(adds.single.limits!.maxEntries, 1);
+      expect(key('startOptionsCancel'), findsNothing);
+      expect(key('saveCountField'), findsNothing);
     });
   });
 }

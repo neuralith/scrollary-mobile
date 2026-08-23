@@ -306,6 +306,5 @@ void main() {
       expect(tabRequest.value, 1, reason: 'and the Browser tab is selected');
       expect(navigator.pending?.url, 'https://a.example/entry-7');
     });
-
   });
 }

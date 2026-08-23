@@ -569,8 +569,9 @@ Future<void> showCaptureModePreference(
             ListTile(
               key: ValueKey('collectionCaptureMode_${mode.name}'),
               leading: Icon(
-                current == mode ? Icons.radio_button_checked : Icons
-                    .radio_button_unchecked,
+                current == mode
+                    ? Icons.radio_button_checked
+                    : Icons.radio_button_unchecked,
               ),
               title: Text(mode.label),
               subtitle: Text(mode.description),
@@ -588,7 +589,8 @@ Future<void> showCaptureModePreference(
             subtitle: const Text(
               'Scrollary proposes what the page itself can offer.',
             ),
-            onTap: () => Navigator.of(sheetContext).pop(const _ModeChoice.ask()),
+            onTap: () =>
+                Navigator.of(sheetContext).pop(const _ModeChoice.ask()),
           ),
           const SizedBox(height: 8),
         ],

@@ -418,19 +418,20 @@ class _SaveScopeSheetState extends State<_SaveScopeSheet> {
                         _discoverMissing
                             // What the walk is, in the words the user can act
                             // on: which site, how far, what it does not do,
-                            // and that it ends when they say so.
-                            ? '5 means this entry and the next four. If your '
-                                  'library does not have the later ones yet, '
-                                  'Scrollary opens this site and reads '
-                                  'forward from this page to find them, at '
-                                  'most $kMaxWalkPages pages. Nothing else is '
+                            // and that it ends when they say so. Said once
+                            // and briefly — the option above already named
+                            // the range, and a paragraph that restates it is
+                            // a paragraph nobody finishes.
+                            ? '5 means this entry and the next four. For any '
+                                  'your library does not have, Scrollary '
+                                  'reads forward from this page — at most '
+                                  '$kMaxWalkPages pages, nothing else '
                                   'downloaded, and you can stop it at any '
                                   'point.'
                             : '5 means this entry and the next four. Only '
-                                  'entries your library already knows are '
-                                  'queued, and this site is not opened — if '
-                                  'it knows fewer than you ask for, that is '
-                                  'what gets queued and Scrollary says so.',
+                                  'entries your library already knows, and '
+                                  'this site is not opened — if it knows '
+                                  'fewer, Scrollary says so.',
                         key: _discoverMissing
                             ? const ValueKey('saveScopeReadsForwardNote')
                             : const ValueKey('saveScopeLibraryOnlyNote'),
@@ -448,18 +449,25 @@ class _SaveScopeSheetState extends State<_SaveScopeSheet> {
                       ?_estimateLine(palette),
                     ],
                     const SizedBox(height: 12),
-                    Text(
-                      'Queued downloads wait for Start. Nothing downloads on '
-                      'its own, and nothing at all runs while the app is not '
-                      'in front of you.',
-                      key: const ValueKey('saveScopeLaunchExplainer'),
-                      style: TextStyle(
-                        fontSize: 11.5,
-                        height: 1.45,
-                        color: palette.inkFaint,
+                    // Said here only when the launch rows below do not say it
+                    // themselves. The gate's own rows each carry a sentence
+                    // about what happens and where the user waits, and a
+                    // fourth statement of the same rule above them is text
+                    // people learn to skip.
+                    if (widget.launchActions == null) ...[
+                      Text(
+                        'Queued downloads wait for Start. Nothing downloads '
+                        'on its own, and nothing at all runs while the app is '
+                        'not in front of you.',
+                        key: const ValueKey('saveScopeLaunchExplainer'),
+                        style: TextStyle(
+                          fontSize: 11.5,
+                          height: 1.45,
+                          color: palette.inkFaint,
+                        ),
                       ),
-                    ),
-                    const SizedBox(height: 12),
+                      const SizedBox(height: 12),
+                    ],
                     // The launch, taken once. The caller's rows when it has
                     // them — the same rows the foreground boundary offers
                     // everywhere else — and this lane's two when it does not.

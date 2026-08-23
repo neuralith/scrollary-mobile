@@ -61,11 +61,10 @@ void main() {
 
     test('a page no taller than the viewport has no position to be at', () {
       expect(
-        sourceReadingFraction(
-          page(document: 800, viewport: 1000, scrollY: 0),
-        ),
+        sourceReadingFraction(page(document: 800, viewport: 1000, scrollY: 0)),
         isNull,
-        reason: 'not 0%, not 100% — there is nothing to measure, and a '
+        reason:
+            'not 0%, not 100% — there is nothing to measure, and a '
             'figure would be a claim about a reading nobody can observe',
       );
     });
@@ -198,23 +197,19 @@ void main() {
       final root = await h.root();
       final collection = await h.collection('Quiet Harbour', folderId: root.id);
       final source = await h.source(collection.id, host: 'alpha.example');
-      final read = await h.entryIn(
-        collection.id,
-        title: 'Part 1',
-        ordinal: 1,
-      );
+      final read = await h.entryIn(collection.id, title: 'Part 1', ordinal: 1);
       final untouched = await h.entryIn(
         collection.id,
         title: 'Part 2',
         ordinal: 2,
       );
-      await MeasurementRepository(h.db).put(
-        entryId: read.id,
-        sourceId: source.id,
-        fraction: 0.42,
-      );
+      await MeasurementRepository(
+        h.db,
+      ).put(entryId: read.id, sourceId: source.id, fraction: 0.42);
 
-      await tester.pumpWidget(h.app(CollectionScreen(collectionId: collection.id)));
+      await tester.pumpWidget(
+        h.app(CollectionScreen(collectionId: collection.id)),
+      );
       await pumpUntil(tester, find.text('Part 1'));
 
       expect(find.byKey(ValueKey('entryProgress-${read.id}')), findsOneWidget);
@@ -240,14 +235,14 @@ void main() {
       final collection = await h.collection('Quiet Harbour', folderId: root.id);
       final source = await h.source(collection.id, host: 'alpha.example');
       final entry = await h.entryIn(collection.id, title: 'Part 1', ordinal: 1);
-      await MeasurementRepository(h.db).put(
-        entryId: entry.id,
-        sourceId: source.id,
-        fraction: 0.3,
-      );
+      await MeasurementRepository(
+        h.db,
+      ).put(entryId: entry.id, sourceId: source.id, fraction: 0.3);
       await h.reading.markRead(entry.id);
 
-      await tester.pumpWidget(h.app(CollectionScreen(collectionId: collection.id)));
+      await tester.pumpWidget(
+        h.app(CollectionScreen(collectionId: collection.id)),
+      );
       await pumpUntil(tester, find.text('Part 1'));
 
       final ring = tester.widget<EntryProgressRing>(
@@ -257,7 +252,11 @@ void main() {
         ),
       );
       expect(ring.completed, isTrue);
-      expect(ring.fraction, 1, reason: 'completed is 100%, enforced on display');
+      expect(
+        ring.fraction,
+        1,
+        reason: 'completed is 100%, enforced on display',
+      );
     });
   });
 }

@@ -70,6 +70,11 @@ in [docs/DECISIONS.md](docs/DECISIONS.md).
   failed* and *Details*, a Collection carries its last check state, and
   *Check all collections* is back. **Seeing what the device is doing is never
   gated** — the parity contract pins it, and it was lost once already.
+- **Reading progress** (`lib/reading_v2/source_reading.dart`) — reading an
+  Entry at its Source records a `Measurement` scoped to that Source when the
+  page has a position to be at, on a device that has downloaded nothing;
+  reading an OfflineCopy keeps its anchor. Neither needs the other, and
+  neither is a download (V2-D54).
 - **The save flow** (`lib/features/v2_save_flow.dart`, `lib/recognition/adopt.dart`,
   `lib/save/save_scope.dart`) — a page becomes library through the matrix in
   [docs/V2_SAVE_FLOW.md](docs/V2_SAVE_FLOW.md): what the page *is* comes from
@@ -78,6 +83,11 @@ in [docs/DECISIONS.md](docs/DECISIONS.md).
   count V1 asked for, on the same `SaveLimits` bound (V2-D46). A page that
   belongs to serialized content is never written as a loose Entry without
   being asked (V2-D44); standalone stays first-class and stays chosen.
+  **A count means captures, not discoveries** — what the walk resolved is
+  what gets queued (V2-D51) — the launch is one decision with three values
+  and nothing asks again after it (V2-D52), and a Collection remembers what
+  it is normally saved as while the page still decides whether that is
+  possible (V2-D53).
 - **Library UX** (`lib/library_ui`, D1–D7) — the one-page Library (root
   Collections listed directly, Folders as collapsible sections, Continue
   Reading and the Settings/Activity doors in its header — V2-D43), folder

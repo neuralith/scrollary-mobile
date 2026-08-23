@@ -1095,14 +1095,15 @@ class _V2SavePanelState extends ConsumerState<V2SavePanel> {
     switch (status.result) {
       case RecognisedLocation(:final entry, :final collection, :final location):
         final ordinal = entry.ordinal;
+        // Where this is and what it is, and nothing said twice. The standing
+        // "In your library." line went because the Collection's name is
+        // already the answer to it, and a Collection's name on this sheet is
+        // only ever there because the Entry is in the library.
         return [
-          _note(
-            palette,
-            collection == null
-                ? 'In your library, on its own.'
-                : 'In your library.',
-          ),
-          if (collection != null) _fact(palette, 'Collection', collection.name),
+          if (collection != null)
+            _fact(palette, 'Collection', collection.name)
+          else
+            _note(palette, 'In your library, on its own.'),
           if (ordinal != null)
             _fact(palette, 'Entry', _ordinalLabel(ordinal))
           else if (entry.placement == Placement.unplaced.name)
@@ -1112,7 +1113,6 @@ class _V2SavePanelState extends ConsumerState<V2SavePanel> {
       case RecognisedSource(:final collection, :final source):
         return [
           _note(palette, 'Adds to ${collection.name}.'),
-          _fact(palette, 'Collection', collection.name),
           _fact(palette, 'Source', source.host),
         ];
       case Unrecognised():

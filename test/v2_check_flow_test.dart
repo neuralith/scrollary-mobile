@@ -543,9 +543,7 @@ void main() {
       await _settle(tester);
       await tester.tap(find.byKey(const ValueKey('collectionCaptureMode')));
       await _settle(tester);
-      await tester.tap(
-        find.byKey(const ValueKey('collectionCaptureModeAsk')),
-      );
+      await tester.tap(find.byKey(const ValueKey('collectionCaptureModeAsk')));
       await _settle(tester);
 
       expect(

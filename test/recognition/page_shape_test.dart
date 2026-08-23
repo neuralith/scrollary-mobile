@@ -130,10 +130,7 @@ void main() {
       // This function reads; it never adjudicates. A label and an address
       // that disagree both survive into the evidence, and
       // `reviewEntryIdentities` is what refuses — unchanged.
-      final shape = readPageShape(
-        partUrl(kHostA, 102),
-        pageTitle: 'Part 1020',
-      );
+      final shape = readPageShape(partUrl(kHostA, 102), pageTitle: 'Part 1020');
 
       expect(shape.printedNumber, 1020, reason: 'the label is read first');
       expect(parseEntryNumber(url: partUrl(kHostA, 102)), 102);
