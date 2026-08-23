@@ -18,6 +18,7 @@ import 'package:web_reader/core/config.dart';
 // STUB IMPORT — switch to 'package:web_reader/features/v2_add_flow.dart' at
 // merge.
 import 'package:web_reader/features/v2_add_flow.dart';
+import 'package:web_reader/features/v2_adoption_providers.dart';
 import 'package:web_reader/features/v2_save_flow.dart';
 import 'package:web_reader/library_ui/providers.dart';
 import 'package:web_reader/providers.dart';
@@ -189,6 +190,34 @@ void main() {
       }
       return entry.id;
     }
+
+    screenTest('a walk in flight is stopped from the sheet that started it', (
+      tester,
+    ) async {
+      await h.root();
+      await openPanel(tester, _entryUrl, _entryTitle);
+      await pumpUntil(tester, key('v2AddToCollection'));
+
+      // The panel's own Stop is docked at the bottom of the Browser — which is
+      // exactly where this sheet sits. A control the user must dismiss the
+      // sheet to reach is not reachable while the thing it stops is running.
+      final panel = tester.state(find.byType(V2SavePanel));
+      // ignore: avoid_dynamic_calls
+      (panel as dynamic).debugSetReadingForward(true);
+      await tester.pump();
+
+      expect(key('sheetStopReadingForward'), findsOneWidget);
+      await tapAndPump(tester, key('sheetStopReadingForward'));
+
+      final container = ProviderScope.containerOf(
+        tester.element(find.byType(V2SavePanel)),
+      );
+      expect(
+        container.read(sourceWalkCancellationProvider).isCancelled,
+        isTrue,
+        reason: 'the sheet must be able to stop what the sheet started',
+      );
+    });
 
     screenTest('offers the two downloads, and names what the library knows', (
       tester,

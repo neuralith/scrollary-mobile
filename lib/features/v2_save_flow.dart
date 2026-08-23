@@ -32,6 +32,7 @@ import 'foreground_gate_sheet.dart';
 import 'selection_overlay.dart';
 // STUB IMPORT — switch to 'v2_add_flow.dart' at merge.
 import 'v2_add_flow.dart';
+import 'v2_adoption_providers.dart';
 import 'v2_check_flow.dart';
 
 /// The Browser's save flow over the V2 library.
@@ -474,6 +475,12 @@ class _V2SavePanelState extends ConsumerState<V2SavePanel> {
   /// status surface.
   bool _readingForward = false;
 
+  /// Test hook, mirroring `QueueRunner.debugSetRunning`: the in-sheet Stop is
+  /// exercised without driving a real walk over a real site.
+  @visibleForTesting
+  void debugSetReadingForward(bool value) =>
+      setState(() => _readingForward = value);
+
   /// The Collection an index page was just added as, so the check can be
   /// offered in the same breath — the listing itself is not an Entry, so
   /// finding what is on it is a separate, visible act.
@@ -859,12 +866,30 @@ class _V2SavePanelState extends ConsumerState<V2SavePanel> {
               ? 'Queued — waiting for Start.'
               : 'Downloading now.',
         ),
-      if (_readingForward)
+      if (_readingForward) ...[
         _note(
           palette,
           'Reading this site forward from this page to find the entries you '
           'asked for. Nothing else is downloaded.',
         ),
+        const SizedBox(height: 8),
+        // The Stop belongs *here*, not only on the panel underneath. The panel
+        // is docked at the bottom of the Browser — which is exactly where this
+        // sheet sits — so a user who started the walk from the sheet would
+        // have had to dismiss it to find the control for the thing the sheet
+        // had just started.
+        TextButton.icon(
+          key: const ValueKey('sheetStopReadingForward'),
+          onPressed: () => ref.read(sourceWalkCancellationProvider).cancel(),
+          icon: const Icon(Icons.stop_circle_outlined, size: 18),
+          label: const Text('Stop finding entries'),
+        ),
+        _note(
+          palette,
+          'Stops at the next page. Entries already found stay in your '
+          'library.',
+        ),
+      ],
       if (_message != null) _note(palette, _message!),
       const SizedBox(height: 12),
       // A listing writes no queue row, so what to take off a page is not a
