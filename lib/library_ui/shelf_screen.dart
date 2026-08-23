@@ -23,6 +23,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../app.dart' show LeaveBrowserGuard;
 import '../save/queue_task.dart';
 import '../features/check_state.dart';
+import '../features/library_check_button.dart';
 import '../ui/palette.dart';
 import '../ui/status_style.dart';
 import '../ui/theme.dart';
@@ -96,6 +97,7 @@ class _LibraryBody extends ConsumerWidget {
         LibraryHeader(
           title: 'Library',
           actions: [
+            const LibraryCheckButton(),
             const _ActivityButton(),
             HeaderIconButton(
               key: const ValueKey('libraryAction-settings'),

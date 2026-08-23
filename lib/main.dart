@@ -18,6 +18,8 @@ import 'data/recognition_index.dart';
 import 'data/schema.dart' show LibraryDatabase;
 import 'data/reading_state_repository.dart';
 import 'features/check_controller.dart';
+import 'features/check_state.dart';
+import 'features/library_check_flow.dart';
 import 'features/operation_progress.dart';
 import 'library_ui/run_summary.dart';
 import 'features/source_observation_browser.dart';
@@ -194,6 +196,8 @@ class _AppBootState extends State<AppBoot> with WidgetsBindingObserver {
                 // that have no runner; null there means "no run has happened",
                 // which is what it should draw.
                 runSummarySourceProvider.overrideWithValue(_startup.v2.runner),
+                checkStateProvider.overrideWithValue(_startup.checkState),
+                libraryCheckProvider.overrideWithValue(_startup.libraryCheck),
               ],
               child: const WebReaderApp(),
             ),
@@ -246,6 +250,13 @@ class AppStartup {
 
   /// What the entry being captured is doing right now.
   OperationProgress get progress => _progress;
+
+  /// What each Collection's last check came to, for this run of the app.
+  final CheckStateStore _checkState = CheckStateStore();
+  CheckStateStore get checkState => _checkState;
+
+  LibraryCheckController? _libraryCheck;
+  LibraryCheckController? get libraryCheck => _libraryCheck;
 
   late final List<StartupStep> steps = [
     StartupStep(label: 'Opening your library', critical: true, run: _open),
@@ -357,6 +368,14 @@ class AppStartup {
       index: RecognitionIndex(library),
       collections: ui.collections,
       reading: ReadingStateRepository(library),
+    );
+    // The library-wide check: the same CheckController, repeated over every
+    // Collection. Never a second checker.
+    _libraryCheck = LibraryCheckController(
+      check: check,
+      collections: ui.collections,
+      db: library,
+      state: _checkState,
     );
     final history = BrowsingHistoryStore(library);
     _v2 = V2Services(
