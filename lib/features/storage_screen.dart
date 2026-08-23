@@ -76,7 +76,7 @@ String _formatGb(int bytes, {required int decimals}) {
 /// sources can disagree (see `lib/storage/cleanup.dart`), and the only honest
 /// way to report the disagreement is to look at both. Scoped to this screen
 /// for exactly that reason — nothing else in the app may wait on a recursive
-/// listing, and the Library header reads [deviceCapacityProvider] instead.
+/// listing; a one-number readout goes through [deviceCapacityProvider].
 final storageSurveyProvider = FutureProvider<StorageSurvey>(
   (ref) => ref.watch(cleanupProvider).survey(),
 );
@@ -729,7 +729,10 @@ class _CleanupRow extends StatelessWidget {
   }
 }
 
-/// The Library header's storage entry: a disk glyph and one number.
+/// A storage pill: a disk glyph and one number.
+///
+/// It was the Library header's storage entry until the header was reduced to
+/// navigation only; no screen places it at present.
 ///
 /// Deliberately tiny. It shows **device** usage — not the library's share of
 /// the disk, which would be a different and far less useful fact — and it

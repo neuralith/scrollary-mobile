@@ -4,7 +4,7 @@ import 'device_storage.dart';
 
 /// How often a device-capacity reading may be re-taken.
 ///
-/// Free space moves slowly relative to how often the Library rebuilds, and a
+/// Free space moves slowly relative to how often a screen rebuilds, and a
 /// platform channel round-trip per rebuild is exactly the cost this provider
 /// exists to avoid. Explicit refreshes after a save or a cleanup can
 /// override it — those are the moments the number actually changed.
@@ -17,9 +17,11 @@ final deviceStorageProvider = Provider<DeviceStorage>((ref) => DeviceStorage());
 
 /// The device's fullness, read at most once per [kCapacityRefreshInterval].
 ///
-/// Deliberately narrow: **one** platform call and nothing else. The Library
-/// header watches this and only this, so showing it can never pull in a
-/// directory traversal — which is what the previous indicator did.
+/// Deliberately narrow: **one** platform call and nothing else. The Storage
+/// screen (Settings → Storage) reads it, and the app root refreshes it after a
+/// save or a cleanup; nothing that watches it can pull in a directory
+/// traversal — which is what the previous indicator did. The Library no
+/// longer shows device storage at all (V2-D43 follow-up).
 final deviceCapacityProvider =
     AsyncNotifierProvider<DeviceCapacityController, DeviceCapacity>(
       DeviceCapacityController.new,
