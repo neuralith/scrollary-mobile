@@ -35,7 +35,6 @@ import 'package:flutter/services.dart';
 import '../core/config.dart';
 import 'providers.dart' show StartWhere;
 import '../features/storage_screen.dart' show formatBytes;
-import '../recognition/walk.dart' show kMaxWalkPages;
 import '../save/size_estimate.dart';
 import '../ui/palette.dart';
 import '../ui/status_style.dart';
@@ -416,16 +415,17 @@ class _SaveScopeSheetState extends State<_SaveScopeSheet> {
                       const SizedBox(height: 8),
                       Text(
                         _discoverMissing
-                            // What the walk is, in the words the user can act
-                            // on: which site, how far, what it does not do,
-                            // and that it ends when they say so. Said once
-                            // and briefly — the option above already named
-                            // the range, and a paragraph that restates it is
-                            // a paragraph nobody finishes.
-                            ? '5 means this entry and the next four. For any '
-                                  'your library does not have, Scrollary '
-                                  'reads forward from this page — at most '
-                                  '$kMaxWalkPages pages, nothing else '
+                            // What the operation is, in the words the user
+                            // can act on: where it starts, how it goes on,
+                            // what it does not do, and that it ends when they
+                            // say so. Said once and briefly — the option
+                            // above already named the range, and a paragraph
+                            // that restates it is a paragraph nobody
+                            // finishes.
+                            ? '5 means this entry and the next four. '
+                                  'Scrollary downloads this page, then reads '
+                                  'forward for the next one and downloads '
+                                  'that — one page at a time, nothing else '
                                   'downloaded, and you can stop it at any '
                                   'point.'
                             : '5 means this entry and the next four. Only '

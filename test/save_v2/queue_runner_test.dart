@@ -566,6 +566,7 @@ class _ScriptedSource implements PageCaptureSource {
     required bool Function() shouldContinue,
     UserPageHint? readerHint,
     UserPageHint? nextHint,
+    bool pageAlreadyLoaded = false,
   }) async {
     started.add(url);
     final gate = _gates[url];

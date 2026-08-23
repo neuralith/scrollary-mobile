@@ -33,7 +33,6 @@ import '../save/queue_runner.dart';
 import '../save/save_state.dart';
 import '../ui/palette.dart';
 import '../ui/status_style.dart';
-import 'v2_adoption_providers.dart';
 import 'operation_indicator.dart' show indicatorTasksProvider;
 import 'operation_progress.dart';
 
@@ -55,13 +54,14 @@ class RunningOperationPanel extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final runner = ref.watch(queueRunnerProvider);
     final check = ref.watch(checkControllerProvider);
-    final walk = ref.watch(sourceWalkCancellationProvider);
     return AnimatedBuilder(
-      animation: Listenable.merge([runner, check, walk]),
+      animation: Listenable.merge([runner, check]),
       builder: (context, _) {
-        // A check, a walk and a save can never run together — the Browser's
-        // automation ownership is single — so this is a choice, not a stack.
-        if (walk.isRunning) return const _ReadingForwardRunning();
+        // A check and a save can never run together — the Browser's automation
+        // ownership is single — so this is a choice, not a stack. Reading a
+        // Source forward is no longer a state of its own: it happens *inside*
+        // a download now, between one entry and the next (V2-D56), and the
+        // download is what the user started and what they can stop.
         if (check.isRunning) return const _CheckRunning();
         if (!runner.isRunning) return const _WaitingQueue();
         return _SaveRunning(taskId: runner.activeTaskId);
@@ -117,55 +117,6 @@ class _WaitingQueue extends ConsumerWidget {
               child: const Text('Start'),
             ),
           ],
-        ),
-      ],
-    );
-  }
-}
-
-/// Reading a Source forward to find the entries after this one.
-///
-/// Drawn for the same reason the check is: it opens pages on a site, and this
-/// app does not do that invisibly. Nothing is downloaded while it is on
-/// screen — the walk writes library rows and the queue captures afterwards,
-/// on the user's Start.
-class _ReadingForwardRunning extends ConsumerWidget {
-  const _ReadingForwardRunning();
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final palette = AppPalette.of(context);
-    return _PanelFrame(
-      children: [
-        Row(
-          children: [
-            StatusChip(
-              icon: Icons.menu_book_outlined,
-              label: 'Finding entries',
-              bg: palette.primaryContainer,
-              fg: palette.onPrimaryContainer,
-              border: palette.primaryBorder,
-            ),
-          ],
-        ),
-        const SizedBox(height: 6),
-        Text(
-          'Reading this site forward from the entry you were on — nothing is '
-          'downloaded yet.',
-          maxLines: 2,
-          overflow: TextOverflow.ellipsis,
-          style: TextStyle(fontSize: 12, height: 1.35, color: palette.ink),
-        ),
-        const SizedBox(height: 10),
-        const _IndeterminateBar(),
-        const SizedBox(height: 12),
-        _StopRow(
-          label: 'Stop finding',
-          note:
-              'Stops at the next page boundary. Entries already found stay in '
-              'your library, and whatever was queued before it stays queued.',
-          buttonKey: const ValueKey('panelStopReadingForward'),
-          onStop: ref.read(sourceWalkCancellationProvider).cancel,
         ),
       ],
     );
@@ -321,8 +272,9 @@ class _SaveRunning extends ConsumerWidget {
         _StopRow(
           label: 'Stop download',
           note:
-              'Stops at the next safe point. Nothing already on this device is '
-              'removed, and the entry stays in your library.',
+              'Stops at the next safe point, and nothing after it is opened. '
+              'Nothing already on this device is removed, and the entry stays '
+              'in your library.',
           buttonKey: const ValueKey('panelStopDownload'),
           onStop: active == null
               ? null

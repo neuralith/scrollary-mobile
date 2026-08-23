@@ -32,6 +32,7 @@ import '../ui/status_style.dart';
 import '../features/cleanup_dialogs.dart';
 import 'collection_models.dart';
 import 'library_widgets.dart';
+import 'run_summary.dart' show runSummarySourceProvider;
 import 'providers.dart';
 
 // ─── the row's queue state ──────────────────────────────────────────────────
@@ -246,9 +247,17 @@ Future<void> startQueuedDownloads(
   if (firstTaskId != null) await queue.moveToFront(firstTaskId);
   queue.authoriseStart();
   if (!context.mounted) return;
+  // A sequential capture holds one row at a time, so the length of the queue
+  // is not what the user asked for. What they asked for is the journey's own
+  // count, and saying "1 download" to somebody who typed 20 reads as the 20
+  // having been lost (V2-D56).
+  final journeyed = ref.read(runSummarySourceProvider)?.pendingJourneyEntries;
   showLibraryMessage(
     context,
-    'Starting ${waiting.length} download${waiting.length == 1 ? '' : 's'}.',
+    journeyed != null && journeyed > 0
+        ? 'Starting — up to $journeyed ${journeyed == 1 ? 'entry' : 'entries'} '
+              'from where you were.'
+        : 'Starting ${waiting.length} download${waiting.length == 1 ? '' : 's'}.',
   );
   await starter(decided: decided);
 }

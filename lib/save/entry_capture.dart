@@ -225,6 +225,12 @@ class EntryCaptureService {
     bool Function()? shouldContinue,
     UserPageHint? readerHint,
     UserPageHint? nextHint,
+
+    /// True when this run has just opened [locationUrl] and the browser is
+    /// still on it — the sequential capture of a Source (V2-D56). Passed
+    /// straight through: whether a loaded page may be captured where it stands
+    /// is the navigator's judgement, not this pipeline's.
+    bool pageAlreadyLoaded = false,
   }) async {
     final carryOn = shouldContinue ?? () => true;
 
@@ -271,6 +277,7 @@ class EntryCaptureService {
         // tapped an element, and nothing on this path may invent one.
         readerHint: readerHint,
         nextHint: nextHint,
+        pageAlreadyLoaded: pageAlreadyLoaded,
       );
     } catch (e) {
       await fileStore.discard(staging);

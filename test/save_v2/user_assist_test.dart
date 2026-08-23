@@ -418,6 +418,7 @@ class _RuleAwareSource extends FakePageCaptureSource {
     required bool Function() shouldContinue,
     UserPageHint? readerHint,
     UserPageHint? nextHint,
+    bool pageAlreadyLoaded = false,
   }) async {
     if (readerHint != null) {
       _hintedCaptures++;
@@ -426,6 +427,7 @@ class _RuleAwareSource extends FakePageCaptureSource {
         nextHints.add(nextHint);
         requested.add(url);
         modes.add(requestedMode);
+        reusedLoadedPage.add(pageAlreadyLoaded);
         return PageCaptureOutcome.failed(
           pageUrl: url,
           error: 'saved reader-area rule no longer matches',
@@ -440,6 +442,7 @@ class _RuleAwareSource extends FakePageCaptureSource {
       shouldContinue: shouldContinue,
       readerHint: readerHint,
       nextHint: nextHint,
+      pageAlreadyLoaded: pageAlreadyLoaded,
     );
   }
 }

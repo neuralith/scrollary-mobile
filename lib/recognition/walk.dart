@@ -8,9 +8,10 @@
 ///
 /// So there are two operations and this is the second one
 /// (docs/V2_SAVE_FLOW.md §4). It walks forward along the Source the reader is
-/// actually on, resolves each page's identity **before** anything is queued,
-/// and hands back targets the ordinary V2 queue then captures. Nothing here
-/// captures, and nothing here repairs identity afterwards.
+/// actually on, resolves each page's identity, and hands each Entry over as
+/// soon as it has one — to the caller's `onEntry`, which is where *capture
+/// the next N* does its capturing (V2-D56). Nothing here captures, nothing
+/// here queues, and nothing here repairs identity afterwards.
 ///
 /// Five rules it carries:
 ///
@@ -27,6 +28,9 @@
 ///   library already holds is reused as it stands.
 /// * **It is bounded twice**: by the count the user typed, and by a ceiling on
 ///   pages opened. There is no walk that runs until a site stops answering.
+///   A walk that captures as it goes reads one page per Entry, so its caller
+///   raises that ceiling to the count it asked for rather than stopping short
+///   of a number the user was allowed to type.
 /// * **It stops rather than guesses.** End of chain, a page that cannot be
 ///   read, a next control only the user can identify, a landed address on a
 ///   restricted service, or a cancellation — each is a named stop, and the
@@ -196,7 +200,8 @@ class WalkOutcome {
 /// raising it is a visible edit.
 const int kMaxWalkPages = 60;
 
-/// The walk itself: identity first, queue rows second, capture never.
+/// The walk itself: identity first, and whatever the caller does with each
+/// Entry second.
 abstract class SourceWalk {
   /// Walk forward from [fromLocationId], resolving up to [wanted] further
   /// Entries on that Location's own Source.
@@ -208,10 +213,19 @@ abstract class SourceWalk {
   /// Writes Entries and Locations through the ordinary repositories as it
   /// goes, so a walk stopped half way leaves everything it resolved in the
   /// library rather than discarding it. Queues nothing.
+  ///
+  /// [onEntry] is awaited for each Entry **as it is resolved**, before the
+  /// walk moves on to the next page — which is what makes *capture the next
+  /// N* one sequential journey rather than a survey followed by a download
+  /// (V2-D56). It is called while that Entry's page is the one the browser is
+  /// showing, so a caller that captures may read it where it stands. A false
+  /// answer ends the walk with [WalkStop.cancelledByUser], and everything
+  /// resolved before it stays resolved.
   Future<WalkOutcome> forward({
     required String fromLocationId,
     required int wanted,
     required bool Function() shouldContinue,
+    Future<bool> Function(WalkedEntry entry)? onEntry,
     int maxPages = kMaxWalkPages,
   });
 }
@@ -254,6 +268,7 @@ class LibrarySourceWalk implements SourceWalk {
     required String fromLocationId,
     required int wanted,
     required bool Function() shouldContinue,
+    Future<bool> Function(WalkedEntry entry)? onEntry,
     int maxPages = kMaxWalkPages,
   }) async {
     final resolved = <WalkedEntry>[];
@@ -313,8 +328,9 @@ class LibrarySourceWalk implements SourceWalk {
           return ended(WalkStop.leftTheSource);
         }
         final landed = await _index.lookupUrl(normalizeUrl(page.url));
+        final WalkedEntry entry;
         if (landed != null) {
-          resolved.add(_reuse(landed));
+          entry = _reuse(landed);
         } else {
           final walked = await _resolve(
             collectionId: source.collectionId,
@@ -325,9 +341,17 @@ class LibrarySourceWalk implements SourceWalk {
           // The library refused the row. The app stops rather than working
           // around it, and says the page is one it could not take.
           if (walked == null) return ended(WalkStop.unreadable);
-          resolved.add(walked);
+          entry = walked;
         }
+        resolved.add(entry);
         owesAnEntry = false;
+        // Handed over **here**, on the page the reading is standing on and
+        // before a single further address is opened. A caller that captures
+        // therefore captures what the browser is already showing, and the
+        // walk goes no further until it has.
+        if (onEntry != null && !await onEntry(entry)) {
+          return ended(WalkStop.cancelledByUser);
+        }
         if (resolved.length >= wanted) return ended(WalkStop.countReached);
       }
 
@@ -340,7 +364,15 @@ class LibrarySourceWalk implements SourceWalk {
 
       // An address the library already holds is reused as it stands: no row
       // is written, and it still counts toward what was asked for.
-      final held = await _index.lookupUrl(nextKey);
+      //
+      // **Only when nothing is being done with each Entry as it arrives.**
+      // Answering from the index alone saves a page load for a walk that only
+      // resolves identity, and costs one for a walk that captures: the
+      // capture has to open that page anyway, and this branch would hand the
+      // Entry over before it was open and then read it a second time to find
+      // what comes after it. So a capturing walk reads it once, like every
+      // other page, and finds it in the index at the top of the next pass.
+      final held = onEntry == null ? await _index.lookupUrl(nextKey) : null;
       if (held != null) {
         resolved.add(_reuse(held));
         currentUrl = held.location.url;

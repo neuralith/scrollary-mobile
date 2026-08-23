@@ -84,10 +84,15 @@ in [docs/DECISIONS.md](docs/DECISIONS.md).
   belongs to serialized content is never written as a loose Entry without
   being asked (V2-D44); standalone stays first-class and stays chosen.
   **A count means captures, not discoveries** — what the walk resolved is
-  what gets queued (V2-D51) — the launch is one decision with three values
+  what gets captured (V2-D51) — the launch is one decision with three values
   and nothing asks again after it (V2-D52), and a Collection remembers what
   it is normally saved as while the page still decides whether that is
-  possible (V2-D53).
+  possible (V2-D53). *The next N from here* is **one sequential journey**
+  (`lib/save/capture_journey.dart`, V2-D56): the entry in front of the user is
+  captured first, the next is found only when the one before it is on the
+  device, each page is opened once, and stopping the download stops the
+  traversal with it. Never reintroduce a phase that resolves the range before
+  anything is captured.
 - **How an Entry reads** (`lib/library/entry_presentation.dart`) — inside a
   Collection a row leads with the Entry's **position**, because the work is
   already named above the list; across the library it names itself. The

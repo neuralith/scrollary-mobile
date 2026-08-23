@@ -91,20 +91,35 @@ Two operations answer that count, and they are not the same question:
 | | **Download the ones I have** | **Download the next N from here** |
 |---|---|---|
 | The count is a claim about | the library | the **Source** |
-| Opens a page | never | only for the ones the library is missing |
-| Missing Entries | reported as a short plan | found by reading forward on this Source |
-| Implemented by | `SaveScopePlanner` | `SaveScopePlanner`, then `SourceWalk` (`lib/recognition/walk.dart`) |
+| Opens a page | never | one per Entry, while the downloading happens |
+| Missing Entries | reported as a short plan | found as the download reaches them |
+| Implemented by | `SaveScopePlanner` | `SourceCaptureJourney` (`lib/save/capture_journey.dart`) over `SourceWalk` |
 
-**What gets queued is what the walk resolved**, as it stands — the Entries a
-`WalkedEntry` names, appended after the library's own plan and de-duplicated
-by Entry. Not a second plan derived from the library afterwards: the planner
-takes a Collection's rows in ordinal order, and a page that printed no number,
-or any Collection whose ordering basis does not support cross-source merging,
-leaves the walked Entry with no position at all (`EntryReconciler`). Those
-Entries are real, addressed and downloadable — position is organisation, not
-permission — and a re-plan could not see them, so a count the Source had just
-satisfied came back with nothing queued for them. The count means **captures**,
-not discoveries.
+**The second is one sequential journey, not a survey followed by a download**
+(V2-D56). The entry in front of the user is queued — it is the only one whose
+identity is already known — and the runner then captures it, reads the page it
+is on for the address after it, captures that, and carries on:
+
+```text
+capture this entry → find the next → capture it → find the next → …
+```
+
+Nothing resolves the range first. A count of a hundred used to be a hundred
+pages opened before the first byte was kept and a hundred opened again to keep
+it; now each page is opened once, identified, and captured where it stands —
+`SourceWalk.forward`'s `onEntry` hands each Entry over on the page the walk has
+just opened, and the capture reads that page rather than asking the site for it
+a second time (`pageAlreadyLoaded`).
+
+**What gets captured is what the walk resolved**, as it stands — the Entry a
+`WalkedEntry` names. Not a plan derived from the library: the planner takes a
+Collection's rows in ordinal order, and a page that printed no number, or any
+Collection whose ordering basis does not support cross-source merging, leaves
+the walked Entry with no position at all (`EntryReconciler`). Those Entries are
+real, addressed and downloadable — position is organisation, not permission —
+and a plan could not see them, so a count the Source had just satisfied came
+back with nothing queued for them. The count means **captures**, not
+discoveries.
 
 The second is what people mean when they are reading entry 101 and ask for ten:
 the library usually knows four of them, and stopping at four because the rest
@@ -150,8 +165,8 @@ typed, and an OK bar for the number pad iOS gives no return key.
 
 | Launch | What happens |
 |---|---|
-| **Queue only** | The rows are added. Nothing starts. |
-| **Start now** | Added and started, with the Browser in front of the user. |
+| **Queue only** | The row is added and, for a count about the Source, the journey is arranged. Nothing starts, and no page is opened. |
+| **Start now** | Added and started, with the Browser in front of the user. One authorisation runs the whole operation — Activity is where a run is *watched*, never a second Start it has to be given. |
 | **Start and keep using Scrollary** | The same start, leaving the user where they are. |
 
 The rows are the foreground gate's own — `ForegroundStartActions`, the same
@@ -179,27 +194,31 @@ typed — before anything is opened. The sentence under the field names the
 site, the ceiling, that nothing else is downloaded and that it can be stopped;
 a count of one opens nothing, and the library-only range opens nothing either.
 
-Reading forward is visible and stoppable in the compact running surface
-(`features/running_operation_panel.dart`), beside *Downloading* and *Checking*
-and drawn the same way: a label, an indeterminate bar and a Stop that ends it
-at the next page boundary. That panel draws its two existing states over
-controllers publishing exactly *is it running* and *stop it*, and the walk is
-shown through the same pair — no third kind of status surface, and no control
-that claims more than the walk knows. Entries already resolved stay in the
-library.
+Reading forward is not a state of its own any more, because it never happens on
+its own: it happens between one entry of a download and the next. So the
+compact running surface (`features/running_operation_panel.dart`) shows
+*Downloading* for the whole operation, with the counts and one Stop — and that
+Stop ends the journey, not merely the page it was on. No further address is
+opened and no further row is written. The save sheet carries the same stop,
+because the panel is docked exactly where the sheet sits and a control the user
+must dismiss the sheet to reach is not reachable while the thing it stops is
+running.
 
-The walk is bounded twice: by the typed count, and by `kMaxWalkPages` pages
-opened. It follows only what the page's own links assert, through the same
+The journey is bounded twice: by the typed count, and by the pages it may open
+— one per Entry, so the ceiling is the count itself rather than
+`kMaxWalkPages`, which stays the bound for a walk that resolves without
+capturing. It follows only what the page's own links assert, through the same
 `resolveNextPage` capture uses — a number in a URL never manufactures the
 address after it. Every page it reads is reconciled through `EntryReconciler`
-before anything is queued, so an Entry the Collection already holds at that
+before it is captured, so an Entry the Collection already holds at that
 position gains a Location rather than a twin, and an address already held is
-reused untouched. A next address that is not on this Source ends the walk.
+reused untouched. A next address that is not on this Source ends the journey.
 
 Ending is never failure: `countReached` and `endOfSource` are both normal, and
-"there were only six" is an answer about the Source. A walk that stops early —
-a page that would not render, a next control only the user can point at, a
-cancellation — keeps every Entry it had already resolved.
+"there were only six" is an answer about the Source — said in the run summary
+as *6 of 20 entries downloaded · No next entry found*. A journey that stops
+early — a page that would not render, a next control only the user can point
+at, a cancellation — keeps every Entry it had already captured.
 
 ## 5. How much (the bound)
 
@@ -219,10 +238,11 @@ from here*, where the count is a claim about the Source and what the library
 is missing is found by reading that Source forward. A short plan is the
 quieter range's honest answer, never the intended semantics of a count.
 
-Capture itself is unchanged: each planned save is one `save_queue` row against
-`(Entry, Location)`, run by the V2 `QueueRunner` into an `OfflineCopy`.
-Nothing here starts a run — a queued row waits for an explicit Start, as it
-always has.
+Capture itself is unchanged: each save is one `save_queue` row against
+`(Entry, Location)`, run by the V2 `QueueRunner` into an `OfflineCopy` —
+whether the row was planned from the library or written by a journey a step at
+a time. Nothing here starts a run: a queued row waits for an explicit Start, as
+it always has, and a journey waits with it.
 
 ## 6. Cross-source equivalence
 

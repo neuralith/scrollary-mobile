@@ -82,16 +82,18 @@ void main() {
   QueueRunner assistedRunner(FakePageCaptureSource source) => QueueRunner(
     queue: h.queue,
     captureServiceFor: () => h.captureWith(source),
-    capture: (capture, task, {shouldContinue}) => v2CaptureWithAssist(
-      capture: capture,
-      assist: assist,
-      entryId: task.entryId,
-      locationId: task.locationId,
-      locationUrl: task.locationUrl,
-      captureMode: task.captureMode,
-      captureModeIsUserSet: task.captureModeIsUserSet,
-      shouldContinue: shouldContinue,
-    ),
+    capture: (capture, task, {shouldContinue, pageAlreadyLoaded = false}) =>
+        v2CaptureWithAssist(
+          capture: capture,
+          assist: assist,
+          entryId: task.entryId,
+          locationId: task.locationId,
+          locationUrl: task.locationUrl,
+          captureMode: task.captureMode,
+          captureModeIsUserSet: task.captureModeIsUserSet,
+          shouldContinue: shouldContinue,
+          pageAlreadyLoaded: pageAlreadyLoaded,
+        ),
   );
 
   Future<void> pumpUntil(bool Function() done, String what) async {

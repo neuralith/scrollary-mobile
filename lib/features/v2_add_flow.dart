@@ -24,12 +24,11 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../core/config.dart';
 import '../domain/invariants.dart';
 import '../library_ui/providers.dart';
+import '../providers.dart' show queueRunnerProvider;
 import '../recognition/page_kind.dart';
 import '../recognition/recognise.dart';
-import '../recognition/walk.dart';
+import '../save/capture_journey.dart';
 import '../save/capture_mode.dart';
-import '../save/capture_policy.dart' show kCaptureRestrictedMessage;
-import '../save/save_scope.dart' show SaveScopePlan;
 import 'v2_adoption_providers.dart';
 import 'v2_save_flow.dart';
 
@@ -41,7 +40,6 @@ class AddToLibraryReport {
     this.entryId,
     this.queued = 0,
     this.shortfall = 0,
-    this.walkStop,
   });
 
   /// What the user is told, in one sentence. Never null on a refusal.
@@ -57,18 +55,11 @@ class AddToLibraryReport {
   /// Rows now waiting in the save queue because of this call.
   final int queued;
 
-  /// How many of the requested downloads the library could not name an
-  /// address for. Reported, never quietly dropped.
+  /// How many of the requested downloads are not queued yet. For a count
+  /// answered from the library, what it could not name an address for; for a
+  /// sequential capture of a Source, what that journey will go and find.
+  /// Reported, never quietly dropped.
   final int shortfall;
-
-  /// Why the forward walk ended, when one ran. Null when the count was
-  /// answered from the library alone — which is every call that did not ask
-  /// to discover what is missing.
-  ///
-  /// [sentence] already says all of this in words, and that is what the
-  /// surfaces read; this is here for the one that wants to offer *point at
-  /// the next control* rather than only report it.
-  final WalkStop? walkStop;
 
   /// Whether the library changed, or already held what was asked for. A
   /// listing succeeds with no Entry: that is the answer, not a failure.
@@ -90,10 +81,10 @@ class AddToLibraryReport {
 ///
 /// [discoverMissing] chooses which of the two operations a typed count means
 /// (docs/V2_SAVE_FLOW.md §4). False — the default — plans against the library
-/// and opens nothing. True adds the second half: when the library knows fewer
-/// Entries than were asked for, the Source the user is reading is walked
-/// forward for **the shortfall only**, and the plan is rebuilt over what that
-/// found. Nothing is downloaded either way.
+/// and queues what it holds. True means the count is a claim about the
+/// **Source**: this entry is queued and the ones after it are found as the
+/// download moves along, one page at a time (V2-D56). Nothing is downloaded
+/// either way, and neither opens a page here.
 Future<AddToLibraryReport> v2AddAndDownload(
   WidgetRef ref, {
   required String url,
@@ -214,7 +205,6 @@ Future<AddToLibraryReport> v2AddAndDownload(
     entryId: entryId,
     queued: queueing.queued,
     shortfall: queueing.shortfall,
-    walkStop: queueing.walkStop,
   );
 }
 
@@ -330,27 +320,27 @@ class _Queueing {
     required this.sentence,
     required this.queued,
     required this.shortfall,
-    this.walkStop,
   });
 
   final String sentence;
   final int queued;
   final int shortfall;
-  final WalkStop? walkStop;
 }
 
-/// Plan against the library, then enqueue each planned save through the one
-/// enqueue there is. **Nothing is started**: `authoriseStart` is not called
-/// here, and a queued row waits for the user's explicit Start.
+/// Turn the count into work. **Nothing is started**: `authoriseStart` is not
+/// called here, and a queued row waits for the user's explicit Start.
 ///
-/// The order matters and is the whole of what this function owns. The library
-/// is planned against **first**, opening nothing — so a request the library
-/// can already answer in full never drives a browser. Only what is missing
-/// after that is walked for, and only when the caller asked
-/// ([discoverMissing]). The walk resolves identity and writes library rows,
-/// and **what it resolved is what gets queued** — the Entries it names, not a
-/// second plan derived from the library afterwards, which cannot see an Entry
-/// the Source left unnumbered.
+/// Two operations answer a count and they are not the same question
+/// (docs/V2_SAVE_FLOW.md §4), so this splits in two immediately:
+///
+/// * **The next N from here** ([discoverMissing]) is a claim about the
+///   **Source**, and it is one sequential journey: the entry in front of the
+///   user is queued now, and every entry after it is found *while the
+///   downloading happens*, one page at a time (V2-D56). Nothing reads the site
+///   here — [SourceCaptureJourney] does that when the user starts it, which is
+///   what makes *Queue only* a complete answer that opens nothing.
+/// * **The ones the library already has** is planned against the library and
+///   queued in full, opening nothing, exactly as it always was.
 Future<_Queueing> _queue(
   WidgetRef ref, {
   required String startEntryId,
@@ -362,71 +352,30 @@ Future<_Queueing> _queue(
 }) async {
   final queue = ref.read(libraryUiServicesProvider).queue;
   final planner = ref.read(saveScopePlannerProvider);
-  Future<SaveScopePlan> planNow() => planner.plan(
+
+  // A count of one asks for the page in front of the user and nothing else:
+  // there is no journey to take, and no site is read either way.
+  if (discoverMissing && limits.maxEntries > 1) {
+    return _queueJourney(
+      ref,
+      startEntryId: startEntryId,
+      preferSourceId: preferSourceId,
+      requested: limits.maxEntries,
+      captureMode: captureMode,
+      captureModeIsUserSet: captureModeIsUserSet,
+    );
+  }
+
+  final plan = await planner.plan(
     startEntryId: startEntryId,
     limits: limits,
     preferSourceId: preferSourceId,
   );
 
-  final plan = await planNow();
-
-  // *Download the next N from here.* The count is a claim about the Source,
-  // so the ones the library cannot name are read forward on the site the user
-  // is actually on — from the furthest Entry the plan reached, for the
-  // shortfall and no more. A fully known request never gets here.
-  WalkOutcome? walk;
-  if (discoverMissing &&
-      !plan.startIsUnplaced &&
-      plan.saves.isNotEmpty &&
-      plan.planned < limits.maxEntries) {
-    final cancellation = ref.read(sourceWalkCancellationProvider)..begin();
-    try {
-      walk = await ref
-          .read(sourceWalkProvider)
-          .forward(
-            fromLocationId: plan.saves.last.locationId,
-            wanted: limits.maxEntries - plan.planned,
-            shouldContinue: cancellation.shouldContinue,
-          );
-    } finally {
-      // However it ended — its own stop, the user's, or a throw — the panel
-      // stops saying a site is being read.
-      cancellation.finish();
-    }
-  }
-
-  // What will actually be captured, in the order it was decided: the library's
-  // own plan, then the Entries the walk resolved beyond it.
-  //
-  // **The walk's answer is used as it stands, not re-derived.** Re-planning
-  // over the library after a walk looks equivalent and is not: the planner
-  // takes a Collection's rows in ordinal order from the starting Entry, and a
-  // page that printed no number reconciles to an Entry with no ordinal
-  // (`EntryReconciler`). Those Entries are real, addressed and downloadable —
-  // position is organisation, not permission — but a plan cannot see them, so
-  // the count that had just been satisfied on the Source came back short or
-  // empty. A `WalkedEntry` already names the Entry and the Location; that is
-  // the target, and nothing about it has to be looked up again.
-  final targets = <({String entryId, String locationId, String url})>[];
-  final seen = <String>{};
-  void want(String entryId, String locationId, String url) {
-    if (seen.add(entryId)) {
-      targets.add((entryId: entryId, locationId: locationId, url: url));
-    }
-  }
-
-  for (final save in plan.saves) {
-    want(save.entryId, save.locationId, save.url);
-  }
-  for (final entry in walk?.entries ?? const <WalkedEntry>[]) {
-    if (targets.length >= limits.maxEntries) break;
-    want(entry.entryId, entry.locationId, entry.url);
-  }
-
   var queued = 0;
   var waiting = 0;
   String? refusal;
-  for (final save in targets) {
+  for (final save in plan.saves) {
     final result = await queue.enqueue(
       entryId: save.entryId,
       locationId: save.locationId,
@@ -461,8 +410,6 @@ Future<_Queueing> _queue(
         ' This entry has no position in its collection, so there is nothing '
         'after it to queue.',
       );
-    } else if (walk != null) {
-      buffer.write(' ${_walkShortfall(walk, queued: queued)}');
     } else {
       buffer.write(
         ' Your library knows $queued of the ${limits.maxEntries} asked for; '
@@ -475,40 +422,88 @@ Future<_Queueing> _queue(
     sentence: buffer.toString(),
     queued: queued,
     shortfall: shortfall,
-    walkStop: walk?.stop,
   );
 }
 
-/// Why a walk that ran still left the request short, in the user's words.
+/// *Download the next N from here*, as the one journey it is.
 ///
-/// Ending is not failure: *there were only six* is an answer about the Source
-/// and reads as one. The rest name what stopped the reading, because "we found
-/// fewer" and "we were stopped" are different things and only the first is
-/// about the site's contents.
-String _walkShortfall(WalkOutcome walk, {required int queued}) =>
-    switch (walk.stop) {
-      WalkStop.endOfSource =>
-        'That is everything this site publishes after it — there '
-            '${queued == 1 ? 'was only 1' : 'were only $queued'}.',
-      WalkStop.countReached =>
-        'The rest were added to your library with no position in this '
-            'collection, so they are there to place rather than queued.',
-      WalkStop.cancelledByUser =>
-        'You stopped the search — what it had already found is in your '
-            'library.',
-      WalkStop.needsUserAssist =>
-        'Scrollary could not tell which control leads to the next entry on '
-            'this site. Point at it once and it will remember.',
-      WalkStop.leftTheSource =>
-        'The next link leads away from this collection’s site, so the '
-            'search stopped rather than follow it.',
-      WalkStop.unreadable =>
-        'The next page did not load, so the search stopped there.',
-      WalkStop.captureRestrictedForSite => kCaptureRestrictedMessage,
-      WalkStop.pageCeiling =>
-        'Scrollary stopped after ${walk.pagesRead} pages. Ask again from the '
-            'last one to carry on.',
-    };
+/// What this writes now is a single row — the entry the user is standing on,
+/// whose identity is already known and which therefore costs nothing to
+/// establish. What it *arranges* is the rest: a [SourceCaptureJourney] the
+/// runner takes on the user's Start, which captures that entry, reads the
+/// page it is on for the address after it, captures that, and so on until the
+/// count is reached or the Source runs out.
+///
+/// **Why not resolve the range first.** Because that is N page loads before
+/// the first byte is kept, and the answer to *give me twenty* is twenty
+/// entries on the device — not twenty rows in a queue standing behind a walk
+/// that has already read every page it is about to read again (V2-D56).
+Future<_Queueing> _queueJourney(
+  WidgetRef ref, {
+  required String startEntryId,
+  required String? preferSourceId,
+  required int requested,
+  required CaptureMode? captureMode,
+  required bool captureModeIsUserSet,
+}) async {
+  final queue = ref.read(libraryUiServicesProvider).queue;
+  // The address this entry will be read at, from the library and nothing
+  // else: a plan of one opens no page, and there is no second question to ask
+  // about the page already in front of the user.
+  final plan = await ref
+      .read(saveScopePlannerProvider)
+      .plan(
+        startEntryId: startEntryId,
+        limits: SaveLimits.forScope(SaveScope.currentPageOnly),
+        preferSourceId: preferSourceId,
+      );
+  final start = plan.saves.firstOrNull;
+  if (start == null) {
+    return const _Queueing(
+      sentence:
+          'Your library holds no address for this entry, so there is nothing '
+          'to download from.',
+      queued: 0,
+      shortfall: 0,
+    );
+  }
+
+  final result = await queue.enqueue(
+    entryId: start.entryId,
+    locationId: start.locationId,
+    locationUrl: start.url,
+    captureMode: captureMode,
+    captureModeIsUserSet: captureModeIsUserSet,
+  );
+  final refusal = result.refusedReason;
+  if (refusal != null) {
+    return _Queueing(sentence: refusal, queued: 0, shortfall: 0);
+  }
+
+  ref
+      .read(queueRunnerProvider)
+      .follow(
+        SourceCaptureJourney(
+          walk: ref.read(sourceWalkProvider),
+          queue: queue,
+          startEntryId: start.entryId,
+          startLocationId: start.locationId,
+          startLocationUrl: start.url,
+          requested: requested,
+          captureMode: captureMode,
+          captureModeIsUserSet: captureModeIsUserSet,
+        ),
+      );
+
+  return _Queueing(
+    sentence:
+        'Downloading from this page onward, up to $requested entries: each '
+        'one is found as the one before it finishes, and it stops when this '
+        'site has no next entry. $_startFirst',
+    queued: 1,
+    shortfall: requested - 1,
+  );
+}
 
 const String _startFirst = 'nothing is downloaded until you press Start.';
 const String _oneQueued = '1 entry queued — $_startFirst';

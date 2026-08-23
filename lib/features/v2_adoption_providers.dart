@@ -8,7 +8,6 @@
 /// widget.
 library;
 
-import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../library_ui/providers.dart';
@@ -58,60 +57,3 @@ final sourceWalkProvider = Provider<SourceWalk>((ref) {
     ),
   );
 });
-
-/// The cooperative stop a walk is asked at every page boundary.
-///
-/// The same shape the rest of the app already stops things with — the queue's
-/// `shouldContinue(taskId)` and `CheckController.cancel()` are both a flag
-/// raised by whoever asked and read between steps, never an interrupt. A walk
-/// is content-affecting source automation, so it must be cancellable; this is
-/// the smallest thing that is.
-///
-/// One per app, and [begin] is what arms it: a walk that inherited the last
-/// walk's cancellation would refuse to start, and one that never reset it
-/// would run after the user had already said stop.
-class SourceWalkCancellation extends ChangeNotifier {
-  bool _cancelled = false;
-  bool _running = false;
-
-  /// True once [cancel] has been asked and until the next [begin].
-  bool get isCancelled => _cancelled;
-
-  /// True while a walk is reading pages.
-  ///
-  /// A notifier rather than a flag because the running-operation panel draws
-  /// from it: reading a site forward is content-affecting source automation,
-  /// and this codebase does not run that invisibly. The Browser's automation
-  /// ownership is single, so this and a check are never both true.
-  bool get isRunning => _running;
-
-  /// Arm a fresh walk. Called by whatever is about to start one, so a walk
-  /// can never inherit the previous one's stop.
-  void begin() {
-    _cancelled = false;
-    _running = true;
-    notifyListeners();
-  }
-
-  /// The walk is over — by its own ending, by a stop, or by an error.
-  void finish() {
-    _running = false;
-    notifyListeners();
-  }
-
-  /// Ask the running walk to stop at its next page boundary. Everything it
-  /// has already resolved stays in the library.
-  void cancel() {
-    _cancelled = true;
-    notifyListeners();
-  }
-
-  /// The closure handed to [SourceWalk.forward]. A method rather than a field
-  /// so the tear-off is stable across reads of the provider.
-  bool shouldContinue() => !_cancelled;
-}
-
-/// The seam the UI cancels a running walk through.
-final sourceWalkCancellationProvider = Provider<SourceWalkCancellation>(
-  (ref) => SourceWalkCancellation(),
-);

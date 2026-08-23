@@ -58,7 +58,13 @@ String runSummaryDetail(RunSummary run) {
   if (run.cancelled > 0) {
     parts.add(run.cancelled == 1 ? '1 stopped' : '${run.cancelled} stopped');
   }
-  if (run.stoppedEarly) {
+  // A sequential capture that ran out of source says *why* it is short, which
+  // is an answer about the site rather than about the run — so it replaces
+  // the generic sentence instead of standing beside it.
+  final note = run.endNote;
+  if (note != null) {
+    parts.add(note);
+  } else if (run.stoppedEarly) {
     parts.add('the run ended before the rest were reached');
   }
   return parts.join(' · ');

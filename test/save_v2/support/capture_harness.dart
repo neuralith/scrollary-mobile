@@ -179,6 +179,10 @@ class FakePageCaptureSource implements PageCaptureSource {
   final List<UserPageHint?> readerHints = <UserPageHint?>[];
   final List<UserPageHint?> nextHints = <UserPageHint?>[];
 
+  /// Whether each capture was told the page was already open — the sequential
+  /// journey's promise that it is not asking the site for the same page twice.
+  final List<bool> reusedLoadedPage = <bool>[];
+
   @override
   Future<PageCaptureOutcome> capturePage({
     required String url,
@@ -187,11 +191,13 @@ class FakePageCaptureSource implements PageCaptureSource {
     required bool Function() shouldContinue,
     UserPageHint? readerHint,
     UserPageHint? nextHint,
+    bool pageAlreadyLoaded = false,
   }) async {
     requested.add(url);
     modes.add(requestedMode);
     readerHints.add(readerHint);
     nextHints.add(nextHint);
+    reusedLoadedPage.add(pageAlreadyLoaded);
     final landed = landedUrl ?? url;
 
     switch (_kind) {

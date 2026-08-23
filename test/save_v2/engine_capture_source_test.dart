@@ -101,6 +101,7 @@ void main() {
   Future<EntryCaptureResult> captureOne({
     FakeBrowser? browser,
     String? locationUrl,
+    bool pageAlreadyLoaded = false,
   }) async {
     final seeded = await h.repos.seedLibrary();
     return h
@@ -110,6 +111,7 @@ void main() {
           locationId: seeded.location.id,
           locationUrl: locationUrl ?? seeded.location.url,
           captureMode: CaptureMode.textOnly,
+          pageAlreadyLoaded: pageAlreadyLoaded,
         );
   }
 
@@ -136,6 +138,38 @@ void main() {
       // …and the package on disk reads back as what it claims to be.
       final document = await h.fileStore.readDocument(result.contentPath!);
       expect(document!.blockCount, 13);
+    });
+
+    test('a page this run already opened is captured where it stands', () async {
+      // The sequential capture of a Source opens each page once, to find out
+      // which Entry it is, and captures it there (V2-D56). Asking the site for
+      // the same page a second time is a request this app has no reason to
+      // make.
+      final browser = browserFor()..setUrl(_url);
+      final result = await captureOne(
+        browser: browser,
+        pageAlreadyLoaded: true,
+      );
+
+      expect(result.status, EntryCaptureStatus.captured);
+      expect(
+        browser.navigations,
+        isEmpty,
+        reason: 'the page was already the one being shown',
+      );
+    });
+
+    test('and loaded anyway when the browser is somewhere else', () async {
+      // The flag is a claim the navigator checks rather than trusts: if
+      // anything moved the browser in between, this is an ordinary capture.
+      final browser = browserFor()..setUrl('https://elsewhere.example/other');
+      final result = await captureOne(
+        browser: browser,
+        pageAlreadyLoaded: true,
+      );
+
+      expect(result.status, EntryCaptureStatus.captured);
+      expect(browser.navigations, [_url]);
     });
 
     test('a landed refusal is the source\'s own boundary', () async {
