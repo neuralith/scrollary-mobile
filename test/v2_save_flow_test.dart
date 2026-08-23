@@ -200,6 +200,74 @@ void main() {
     });
   });
 
+  group('a page on a Source the library already holds', () {
+    screenTest('joins the entry that Collection already has at that '
+        'number', (tester) async {
+      final ref = await refFor(tester);
+      final root = await h.folders.ensureRoot();
+      final collection = await h.collection('Serial Alpha', folderId: root.id);
+      // The Source key is the one the address itself yields, so the page the
+      // user is on lands on this Source rather than looking like a new site.
+      final source = await h.source(
+        collection.id,
+        pathKey: RecognitionKeys.of(
+          'https://reading.example.com/notes/12',
+        ).pathKey!,
+      );
+      // The Collection already holds part 12, found by reading the Source's
+      // own listing.
+      final held = await h.entryIn(
+        collection.id,
+        title: 'Part 12',
+        ordinal: 12,
+      );
+      await h.location(
+        held.id,
+        'https://reading.example.com/notes/12',
+        sourceId: source.id,
+      );
+
+      // The user is on the same part, at a second address on that Source.
+      const other = 'https://reading.example.com/notes/part-12-mirror';
+      final message = await v2SavePage(ref, url: other, pageTitle: 'Part 12');
+
+      expect(message, isNull);
+      // One Entry, two addresses — not a second unplaced Entry that could
+      // never be placed at 12 afterwards (I8).
+      expect(await h.entries.entriesOf(collection.id), hasLength(1));
+      final locations = await h.entries.locationsOf(held.id);
+      expect(locations, hasLength(2));
+      expect(locations.every((l) => l.sourceId == source.id), isTrue);
+      expect((await v2PageStatusFor(ref, other)).entryId, held.id);
+    });
+
+    screenTest('a part the Collection does not hold is added, unplaced when '
+        'nothing numbers it', (tester) async {
+      final ref = await refFor(tester);
+      final root = await h.folders.ensureRoot();
+      final collection = await h.collection('Serial Alpha', folderId: root.id);
+      await h.source(
+        collection.id,
+        pathKey: RecognitionKeys.of(
+          'https://reading.example.com/notes/12',
+        ).pathKey!,
+      );
+
+      const unnumbered = 'https://reading.example.com/notes/ep-extra';
+      final message = await v2SavePage(
+        ref,
+        url: unnumbered,
+        pageTitle: 'Afterword',
+      );
+
+      expect(message, isNull);
+      final entries = await h.entries.entriesOf(collection.id);
+      expect(entries, hasLength(1));
+      expect(entries.single.ordinal, isNull);
+      expect(entries.single.placement, 'unplaced');
+    });
+  });
+
   group('what the sheet knows about the page', () {
     screenTest('reports that this device already holds a copy', (tester) async {
       final ref = await refFor(tester);
@@ -237,24 +305,28 @@ void main() {
       );
     }
 
-    screenTest('offers Save for a page with nothing queued', (tester) async {
+    // What each branch of the sheet offers is
+    // `test/library_ui/save_panel_test.dart`; what is here is the pair of
+    // facts this file has always covered — an unknown page is asked about
+    // rather than filed, and a row already waiting offers the Start instead
+    // of a second request.
+    screenTest('asks about a page the library does not know', (tester) async {
       await openPanel(tester);
 
-      await pumpUntil(tester, find.byKey(const ValueKey('v2SaveButton')));
+      await pumpUntil(tester, find.byKey(const ValueKey('v2AddCollection')));
       expect(find.byKey(const ValueKey('v2StartButton')), findsNothing);
       expect(find.text('Not in your library yet.'), findsOneWidget);
     });
 
-    screenTest('offers Start, and no longer Save, once a task is waiting', (
+    screenTest('offers Start, and no second request, once a task is waiting', (
       tester,
     ) async {
+      final ref = await refFor(tester);
+      await v2SavePage(ref, url: _pageUrl, pageTitle: _pageTitle);
       await openPanel(tester);
-      await pumpUntil(tester, find.byKey(const ValueKey('v2SaveButton')));
-
-      await tapAndPump(tester, find.byKey(const ValueKey('v2SaveButton')));
 
       await pumpUntil(tester, find.byKey(const ValueKey('v2StartButton')));
-      expect(find.byKey(const ValueKey('v2SaveButton')), findsNothing);
+      expect(find.byKey(const ValueKey('v2DownloadEntry')), findsNothing);
       expect(find.text('Queued — waiting for Start.'), findsOneWidget);
       expect((await theOnlyTask()).state, SaveTaskState.queued);
     });
@@ -278,7 +350,7 @@ void main() {
       await tester.pumpWidget(
         app(const V2SavePanel(url: _pageUrl, pageTitle: _pageTitle)),
       );
-      await pumpUntil(tester, find.byKey(const ValueKey('v2SaveButton')));
+      await pumpUntil(tester, find.byKey(const ValueKey('v2AddCollection')));
       return ProviderScope.containerOf(
         tester.element(find.byType(V2SavePanel)),
       ).read(v2AssistProvider);
@@ -288,7 +360,7 @@ void main() {
       await openPanel(tester);
 
       expect(find.text('Show the app where the content is'), findsNothing);
-      expect(find.byKey(const ValueKey('v2SaveButton')), findsOneWidget);
+      expect(find.byKey(const ValueKey('v2AddCollection')), findsOneWidget);
     });
 
     screenTest('takes over the sheet exactly while a capture holds', (
@@ -306,7 +378,7 @@ void main() {
         reason: 'the user is told what failed, not asked to tap blindly',
       );
       expect(
-        find.byKey(const ValueKey('v2SaveButton')),
+        find.byKey(const ValueKey('v2AddCollection')),
         findsNothing,
         reason: 'one slot: the hold replaces the sheet it interrupted',
       );
@@ -314,7 +386,7 @@ void main() {
       await tapAndPump(tester, find.text('Cancel run'));
 
       expect(find.text('Show the app where the content is'), findsNothing);
-      expect(find.byKey(const ValueKey('v2SaveButton')), findsOneWidget);
+      expect(find.byKey(const ValueKey('v2AddCollection')), findsOneWidget);
       expect(assist.pendingSelection, isNull);
     });
 

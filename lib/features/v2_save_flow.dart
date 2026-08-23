@@ -7,10 +7,15 @@ import '../browser/browser_controller.dart';
 import '../core/config.dart';
 import '../data/recognition_index.dart';
 import '../domain/domain.dart';
+import '../library_ui/collection_picker.dart';
+import '../library_ui/entry_offline.dart';
 import '../library_ui/providers.dart';
+import '../library_ui/save_scope_sheet.dart';
 import '../providers.dart';
 import '../recognition/history.dart';
+import '../recognition/page_kind.dart';
 import '../recognition/recognise.dart';
+import '../recognition/reconcile.dart';
 import '../save/capture_mode.dart';
 import '../save/capture_policy.dart';
 import '../save/entry_capture.dart';
@@ -19,8 +24,12 @@ import '../save/page_hint_repository.dart';
 import '../save/queue_task.dart';
 import '../save/selection_request.dart';
 import '../ui/palette.dart';
+import '../ui/status_style.dart';
 import 'capture_mode_section.dart';
 import 'selection_overlay.dart';
+// STUB IMPORT — switch to 'v2_add_flow.dart' at merge.
+import 'v2_add_flow.dart';
+import 'v2_check_flow.dart';
 
 /// The Browser's save flow over the V2 library.
 ///
@@ -96,27 +105,39 @@ Future<String?> v2SavePage(
       entryId = entry.id;
       locationId = location.id;
     case RecognisedSource(:final source, :final collection, :final keys):
-      // The page sits on a known Source at a new address: the Entry joins its
-      // Collection, honestly unplaced until something numbers it.
-      final (entry, violation) = await services.entries.createInCollection(
-        collectionId: collection.id,
-        placement: Placement.unplaced,
-        title: pageTitle,
-      );
-      if (entry == null) {
-        return 'Could not add this page: ${violation?.message}';
+      // The page sits on a known Source at a new address, so the Entry joins
+      // its Collection — through the **same** reconciliation a reading of
+      // that Source's listing would go through. This branch used to create an
+      // unplaced Entry unconditionally, which meant a part the Collection
+      // already held at that number arrived a second time and could then
+      // never be placed there (I8). The entry point differs from discovery's;
+      // the rule does not (V2_SAVE_FLOW.md §5).
+      final printed = readPageShape(url, pageTitle: pageTitle).printedNumber;
+      final reconciled =
+          await EntryReconciler(
+            entries: services.entries,
+            index: RecognitionIndexOf(services).index,
+          ).entryFor(
+            collectionId: collection.id,
+            basis: OrderingBasis.values.byName(collection.orderingBasis),
+            printedNumber: printed,
+            title: pageTitle,
+          );
+      if (!reconciled.succeeded) {
+        return 'Could not add this page: ${reconciled.violation?.message}';
       }
       final (location, locViolation) = await services.entries.addLocation(
-        entryId: entry.id,
+        entryId: reconciled.entryId!,
         url: url,
         urlKey: keys.urlKey,
         sourceId: source.id,
+        sourceNumber: printed,
         discoveryBasis: 'userSave',
       );
       if (location == null) {
         return 'Could not add this page: ${locViolation?.message}';
       }
-      entryId = entry.id;
+      entryId = reconciled.entryId!;
       locationId = location.id;
     case Unrecognised():
       // A page the library knows nothing about becomes a standalone item,
@@ -347,7 +368,60 @@ Future<EntryCaptureResult> v2CaptureWithAssist({
   return run(mode: captureMode, modeIsUserSet: captureModeIsUserSet);
 }
 
+// ─── the seams the panel calls the domain through ──────────────────────────
+//
+// Providers rather than direct calls, for the same reason
+// `saveQueueStarterProvider` is one: the panel decides *what to ask for* and
+// the domain decides what that writes, and a widget test has to be able to
+// stand in for the second half without a database behind it. The default is
+// the real function; nothing here changes what it does.
+
+typedef V2AddAndDownloadFn =
+    Future<AddToLibraryReport> Function(
+      WidgetRef ref, {
+      required String url,
+      required String pageTitle,
+      String? collectionId,
+      String? newCollectionName,
+      String? folderId,
+      SaveLimits? limits,
+      bool isListing,
+      CaptureMode? captureMode,
+      bool captureModeIsUserSet,
+    });
+
+final v2AddAndDownloadProvider = Provider<V2AddAndDownloadFn>(
+  (ref) => v2AddAndDownload,
+);
+
+typedef V2SaveStandaloneFn =
+    Future<AddToLibraryReport> Function(
+      WidgetRef ref, {
+      required String url,
+      required String pageTitle,
+      CaptureMode? captureMode,
+      bool captureModeIsUserSet,
+    });
+
+final v2SaveStandaloneProvider = Provider<V2SaveStandaloneFn>(
+  (ref) => v2SaveStandalone,
+);
+
 /// The sheet behind the Browser's save control.
+///
+/// It asks the two questions V1 asked on the way in and V2 lost: **which
+/// Collection is this?** and **how much of it?** — and it asks them in the
+/// order the decision matrix in docs/V2_SAVE_FLOW.md §3 sets out. Three rules
+/// bind every branch of it:
+///
+/// * **A serialized page never becomes standalone silently.** Standalone is
+///   offered and chosen; it is never the fallback for "recognition could not
+///   tell".
+/// * **A listing is never an Entry.** The index of a collection is where a
+///   Source lives, so adding one writes no Entry and queues no download; the
+///   Entries are found by a check the user starts.
+/// * **Library membership and downloading are separate acts.** A tap may do
+///   both, and the sentences never merge them.
 class V2SavePanel extends ConsumerStatefulWidget {
   const V2SavePanel({super.key, required this.url, required this.pageTitle});
 
@@ -360,8 +434,19 @@ class V2SavePanel extends ConsumerStatefulWidget {
 
 class _V2SavePanelState extends ConsumerState<V2SavePanel> {
   V2PageStatus? _status;
+
+  /// What the page said about itself, kept apart from what the library knows.
+  /// Read once, from the address and the page's own title, and never allowed
+  /// to override recognition.
+  PageShape? _shape;
+
   String? _message;
   bool _busy = false;
+
+  /// The Collection an index page was just added as, so the check can be
+  /// offered in the same breath — the listing itself is not an Entry, so
+  /// finding what is on it is a separate, visible act.
+  ({String id, String name})? _added;
 
   /// What this page can honestly be saved as. Measured once, when the sheet
   /// opens, so it offers what is actually possible rather than failing after
@@ -379,6 +464,9 @@ class _V2SavePanelState extends ConsumerState<V2SavePanel> {
   @override
   void initState() {
     super.initState();
+    // The shape that needs no library: enough to describe the page while
+    // recognition is still running. `_refresh` settles it.
+    _shape = readPageShape(widget.url, pageTitle: widget.pageTitle);
     _refresh();
     _analyse();
   }
@@ -404,30 +492,200 @@ class _V2SavePanelState extends ConsumerState<V2SavePanel> {
 
   Future<void> _refresh() async {
     final status = await v2PageStatusFor(ref, widget.url);
-    if (mounted) setState(() => _status = status);
+    if (!mounted) return;
+    // A listing is claimed only where the library can vouch for it — the
+    // address is a Source's own path. On a site nothing is known about there
+    // is no such evidence, and an address alone cannot tell a work's listing
+    // from an about page, so the sheet asks instead of announcing.
+    final onSource = status.result;
+    setState(() {
+      _status = status;
+      _shape = readPageShape(
+        widget.url,
+        pageTitle: widget.pageTitle,
+        sourcePathKey: onSource is RecognisedSource
+            ? onSource.source.pathKey
+            : null,
+      );
+    });
   }
 
-  Future<void> _save() async {
+  /// The title to suggest for a Collection: what the page named the work,
+  /// falling back to the page's own title. A suggestion, never a match key —
+  /// it pre-fills a field and filters a list, and selects nothing.
+  String get _suggestedTitle {
+    final detected = _shape?.detectedTitle?.trim() ?? '';
+    return detected.isNotEmpty ? detected : widget.pageTitle.trim();
+  }
+
+  /// Run one domain call, show what it said, and start the queue if the user
+  /// asked for that in the same tap.
+  Future<AddToLibraryReport?> _run(
+    Future<AddToLibraryReport> Function() call, {
+    bool startNow = false,
+  }) async {
     setState(() => _busy = true);
-    final message = await v2SavePage(
-      ref,
-      url: widget.url,
-      pageTitle: widget.pageTitle,
-      captureMode: _mode,
-      captureModeIsUserSet: _modeIsUserSet,
-    );
-    if (!mounted) return;
+    final report = await call();
+    if (!mounted) return report;
     setState(() {
       _busy = false;
-      _message = message;
+      _message = report.sentence ?? _fallbackSentence(report);
     });
+    // The explicit Start, and the only one: `startQueuedDownloads` authorises
+    // the waiting rows and hands them to whatever runs them. Nothing about
+    // queueing implies it.
+    if (startNow && report.queued > 0) {
+      await startQueuedDownloads(context, ref);
+    }
+    if (!mounted) return report;
     await _refresh();
+    return report;
+  }
+
+  /// Only for a domain answer that carried no sentence of its own: a silent
+  /// success reads as nothing having happened.
+  String _fallbackSentence(AddToLibraryReport report) {
+    if (!report.succeeded) return 'Nothing was added.';
+    if (report.queued == 0) return 'Added to your library.';
+    final queued = report.queued == 1
+        ? '1 download'
+        : '${report.queued} downloads';
+    final short = report.shortfall == 0
+        ? ''
+        : ' Your library knows ${report.shortfall} fewer than you asked for.';
+    return 'Added to your library · $queued waiting for Start.$short';
+  }
+
+  Future<void> _download({required SaveLimits limits, bool startNow = false}) {
+    return _run(
+      () => ref.read(v2AddAndDownloadProvider)(
+        ref,
+        url: widget.url,
+        pageTitle: widget.pageTitle,
+        limits: limits,
+        captureMode: _mode,
+        captureModeIsUserSet: _modeIsUserSet,
+      ),
+      startNow: startNow,
+    );
+  }
+
+  /// *Download entries…* — the count, then the rows.
+  Future<void> _downloadRange(String collectionName) async {
+    final scope = await showSaveScopeSheet(
+      context,
+      collectionName: collectionName,
+    );
+    if (scope == null || !mounted) return;
+    await _download(limits: scope.limits, startNow: scope.startNow);
+  }
+
+  /// Add this page to a Collection that already holds it as a Source.
+  Future<void> _addToKnownCollection(
+    String collectionId, {
+    required String collectionName,
+    required bool askHowMany,
+  }) async {
+    SaveScopeChoice? scope;
+    if (askHowMany) {
+      scope = await showSaveScopeSheet(context, collectionName: collectionName);
+      if (scope == null || !mounted) return;
+    }
+    await _run(
+      () => ref.read(v2AddAndDownloadProvider)(
+        ref,
+        url: widget.url,
+        pageTitle: widget.pageTitle,
+        collectionId: collectionId,
+        limits: scope?.limits ?? SaveLimits.forScope(SaveScope.currentPageOnly),
+        captureMode: _mode,
+        captureModeIsUserSet: _modeIsUserSet,
+      ),
+      startNow: scope?.startNow ?? false,
+    );
+  }
+
+  /// *Add to a Collection…* — the picker, then (unless this page is a
+  /// listing) the count.
+  ///
+  /// [indexOnly] is the listing case: a Source is established and **no Entry
+  /// is created for the index page itself**, so there is nothing to download
+  /// and no count to ask for.
+  Future<void> _addToCollection({required bool indexOnly}) async {
+    final choice = await showCollectionPicker(
+      context,
+      ref,
+      suggestedTitle: _suggestedTitle,
+    );
+    if (choice == null || !mounted) return;
+    final name = switch (choice) {
+      ExistingCollectionChoice(:final name) => name,
+      NewCollectionChoice(:final name) => name,
+    };
+
+    SaveScopeChoice? scope;
+    if (!indexOnly) {
+      scope = await showSaveScopeSheet(context, collectionName: name);
+      if (scope == null || !mounted) return;
+    }
+
+    final report = await _run(
+      () => ref.read(v2AddAndDownloadProvider)(
+        ref,
+        url: widget.url,
+        pageTitle: widget.pageTitle,
+        collectionId: switch (choice) {
+          ExistingCollectionChoice(:final id) => id,
+          NewCollectionChoice() => null,
+        },
+        newCollectionName: switch (choice) {
+          ExistingCollectionChoice() => null,
+          NewCollectionChoice(:final name) => name,
+        },
+        // Null is not "no limit" — it is *queue nothing*, which is what a
+        // listing asks for.
+        limits: scope?.limits,
+        // The sheet already asked the library whether this address is a
+        // Source's own page; the orchestration is told rather than guessing
+        // it a second time from the URL.
+        isListing: indexOnly,
+        captureMode: _mode,
+        captureModeIsUserSet: _modeIsUserSet,
+      ),
+      startNow: scope?.startNow ?? false,
+    );
+
+    final collectionId = report?.collectionId;
+    if (indexOnly && collectionId != null && mounted) {
+      setState(() => _added = (id: collectionId, name: name));
+    }
+  }
+
+  Future<void> _saveStandalone() {
+    return _run(
+      () => ref.read(v2SaveStandaloneProvider)(
+        ref,
+        url: widget.url,
+        pageTitle: widget.pageTitle,
+        captureMode: _mode,
+        captureModeIsUserSet: _modeIsUserSet,
+      ),
+    );
   }
 
   Future<void> _start() async {
-    final starter = ref.read(saveQueueStarterProvider);
-    if (starter != null) await starter();
-    await _refresh();
+    await startQueuedDownloads(context, ref);
+    if (mounted) await _refresh();
+  }
+
+  Future<void> _check(String collectionId, String collectionName) async {
+    await startCollectionCheck(
+      context,
+      ref,
+      collectionId,
+      collectionName: collectionName,
+    );
+    if (mounted) await _refresh();
   }
 
   @override
@@ -451,58 +709,6 @@ class _V2SavePanelState extends ConsumerState<V2SavePanel> {
   Widget _sheet(BuildContext context) {
     final palette = AppPalette.of(context);
     final status = _status;
-    final task = status?.task;
-    final result = status?.result;
-
-    final lines = <Widget>[];
-    if (status == null) {
-      lines.add(
-        const Padding(
-          padding: EdgeInsets.all(16),
-          child: Center(child: CircularProgressIndicator()),
-        ),
-      );
-    } else {
-      final describe = switch (result) {
-        RecognisedLocation(:final collection) =>
-          collection == null
-              ? 'In your library.'
-              : 'In your library — ${collection.name}.',
-        RecognisedSource(:final collection) =>
-          'On a site you know — ${collection.name}.',
-        _ => 'Not in your library yet.',
-      };
-      lines.add(Text(describe, style: TextStyle(color: palette.inkMuted)));
-      if (status.hasCopy) {
-        lines.add(
-          Text('On this device.', style: TextStyle(color: palette.inkMuted)),
-        );
-      }
-      if (task != null && !task.state.isTerminal) {
-        lines.add(
-          Text(
-            task.state == SaveTaskState.queued
-                ? 'Queued — waiting for Start.'
-                : 'Saving…',
-            style: TextStyle(color: palette.inkMuted),
-          ),
-        );
-      }
-      if (_message != null) {
-        lines.add(Text(_message!, style: TextStyle(color: palette.inkMuted)));
-      }
-    }
-
-    // A page that can hold nothing offers no save — the sheet says so in the
-    // detection line instead of putting up a button that would refuse.
-    final canSave =
-        status != null &&
-        (task == null || task.state.isTerminal) &&
-        !_busy &&
-        _capabilities.canSaveAnything;
-    final canStart =
-        task != null && task.state == SaveTaskState.queued && !_busy;
-    final source = result is RecognisedSource ? result : null;
 
     return SafeArea(
       child: SingleChildScrollView(
@@ -517,46 +723,357 @@ class _V2SavePanelState extends ConsumerState<V2SavePanel> {
               overflow: TextOverflow.ellipsis,
               style: const TextStyle(fontWeight: FontWeight.w600),
             ),
-            const SizedBox(height: 8),
-            ...[
-              for (final line in lines)
-                Padding(padding: const EdgeInsets.only(bottom: 4), child: line),
-            ],
-            const SizedBox(height: 12),
-            CaptureModeSection(
-              capabilities: _capabilities,
-              selected: _mode,
-              onSelect: (mode) => setState(() {
-                _mode = mode;
-                _modeIsUserSet = true;
-              }),
-            ),
-            const SizedBox(height: 8),
-            if (source != null && !source.followed)
-              TextButton(
-                onPressed: _busy
-                    ? null
-                    : () async {
-                        await v2FollowCollection(ref, source.collection.id);
-                        await _refresh();
-                      },
-                child: Text('Follow ${source.collection.name}'),
-              ),
-            if (canSave)
-              FilledButton(
-                key: const ValueKey('v2SaveButton'),
-                onPressed: _save,
-                child: const Text('Save for offline'),
-              ),
-            if (canStart)
-              FilledButton.tonal(
-                key: const ValueKey('v2StartButton'),
-                onPressed: _start,
-                child: const Text('Start'),
-              ),
+            const SizedBox(height: 10),
+            if (status == null)
+              const Padding(
+                padding: EdgeInsets.all(16),
+                child: Center(child: CircularProgressIndicator()),
+              )
+            else
+              ..._body(context, palette, status),
           ],
         ),
       ),
     );
   }
+
+  List<Widget> _body(
+    BuildContext context,
+    AppPalette palette,
+    V2PageStatus status,
+  ) {
+    final task = status.task;
+    final live = task != null && !task.state.isTerminal;
+    final canDownload = !live && !_busy && _capabilities.canSaveAnything;
+    final canStart =
+        task != null && task.state == SaveTaskState.queued && !_busy;
+    final shape = _shape?.kind ?? PageKind.unknownPage;
+    final result = status.result;
+
+    return [
+      ..._context(palette, status),
+      if (status.hasCopy) _note(palette, 'On this device.'),
+      if (live)
+        _note(
+          palette,
+          task.state == SaveTaskState.queued
+              ? 'Queued — waiting for Start.'
+              : 'Downloading now.',
+        ),
+      if (_message != null) _note(palette, _message!),
+      const SizedBox(height: 12),
+      // A listing writes no queue row, so what to take off a page is not a
+      // question it has. Everywhere else it is.
+      if (!(result is Unrecognised && shape == PageKind.collectionIndex)) ...[
+        CaptureModeSection(
+          capabilities: _capabilities,
+          selected: _mode,
+          onSelect: (mode) => setState(() {
+            _mode = mode;
+            _modeIsUserSet = true;
+          }),
+        ),
+        const SizedBox(height: 8),
+      ],
+      ...switch (result) {
+        RecognisedLocation() => _knownEntryActions(
+          result,
+          canDownload: canDownload,
+        ),
+        RecognisedSource() => _knownSourceActions(
+          palette,
+          result,
+          shape: shape,
+          canDownload: canDownload,
+        ),
+        Unrecognised() => _unknownActions(
+          palette,
+          shape: shape,
+          canDownload: canDownload,
+        ),
+      },
+      if (canStart)
+        FilledButton.tonal(
+          key: const ValueKey('v2StartButton'),
+          onPressed: _start,
+          child: const Text('Start'),
+        ),
+    ];
+  }
+
+  /// What the library knows about this page, in the product's own nouns.
+  List<Widget> _context(AppPalette palette, V2PageStatus status) {
+    switch (status.result) {
+      case RecognisedLocation(:final entry, :final collection, :final location):
+        final ordinal = entry.ordinal;
+        return [
+          _note(
+            palette,
+            collection == null
+                ? 'In your library, on its own.'
+                : 'In your library.',
+          ),
+          if (collection != null) _fact(palette, 'Collection', collection.name),
+          if (ordinal != null)
+            _fact(palette, 'Entry', _ordinalLabel(ordinal))
+          else if (entry.placement == Placement.unplaced.name)
+            _fact(palette, 'Entry', 'position not known'),
+          ?_hostFact(palette, location.url),
+        ];
+      case RecognisedSource(:final collection, :final source):
+        return [
+          _note(palette, 'Adds to ${collection.name}.'),
+          _fact(palette, 'Collection', collection.name),
+          _fact(palette, 'Source', source.host),
+        ];
+      case Unrecognised():
+        return [
+          _note(palette, 'Not in your library yet.'),
+          _note(palette, _shapeSentence()),
+        ];
+    }
+  }
+
+  /// What the page said about itself — never what it is going to become.
+  String _shapeSentence() => switch (_shape?.kind ?? PageKind.unknownPage) {
+    PageKind.entryPage =>
+      'This page looks like one entry of a collection, so it is not saved on '
+          'its own unless you say so.',
+    PageKind.collectionIndex =>
+      'This page looks like a collection\'s own listing.',
+    PageKind.unknownPage =>
+      'Scrollary could not tell what this page is, so it is asking.',
+  };
+
+  // ─── the matrix ───────────────────────────────────────────────────────────
+
+  /// An Entry the library already holds: queue rows, and nothing else.
+  List<Widget> _knownEntryActions(
+    RecognisedLocation result, {
+    required bool canDownload,
+  }) {
+    final collection = result.collection;
+    return [
+      if (canDownload)
+        FilledButton(
+          key: const ValueKey('v2DownloadEntry'),
+          onPressed: () =>
+              _download(limits: SaveLimits.forScope(SaveScope.currentPageOnly)),
+          child: const Text('Download this entry'),
+        ),
+      // "The ones after this" is a question only a Collection's own order can
+      // answer; a standalone Entry has none, and asking anyway would be a
+      // control that quietly means "just this one".
+      if (canDownload && collection != null)
+        TextButton(
+          key: const ValueKey('v2DownloadEntries'),
+          onPressed: () => _downloadRange(collection.name),
+          child: const Text('Download entries…'),
+        ),
+    ];
+  }
+
+  /// A page on a Source the library holds: the Entry joins that Collection.
+  List<Widget> _knownSourceActions(
+    AppPalette palette,
+    RecognisedSource result, {
+    required PageKind shape,
+    required bool canDownload,
+  }) {
+    final collection = result.collection;
+    // A listing is where this Source lives, not a unit of reading: adding an
+    // Entry for it would invent one the site never published.
+    if (shape == PageKind.collectionIndex) {
+      return [
+        _note(
+          palette,
+          'This is this collection\'s listing, so there is no entry here to '
+          'add. Checking it is how its entries are found.',
+        ),
+        const SizedBox(height: 4),
+        FilledButton(
+          key: const ValueKey('v2CheckCollection'),
+          onPressed: _busy
+              ? null
+              : () => _check(collection.id, collection.name),
+          child: Text('Check ${collection.name} for new entries'),
+        ),
+        ..._followAction(result),
+      ];
+    }
+    return [
+      if (canDownload)
+        FilledButton(
+          key: const ValueKey('v2AddAndDownloadEntry'),
+          onPressed: () => _addToKnownCollection(
+            collection.id,
+            collectionName: collection.name,
+            askHowMany: false,
+          ),
+          child: const Text('Add & download this entry'),
+        ),
+      if (canDownload)
+        TextButton(
+          key: const ValueKey('v2AddAndDownloadEntries'),
+          onPressed: () => _addToKnownCollection(
+            collection.id,
+            collectionName: collection.name,
+            askHowMany: true,
+          ),
+          child: const Text('Add & download…'),
+        ),
+      ..._followAction(result),
+    ];
+  }
+
+  /// Following is library membership and downloads nothing — the two verbs
+  /// are offered side by side and never folded together (PRODUCT.md §2.4).
+  List<Widget> _followAction(RecognisedSource result) => [
+    if (!result.followed)
+      TextButton(
+        key: const ValueKey('v2FollowCollection'),
+        onPressed: _busy
+            ? null
+            : () async {
+                await v2FollowCollection(ref, result.collection.id);
+                await _refresh();
+              },
+        child: Text('Follow ${result.collection.name}'),
+      ),
+  ];
+
+  /// A site the library knows nothing about. What is offered depends on what
+  /// the page said it is — and the user answers, either way.
+  List<Widget> _unknownActions(
+    AppPalette palette, {
+    required PageKind shape,
+    required bool canDownload,
+  }) {
+    final added = _added;
+    return switch (shape) {
+      // An entry of something. Collection first, standalone demoted to the
+      // deliberate choice it is.
+      PageKind.entryPage => [
+        if (canDownload)
+          FilledButton(
+            key: const ValueKey('v2AddToCollection'),
+            onPressed: () => _addToCollection(indexOnly: false),
+            child: const Text('Add to a Collection…'),
+          ),
+        _adoptionNote(palette),
+        if (canDownload)
+          TextButton(
+            key: const ValueKey('v2SaveStandalone'),
+            onPressed: _saveStandalone,
+            child: const Text('Save as a standalone entry'),
+          ),
+      ],
+      // The listing itself. A Source, no Entry, and the check offered after.
+      PageKind.collectionIndex => [
+        if (added == null)
+          FilledButton(
+            key: const ValueKey('v2AddCollection'),
+            onPressed: _busy ? null : () => _addToCollection(indexOnly: true),
+            child: const Text('Add this collection to your library'),
+          ),
+        _adoptionNote(palette),
+        _note(
+          palette,
+          'A listing is not an entry, so nothing is downloaded by adding it. '
+          'Checking the collection is how its entries are found, and you '
+          'start that yourself.',
+        ),
+        if (added != null) ...[
+          const SizedBox(height: 4),
+          FilledButton(
+            key: const ValueKey('v2CheckAfterAdd'),
+            onPressed: _busy ? null : () => _check(added.id, added.name),
+            child: Text('Check ${added.name} for new entries'),
+          ),
+        ],
+      ],
+      // The page did not say. Standalone is the honest answer, and every
+      // other answer is offered rather than assumed — including the one the
+      // app cannot tell from an about page on a site it knows nothing about.
+      PageKind.unknownPage => [
+        if (canDownload)
+          FilledButton(
+            key: const ValueKey('v2SaveStandalone'),
+            onPressed: _saveStandalone,
+            child: const Text('Save as a standalone entry'),
+          ),
+        if (canDownload)
+          TextButton(
+            key: const ValueKey('v2AddToCollection'),
+            onPressed: () => _addToCollection(indexOnly: false),
+            child: const Text('Add to a Collection…'),
+          ),
+        if (_shape?.couldBeListing ?? false) ...[
+          _note(
+            palette,
+            'If this page lists a collection\'s entries rather than being '
+            'one of them, add the site itself instead — nothing is '
+            'downloaded, and checking the collection is how its entries are '
+            'found.',
+          ),
+          TextButton(
+            key: const ValueKey('v2AddCollection'),
+            onPressed: _busy ? null : () => _addToCollection(indexOnly: true),
+            child: const Text('Add this site as a collection\'s source'),
+          ),
+        ],
+        if (added != null) ...[
+          const SizedBox(height: 4),
+          FilledButton(
+            key: const ValueKey('v2CheckAfterAdd'),
+            onPressed: _busy ? null : () => _check(added.id, added.name),
+            child: Text('Check ${added.name} for new entries'),
+          ),
+        ],
+      ],
+    };
+  }
+
+  /// The one sentence that keeps the two answers apart. Choosing a Collection
+  /// you already have and starting a new one are different operations, and the
+  /// picker's rows do not say which is which on their own.
+  Widget _adoptionNote(AppPalette palette) => _note(
+    palette,
+    'Choosing a collection you already have adds this site as another source '
+    'of it. Creating one starts a new collection with this site as its first '
+    'source.',
+  );
+
+  // ─── small pieces ─────────────────────────────────────────────────────────
+
+  Widget _note(AppPalette palette, String text) => Padding(
+    padding: const EdgeInsets.only(bottom: 4),
+    child: Text(
+      text,
+      style: TextStyle(fontSize: 12.5, height: 1.45, color: palette.inkMuted),
+    ),
+  );
+
+  Widget _fact(AppPalette palette, String label, String value) => Padding(
+    padding: const EdgeInsets.only(bottom: 4),
+    child: Text(
+      '$label · $value',
+      maxLines: 2,
+      overflow: TextOverflow.ellipsis,
+      style: monoStyle(size: 12, color: palette.inkFaint),
+    ),
+  );
+
+  /// The site this address sits on, when the address has one.
+  Widget? _hostFact(AppPalette palette, String url) {
+    final host = Uri.tryParse(url)?.host ?? '';
+    return host.isEmpty ? null : _fact(palette, 'Source', host);
+  }
+
+  /// `12`, not `12.0`; `99.5` stays `99.5`, because 100 and 99.5 are two
+  /// Entries and printing them the same would say otherwise.
+  static String _ordinalLabel(double ordinal) =>
+      ordinal == ordinal.roundToDouble()
+      ? ordinal.toStringAsFixed(0)
+      : '$ordinal';
 }

@@ -193,11 +193,15 @@ void main() {
         findsOneWidget,
         reason: 'the sheet says video is not saved, in its own words',
       );
+      // No route into the queue at all — neither the loose save nor the one
+      // that goes through a Collection. A button the engine could not honour
+      // would be a button that lies.
       expect(
-        find.byKey(const ValueKey('v2SaveButton')),
+        find.byKey(const ValueKey('v2SaveStandalone')),
         findsNothing,
         reason: 'and offers no save it could not honour',
       );
+      expect(find.byKey(const ValueKey('v2AddToCollection')), findsNothing);
     },
     timeout: const Timeout(Duration(minutes: 5)),
   );

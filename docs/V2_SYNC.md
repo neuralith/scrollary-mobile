@@ -214,6 +214,12 @@ merge into something already known, or `unresolved`.
 - **Unresolved** — a visible state, not an error. The Entry stays unplaced and
   readable.
 
+`unresolved` is also the permanent answer for a page on a site no Source covers
+yet: there is nothing on the server to resolve it against. The client does not
+retry it into existence — the user attaches the site to a Collection, or starts
+one, and the ordinary `source` and `entry` mutations carry that answer up
+(V2-D45). No endpoint was added for it.
+
 ### 4.6 Placement arbitration
 
 Ordinal placement is **serialised by the server**, so two devices placing the

@@ -63,6 +63,14 @@ in [docs/DECISIONS.md](docs/DECISIONS.md).
   `lib/data/schema.dart`), and offline read through `OfflineCopy`. The two
   reviewed port seams are recorded in
   [docs/V2_PORT_CHECKLIST.md](docs/V2_PORT_CHECKLIST.md) §17.
+- **The save flow** (`lib/features/v2_save_flow.dart`, `lib/recognition/adopt.dart`,
+  `lib/save/save_scope.dart`) — a page becomes library through the matrix in
+  [docs/V2_SAVE_FLOW.md](docs/V2_SAVE_FLOW.md): what the page *is* comes from
+  `readPageShape`, which Collection it belongs to is the **user's answer**
+  (V2-D45) and never a title match, and how much to download is the typed
+  count V1 asked for, on the same `SaveLimits` bound (V2-D46). A page that
+  belongs to serialized content is never written as a loose Entry without
+  being asked (V2-D44); standalone stays first-class and stays chosen.
 - **Library UX** (`lib/library_ui`, D1–D7) — the one-page Library (root
   Collections listed directly, Folders as collapsible sections, Continue
   Reading and the Settings/Activity doors in its header — V2-D43), folder
@@ -179,16 +187,19 @@ Three things future agents get wrong here:
 
 ### Saving is explicit and bounded
 
-- **The default is one page.** `SaveScope.currentPageOnly` is preselected, and
-  `SaveRunController.start` takes `range` as a **required** parameter so nothing
+- **The default is one page.** `SaveScope.currentPageOnly` is preselected in
+  the scope sheet, and every path to the queue names its scope, so nothing
   inherits a default about how much of someone else's site to touch.
 - `SaveLimits.forScope` is the only way to build limits and cannot produce an
   unbounded run. There is **no open-ended scope**: a multi-entry save is a
   number the user typed, so every ceiling is one they chose and can see. Do not
   reintroduce a range whose real bound lives in `SaveConfig`.
-- Show the detection result *before* saving more than one page: what was found,
-  the domain, the count or that it is unknown, the shape, the direction, the stop
-  condition, the estimate, and how to cancel.
+- Show what will happen *before* saving more than one page: which Collection,
+  how many Entries the library can actually name an address for, that a short
+  plan is short, and that nothing starts until Start. In V2 the count is
+  planned against rows the library already holds — `SaveScopePlanner` opens no
+  page — and finding more Entries is the update check, which is its own
+  visible, bounded, cancellable act (docs/V2_SAVE_FLOW.md §4).
 - Nothing saves in the background. Queued work waits for an explicit Start, and
   that authorisation is never persisted.
 

@@ -506,6 +506,12 @@ class _BrowserScreenState extends ConsumerState<BrowserScreen> {
     if (url.isEmpty) return;
     await showModalBottomSheet<void>(
       context: context,
+      // The panel is as tall as what it has to say — a Collection's context,
+      // the ranges, and the sentence explaining what each one writes. Left at
+      // the default it would be capped near half the screen and the choice
+      // between adding to a Collection and saving loose would be below the
+      // fold, which is where this flow went wrong the first time.
+      isScrollControlled: true,
       builder: (_) => V2SavePanel(url: url, pageTitle: browser.title),
     );
     if (!mounted) return;

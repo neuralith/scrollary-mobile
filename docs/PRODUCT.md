@@ -90,6 +90,12 @@ Where sites number their content explicitly, Entries merge across Sources by
 position. Where they do not, Sources still coexist and are readable, but Entries
 are not merged — **Scrollary does not pretend every website can be normalised.**
 
+A site you have not read on before is not a new work by default. Scrollary
+cannot tell from a title that two differently hosted works are the same one,
+and it does not guess — so it asks: *add this site as another Source of a
+Collection you already have, or start a new one.* The suggestion is filtered by
+what the page called itself; the answer is yours (V2-D45).
+
 ### 2.3 Four independent facts about an Entry
 
 | Fact | Meaning |
@@ -108,10 +114,11 @@ downloaded; downloaded on one device and not another; known without being yours.
 |---|---|
 | **Follow a Collection** | Your library, everywhere |
 | **Add to Library** | Your library, everywhere |
+| **Add this site as a Source** | Your library, everywhere |
 | **Organise into a Folder** | Your library, everywhere |
 | **Read / Track** | Your library, everywhere |
 | **Open at Source** | Records access, everywhere |
-| **Download for Offline** | **This device** |
+| **Download for Offline** — one Entry, or a number you type | **This device** |
 | **Remove Offline Copy** | **This device** |
 | **Remove from Library** | Your library, everywhere |
 

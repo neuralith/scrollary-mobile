@@ -514,6 +514,76 @@ section. Nothing has to be in a Folder, and making one is a Library-menu action
 rather than a header button. The model is unchanged — single system root,
 conservative delete, Folder state syncs (V2-D21).
 
+### V2-D44 · A page's shape is read structurally, and an uncertain serialized page is never silently standalone
+
+Recognition answers *which rows do we hold for this address*. It deliberately
+says nothing about what the page **is**, and for a long time the save flow
+inherited that silence: anything recognition could not place became a
+standalone Entry in the root Folder. One numbered Entry of a serialized work,
+read on a site the library did not already hold, was reduced to a loose item
+with no Collection, no Source, and no way to attach it to one.
+
+`readPageShape` (`lib/recognition/page_kind.dart`) answers the missing question
+from structure alone — a printed number by `parseEntryNumber`, or an address
+sitting below a collection path by `collectionFingerprint` — with no hostname,
+selector or site list. Its three answers are entry page, collection index and
+*did not say*, and the third is a real answer: the user is asked which
+Collection this belongs to, rather than having the question resolved by
+writing a loose Entry.
+
+The **collection index** answer is deliberately the narrowest of the three: it
+is returned only when the caller can name the Source path this address is, so
+in practice only for a site the library already holds. An address alone cannot
+separate a work's listing from an about page — both are a path with no number
+and nothing under it — and an app that guesses offers *add this collection to
+your library* over a privacy policy. Where the shape merely allows it, the
+sheet offers adding the site as a Source as one answer among three, and asserts
+nothing. Standalone stays a first-class outcome (I3) and stays
+available; it is chosen, never defaulted to. A collection index page never
+becomes an Entry at all — a listing is where a Source lives.
+
+### V2-D45 · Collection identity across sites is the user's answer, never inferred from a title
+
+V2-D16 settled how two Sources of one Collection reconcile *once both exist*.
+It left open how the second Source comes to exist at all, and the implemented
+answer was: it cannot. Arbitration resolves `(host, path_key)` against Sources
+the server already holds, so a genuinely new host is always `unresolved` —
+correctly, because matching two differently hosted works by title similarity is
+exactly the wrong merge V2-D16 refuses to make.
+
+So the second Source is created by the person who knows. The save sheet offers
+the Collections the library already holds, filtered by the detected title as a
+*suggestion*, and the user taps one: *add this site as another Source of that
+Collection*. Nothing auto-selects, and a detected title never matches anything
+on its own. `LibraryAdoption` (`lib/recognition/adopt.dart`) is that operation,
+and it writes Collection, Source, Entry and Location together rather than
+creating a standalone Entry and repairing it afterwards. A `(host, path_key)`
+that already belongs to another Collection is refused in words, never moved:
+a site that relocates is a lifecycle change (V2-D14), not a reparenting.
+
+Automatic cross-host matching remains unimplemented and is not claimed
+anywhere. Reliability over false universality (PRODUCT.md §5.3).
+
+### V2-D46 · "How many entries" comes back, on the bound it always had
+
+`SaveScope` and `SaveLimits` survived the V1 retirement untouched in
+`core/config.dart` — and were left with no caller, because the sheet that asked
+the question was retired with the V1 queue in `b0740eb`. The restored sheet
+asks it again and builds its limit the only way the codebase permits, through
+`SaveLimits.forScope`, clamped to `SaveConfig.maxEntriesPerRun`. There is still
+no open-ended scope, the default is still the one page in front of the user,
+and the typed count is still a number the person chose and can see.
+
+What changed is what a count *means* in V2. V1 walked from page to page as it
+saved. V2 separates the two acts that were folded together there: finding
+entries is the update check — visible, bounded, cancellable, and the only thing
+that opens a page — while `SaveScopePlanner` (`lib/save/save_scope.dart`) turns
+a count into queue rows over Entries the library already holds. A plan shorter
+than the count asked for is reported as short, never padded with an address
+nobody has seen. Library membership, Entry existence and OfflineCopy stay three
+separate facts (PRODUCT.md §2.3): following downloads nothing, and downloading
+follows nothing.
+
 ## Open
 
 Only items that are genuinely undecided **and** not already deferred to
