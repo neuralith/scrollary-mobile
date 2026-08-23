@@ -43,6 +43,7 @@ library;
 import 'dart:async';
 
 import '../browser/browser_controller.dart';
+import '../core/url_utils.dart';
 import '../storage/document.dart';
 import '../storage/file_store.dart';
 import '../storage/manifest.dart';
@@ -190,6 +191,16 @@ abstract interface class PageCaptureSource {
   /// for this address, or null. They are passed through untouched — nothing
   /// here infers one, and a rule exists only because a person tapped an
   /// element.
+  ///
+  /// [pageAlreadyLoaded] is the caller stating that [url] is the page the
+  /// browser is showing *and that this run put it there* — the sequential
+  /// capture of a Source, which reads each page to find out which Entry it is
+  /// and then captures it where it stands (V2-D56). It saves the second load
+  /// of the same page, which is a request to somebody else's site that this
+  /// app has no reason to make twice. It is never inferred: a page the user
+  /// has been reading has been scrolled, and the engine scrolls **downward
+  /// from where it finds the page**, so capturing one in place would miss
+  /// everything above the reader's position.
   Future<PageCaptureOutcome> capturePage({
     required String url,
     required StagingHandle staging,
@@ -197,6 +208,7 @@ abstract interface class PageCaptureSource {
     required bool Function() shouldContinue,
     UserPageHint? readerHint,
     UserPageHint? nextHint,
+    bool pageAlreadyLoaded = false,
   });
 }
 
@@ -251,6 +263,7 @@ class SaveEnginePageCaptureSource implements PageCaptureSource {
     required bool Function() shouldContinue,
     UserPageHint? readerHint,
     UserPageHint? nextHint,
+    bool pageAlreadyLoaded = false,
   }) async {
     if (!shouldContinue()) return _cancelled(url);
 
@@ -267,8 +280,16 @@ class SaveEnginePageCaptureSource implements PageCaptureSource {
       // `browser_surface_policy.dart` and the guard the engine then applies to
       // every phase.
       await browser.awaitPaintedSurface();
-      browser.allowNextNavigation(url);
-      await browser.loadAndWait(url);
+      // The page this run just opened to find out which Entry it is: the
+      // engine's own contract is *save the page that is loaded*, so it is
+      // captured where it stands rather than fetched a second time. Asserted
+      // against the browser rather than trusted — if anything moved it in
+      // between, this is an ordinary navigation again.
+      if (!pageAlreadyLoaded ||
+          normalizeUrl(browser.currentUrl) != normalizeUrl(url)) {
+        browser.allowNextNavigation(url);
+        await browser.loadAndWait(url);
+      }
       result = await engine.saveCurrentPage(
         // V2 identity is the caller's: the Entry, the Location and the
         // collection are already decided, and the engine's own ids and

@@ -53,13 +53,13 @@ expected to carry one.
 | Add this site as another Source of a Collection | same, choose an existing Collection | Free | `recognition/adopt.dart` | `test/recognition/adopt_test.dart` | — |
 | Download this entry | save sheet → **Download this entry** | Free | `features/v2_add_flow.dart` | `test/save_v2/add_flow_test.dart` | — |
 | Download a number of entries I type | save sheet → **Entries from here** → count | Free | `library_ui/save_scope_sheet.dart` | `test/library_ui/save_scope_sheet_test.dart` | — |
-| Download the next N even if the library doesn't know them | same, count > what is held | Free | `recognition/walk.dart` | `test/save_v2/capture_journey_test.dart` | — |
+| Download the next N even if the library doesn't know them | same, count > what is held | Free | `save/capture_journey.dart` | `test/save_v2/capture_journey_test.dart` | — |
 | Get N entries on this device from a count of N | same | Free | `features/v2_add_flow.dart` | `test/save_v2/capture_journey_test.dart` | — |
 | Download entries the library already has | save sheet → **Entries already in your library** | Free | `save/save_scope.dart` | `test/save_v2/save_scope_test.dart` | — |
 | See how far a download has got | anywhere a run is visible | **Free** | `features/operation_progress.dart` | `test/library_ui/operation_progress_test.dart` | — |
 | See images found and saved for the entry running | same | **Free** | `features/operation_progress.dart` | `test/library_ui/operation_progress_test.dart` | — |
 | Stop a running download | Browser panel · Activity · entry menu | **Free** | `library_ui/entry_offline.dart` | `test/library_ui/activity_test.dart` | — |
-| Stop a run that is still finding entries | Browser panel · save sheet | **Free** | `features/v2_adoption_providers.dart` | `test/recognition/walk_test.dart` | — |
+| Stop a run that is still finding entries | Browser panel · Activity · save sheet | **Free** | `save/queue_runner.dart` | `test/save_v2/capture_journey_test.dart` | Reading a Source forward happens **inside** a download now (V2-D56), so the download's own Stop is this stop: it ends the capture at its next safe point and no further page is opened. There is no separate *stop finding* to press. |
 | Retry something that failed | Library → Activity → **Retry** | **Free** | `library_ui/entry_offline.dart` | `test/library_ui/activity_test.dart` | — |
 | Know when the app needs me | operation indicator → **Needs you** | **Free** | `features/operation_indicator.dart` | `test/library_ui/operation_indicator_test.dart` | — |
 | See what a finished run actually did | Activity → run summary | **Free** | `library_ui/run_summary.dart` | `test/library_ui/run_summary_test.dart` | — |

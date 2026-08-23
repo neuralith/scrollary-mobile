@@ -101,9 +101,11 @@ void main() {
       reason: 'said again in numbers, where the answer is being typed',
     );
     expect(
-      find.textContaining('reads forward from this page'),
+      find.textContaining('reads forward for the next one'),
       findsOneWidget,
-      reason: 'the count is a claim about the site, and the site is opened',
+      reason:
+          'the count is a claim about the site, and the site is read as the '
+          'download moves along it',
     );
     expect(find.textContaining('stop it at any point'), findsOneWidget);
   });

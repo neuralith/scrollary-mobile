@@ -7,6 +7,7 @@ import '../core/config.dart';
 import '../core/device_storage.dart';
 import '../data/schema.dart';
 import '../save/entry_capture.dart';
+import 'capture_journey.dart';
 import 'queue_repository.dart';
 import 'queue_task.dart';
 import 'stop_conditions.dart';
@@ -23,6 +24,7 @@ typedef TaskCapture =
       EntryCaptureService capture,
       SaveTask task, {
       bool Function()? shouldContinue,
+      bool pageAlreadyLoaded,
     });
 
 /// The default: capture the row exactly as it stands, asking nothing.
@@ -30,6 +32,7 @@ Future<EntryCaptureResult> captureTaskDirectly(
   EntryCaptureService capture,
   SaveTask task, {
   bool Function()? shouldContinue,
+  bool pageAlreadyLoaded = false,
 }) => capture.capture(
   entryId: task.entryId,
   locationId: task.locationId,
@@ -37,6 +40,7 @@ Future<EntryCaptureResult> captureTaskDirectly(
   captureMode: task.captureMode,
   captureModeIsUserSet: task.captureModeIsUserSet,
   shouldContinue: shouldContinue,
+  pageAlreadyLoaded: pageAlreadyLoaded,
 );
 
 /// What a finished batch came to.
@@ -53,6 +57,7 @@ class RunSummary {
     required this.failed,
     required this.cancelled,
     required this.stoppedEarly,
+    this.endNote,
   });
 
   /// What the batch set out to capture.
@@ -64,6 +69,13 @@ class RunSummary {
   /// True when the loop ended with work still eligible — the disk gate, or a
   /// stop. "Finished" and "stopped short" are different outcomes.
   final bool stoppedEarly;
+
+  /// Why a sequential capture of a Source ended before its count, in the
+  /// user's words ([CaptureJourney.endNote]). Null for an ordinary drain of
+  /// the queue, and null for a journey that simply reached the number asked
+  /// for: *there were only sixteen* is an answer about the Source, and it is
+  /// the one thing the row counts cannot say for themselves.
+  final String? endNote;
 
   int get settled => downloaded + failed + cancelled;
 
@@ -79,6 +91,14 @@ class RunSummary {
 /// property). This class is only the worker loop and the app-level signal
 /// that a save is running, which the shell reads to keep the Browser painted
 /// exactly as it did for V1 runs.
+///
+/// A run has two halves and they run in that order. First the
+/// [CaptureJourney]s this Start authorised — *capture the next twenty from
+/// here*, which writes one row, captures it, finds the entry after it and
+/// captures that (V2-D56). Then the ordinary drain of whatever else is
+/// waiting. Both go through the same claim and the same verdict, because a
+/// download that arrived by walking a Source is not a different kind of
+/// download.
 class QueueRunner extends ChangeNotifier {
   QueueRunner({
     required this.queue,
@@ -102,7 +122,25 @@ class QueueRunner extends ChangeNotifier {
 
   bool _running = false;
   bool _disposed = false;
+
+  /// True from the moment a stop is honoured until the run ends.
+  ///
+  /// A user's Stop is about the **operation**, not about the row that happened
+  /// to be running when they pressed it. That distinction did not exist while
+  /// a run was only ever a list of rows; a sequential capture is one bounded
+  /// thing the user asked for, so stopping it stops the traversal, the rows
+  /// after it and the rest of the drain (V2-D56).
+  bool _stopped = false;
   String? _activeTaskId;
+
+  /// The journeys waiting for a Start, in the order they were asked for.
+  final List<CaptureJourney> _journeys = [];
+
+  /// What the journeys of this run promised between them, which is the number
+  /// the user typed rather than the length of a queue that only ever holds the
+  /// step being taken.
+  int _bound = 0;
+  String? _endNote;
   int _batchTotal = 0;
   int _batchDone = 0;
   int _batchDownloaded = 0;
@@ -113,11 +151,12 @@ class QueueRunner extends ChangeNotifier {
   /// True while the loop is claiming or capturing.
   bool get isRunning => _running;
 
-  /// How many rows this batch set out to capture.
+  /// How many entries this batch set out to capture.
   ///
-  /// Taken when the loop starts and raised if more work appears while it runs,
-  /// because a batch is what the queue holds rather than a number promised in
-  /// advance. Zero when nothing is running.
+  /// A journey's own count when there is one — the number the user typed,
+  /// known from the first entry rather than derived from a queue that holds
+  /// one step at a time. Otherwise what the queue holds, raised if more work
+  /// appears while the loop runs. Zero when nothing is running.
   int get batchTotal => _batchTotal;
 
   /// How many of them have reached a terminal state, however they got there.
@@ -136,6 +175,33 @@ class QueueRunner extends ChangeNotifier {
     if (_lastRun == null) return;
     _lastRun = null;
     notifyListeners();
+  }
+
+  /// Take this journey on the next [start].
+  ///
+  /// The flow that asked for *capture the next N* hands the journey over here
+  /// and the user's Start runs it — so *Queue only* is a complete answer that
+  /// starts nothing, and *Start now* is one authorisation that runs the whole
+  /// operation. Nothing about holding a journey authorises anything: like the
+  /// queue's own Start it is in memory only, and a relaunch has none.
+  void follow(CaptureJourney journey) {
+    if (_disposed) return;
+    _journeys.add(journey);
+    notifyListeners();
+  }
+
+  /// How many Entries the journeys waiting for a Start have between them.
+  int get pendingJourneyEntries =>
+      _journeys.fold(0, (n, journey) => n + journey.requested);
+
+  /// One more journey's worth of entries this run has taken on. The batch is
+  /// never smaller than what the journeys promised, whichever pass they were
+  /// taken on.
+  void _raiseBound(int by) {
+    _bound += by;
+    if (_bound <= _batchTotal) return;
+    _batchTotal = _bound;
+    if (!_disposed) notifyListeners();
   }
 
   /// Test hook, mirroring the V1 controller's: the shell's surface and leave
@@ -158,22 +224,40 @@ class QueueRunner extends ChangeNotifier {
   Future<void> start() async {
     if (_running || _disposed) return;
     _running = true;
-    _batchTotal = 0;
+    _stopped = false;
     _batchDone = 0;
     _batchDownloaded = 0;
     _batchFailed = 0;
     _batchCancelled = 0;
     _lastRun = null;
+    _endNote = null;
+    _bound = 0;
+    _batchTotal = 0;
     notifyListeners();
     queue.authoriseStart();
     try {
-      while (!_disposed) {
+      while (!_disposed && !_stopped) {
+        // A sequential capture first, and re-asked every pass: one started
+        // while this run is going belongs to this run, exactly as a row
+        // enqueued mid-batch does.
+        if (_journeys.isNotEmpty) {
+          final journey = _journeys.removeAt(0);
+          _raiseBound(journey.requested);
+          await journey.run(
+            capture: _captureRow,
+            shouldContinue: () => !_disposed && !_stopped,
+          );
+          _endNote ??= journey.endNote;
+          continue;
+        }
         final eligible = await queue.eligible();
         if (eligible.isEmpty) break;
         // What is left, plus what has already been settled, is what this batch
-        // is trying to do. Recomputed each pass so a row enqueued mid-batch is
-        // counted rather than making the total a promise that goes stale.
-        final total = _batchDone + eligible.length;
+        // is trying to do — never less than what the journeys promised.
+        // Recomputed each pass so a row enqueued mid-batch is counted rather
+        // than making the total a promise that goes stale.
+        final drained = _batchDone + eligible.length;
+        final total = drained > _bound ? drained : _bound;
         if (total != _batchTotal) {
           _batchTotal = total;
           if (!_disposed) notifyListeners();
@@ -194,25 +278,13 @@ class QueueRunner extends ChangeNotifier {
         // loser is told, and the row keeps its own verdict.
         if (claimed == null) continue;
         await _run(claimed);
-        _batchDone++;
-        // The row's own verdict, read back rather than inferred: a cancel that
-        // landed mid-capture is the row's answer, not the loop's.
-        switch ((await queue.byId(claimed.id))?.state) {
-          case SaveTaskState.completed:
-            _batchDownloaded++;
-          case SaveTaskState.cancelled:
-            _batchCancelled++;
-          case SaveTaskState.failed:
-            _batchFailed++;
-          case _:
-            break;
-        }
-        if (!_disposed) notifyListeners();
+        await _settleVerdict(claimed.id);
       }
     } finally {
       queue.revokeStart();
       _activeTaskId = null;
       _running = false;
+      _bound = 0;
       if (_batchTotal > 0) {
         _lastRun = RunSummary(
           requested: _batchTotal,
@@ -220,10 +292,60 @@ class QueueRunner extends ChangeNotifier {
           failed: _batchFailed,
           cancelled: _batchCancelled,
           stoppedEarly: _batchDone < _batchTotal,
+          endNote: _endNote,
         );
       }
       if (!_disposed) notifyListeners();
     }
+  }
+
+  /// Capture one row a journey has just written, in the loop that owns the
+  /// queue. [CaptureJourney] decides *which* Entry; everything about running
+  /// it — the disk gate, the claim, the cooperative stop and the terminal
+  /// verdict — stays here, so a journeyed download and a drained one are the
+  /// same download.
+  ///
+  /// False means the journey goes no further: the run is over, the device is
+  /// out of room, or the user stopped this row — which stops the operation it
+  /// belonged to rather than only the page it was on.
+  Future<bool> _captureRow(
+    String taskId, {
+    required bool pageAlreadyLoaded,
+  }) async {
+    if (_disposed || _stopped) return false;
+    final row = await queue.byId(taskId);
+    if (row == null || row.isTerminal) return false;
+    if (await _settleIfOutOfSpace(row)) {
+      _stopped = true;
+      return false;
+    }
+    final claimed = await queue.claim(taskId);
+    // Lost to a cancel that got there first: the row keeps its own verdict,
+    // and the journey it belonged to is over.
+    if (claimed == null) return false;
+    await _run(claimed, pageAlreadyLoaded: pageAlreadyLoaded);
+    final verdict = await _settleVerdict(claimed.id);
+    if (verdict == SaveTaskState.cancelled) _stopped = true;
+    return !_disposed && !_stopped;
+  }
+
+  /// The row's own verdict, read back rather than inferred: a cancel that
+  /// landed mid-capture is the row's answer, not the loop's.
+  Future<SaveTaskState?> _settleVerdict(String taskId) async {
+    _batchDone++;
+    final state = (await queue.byId(taskId))?.state;
+    switch (state) {
+      case SaveTaskState.completed:
+        _batchDownloaded++;
+      case SaveTaskState.cancelled:
+        _batchCancelled++;
+      case SaveTaskState.failed:
+        _batchFailed++;
+      case _:
+        break;
+    }
+    if (!_disposed) notifyListeners();
+    return state;
   }
 
   /// Too little room to take another entry? Then say so on the row that would
@@ -255,7 +377,7 @@ class QueueRunner extends ChangeNotifier {
     return true;
   }
 
-  Future<void> _run(SaveTask task) async {
+  Future<void> _run(SaveTask task, {bool pageAlreadyLoaded = false}) async {
     _activeTaskId = task.id;
     notifyListeners();
 
@@ -273,6 +395,7 @@ class QueueRunner extends ChangeNotifier {
         _captureServiceFor(),
         task,
         shouldContinue: () => !cancelled && !_disposed,
+        pageAlreadyLoaded: pageAlreadyLoaded,
       );
       switch (result.status) {
         case EntryCaptureStatus.captured:

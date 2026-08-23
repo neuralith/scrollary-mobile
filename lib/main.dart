@@ -320,16 +320,18 @@ class AppStartup {
       // Routed through the assist path, which is the difference between a
       // capture that cannot find the reading area *asking* and one that simply
       // fails. The order, the counters and the re-run are v2_save_flow's.
-      capture: (capture, task, {shouldContinue}) => v2CaptureWithAssist(
-        capture: capture,
-        assist: assist,
-        entryId: task.entryId,
-        locationId: task.locationId,
-        locationUrl: task.locationUrl,
-        captureMode: task.captureMode,
-        captureModeIsUserSet: task.captureModeIsUserSet,
-        shouldContinue: shouldContinue,
-      ),
+      capture: (capture, task, {shouldContinue, pageAlreadyLoaded = false}) =>
+          v2CaptureWithAssist(
+            capture: capture,
+            assist: assist,
+            entryId: task.entryId,
+            locationId: task.locationId,
+            locationUrl: task.locationUrl,
+            captureMode: task.captureMode,
+            captureModeIsUserSet: task.captureModeIsUserSet,
+            shouldContinue: shouldContinue,
+            pageAlreadyLoaded: pageAlreadyLoaded,
+          ),
       captureServiceFor: () => EntryCaptureService(
         entries: ui.entries,
         collections: ui.collections,

@@ -616,6 +616,7 @@ class _HeldCapture extends EntryCaptureService {
     bool Function()? shouldContinue,
     UserPageHint? readerHint,
     UserPageHint? nextHint,
+    bool pageAlreadyLoaded = false,
   }) async {
     await gate.future;
     return const EntryCaptureResult.failed(
@@ -636,6 +637,7 @@ class _UnusedCaptureSource implements PageCaptureSource {
     required bool Function() shouldContinue,
     UserPageHint? readerHint,
     UserPageHint? nextHint,
+    bool pageAlreadyLoaded = false,
   }) => throw UnimplementedError('the capture itself is overridden');
 }
 

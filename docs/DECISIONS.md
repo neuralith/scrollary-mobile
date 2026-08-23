@@ -793,3 +793,63 @@ deletion wearing tidiness as a disguise.
 Identity, ordering and reconciliation are untouched: `_bySequence` already
 sorted by ordinal, `entries.ordinal` is unchanged, and one Entry read from two
 Sources is still one row.
+
+### V2-D56 · *The next N from here* is one sequential journey, not a survey then a download
+
+`v2AddAndDownload` answered a count about the Source in two phases: walk the
+Source until N Entries were resolved, write them all into the library and the
+queue, then capture them one by one. Both phases open every page. A count of a
+hundred was a hundred page loads during which nothing was downloaded, followed
+by a hundred more to download them — and the user, who had asked to capture the
+next hundred *from the entry they were reading*, watched a browser move through
+the whole range before the first byte was kept.
+
+The two phases are now interleaved, and the alternation is
+`save/capture_journey.dart`:
+
+```text
+capture this entry → find the next → capture it → find the next → …
+```
+
+Four things follow from that order, and they are the point of it:
+
+- **The entry in front of the user is captured first**, before any address
+  after it has been so much as resolved. It is the only one whose identity was
+  already known, so it is also the only row the sheet writes.
+- **Discovery is one step, taken when it is needed.** `SourceWalk.forward`
+  gained an `onEntry` hook that is awaited as each Entry is resolved — *on the
+  page the walk has just opened* — and the walk goes no further until it
+  answers. Everything about which Entry a page is stays `EntryReconciler`'s.
+- **One page load per Entry.** The walk opens the page to find out which Entry
+  it is; the capture then reads that same loaded page
+  (`PageCaptureSource.capturePage`'s `pageAlreadyLoaded`, asserted against the
+  browser's own address rather than trusted). The flag is never inferred: a
+  page the *user* has been reading has been scrolled, and the engine scrolls
+  downward from where it finds the page.
+- **The bound is the number the user typed.** `QueueRunner` is told the
+  journey's count, so *Entry 4 of 20* is true from the first entry rather than
+  derived from a queue that only ever holds the step being taken, and a run
+  that ends at sixteen says *16 of 20* with the reason underneath.
+
+**Ending early is an answer.** A Source with nothing published after its
+sixteenth entry ends the journey with sixteen captures and a sentence about the
+Source (`RunSummary.endNote`) — not a failure, and nothing between seventeen
+and twenty is invented.
+
+**One operation, one stop.** Stopping the running download ends the journey: no
+further page is opened and no further row is written. The separate *stop
+finding entries* control went with the separate phase it stopped —
+`SourceWalkCancellation` and the panel's *Finding entries* state are gone,
+because reading forward is no longer a state the app is ever in on its own.
+What replaces them is the download's own Stop, on the panel, in Activity and in
+the save sheet that started it (docs/V2_CAPABILITY_PARITY.md).
+
+This supersedes the second half of V2-D51. Its rule survives intact — **a count
+means captures, not discoveries, and what the walk resolved is what gets
+captured** — but "the plan first, then the walk's entries appended, then the
+queue" is not how the count is answered any more, because there is no longer a
+moment at which the whole range is known.
+
+*Queue only* still queues and starts nothing: it writes the one row and holds
+the journey on the runner, in memory, exactly as the Start authorisation is
+held in memory (`queue_repository.dart`). A relaunch has neither.

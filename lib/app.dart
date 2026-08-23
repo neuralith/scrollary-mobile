@@ -445,7 +445,11 @@ class _ShellState extends ConsumerState<_Shell> {
     // three launches in the sheet that asked *how many* has taken exactly
     // this decision, and asking it a second time here was the second modal on
     // a path that is supposed to have none (docs/V2_SAVE_FLOW.md §4).
-    final n = waiting.length;
+    // What the user asked for, not what the queue happens to hold: a
+    // sequential capture writes one row at a time and finds the rest as it
+    // goes (V2-D56).
+    final journeyed = ref.read(queueRunnerProvider).pendingJourneyEntries;
+    final n = journeyed > waiting.length ? journeyed : waiting.length;
     final choice = switch (decided) {
       StartWhere.inBrowser => StartChoice.inBrowser,
       StartWhere.keepWorking => StartChoice.keepUsingApp,

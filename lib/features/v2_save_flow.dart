@@ -32,7 +32,6 @@ import 'foreground_gate_sheet.dart';
 import 'selection_overlay.dart';
 // STUB IMPORT — switch to 'v2_add_flow.dart' at merge.
 import 'v2_add_flow.dart';
-import 'v2_adoption_providers.dart';
 import 'v2_check_flow.dart';
 
 /// The Browser's save flow over the V2 library.
@@ -314,6 +313,12 @@ Future<EntryCaptureResult> v2CaptureWithAssist({
   String? locationId,
   bool captureModeIsUserSet = false,
   bool Function()? shouldContinue,
+
+  /// True when the run has just opened this address to find out which Entry
+  /// it is, and the browser is still on it (V2-D56). Passed straight through
+  /// to the capture, including on the second attempt after the user points at
+  /// the reading area — that assistance happens on the same loaded page.
+  bool pageAlreadyLoaded = false,
 }) async {
   final hints = assist.hints;
   final nextHint = await hints.findFor(locationUrl, HintKind.nextLink);
@@ -332,6 +337,7 @@ Future<EntryCaptureResult> v2CaptureWithAssist({
       shouldContinue: shouldContinue,
       readerHint: readerHint,
       nextHint: nextHint,
+      pageAlreadyLoaded: pageAlreadyLoaded,
     );
     final applied = readerHint;
     if (applied != null) {
@@ -462,24 +468,22 @@ class _V2SavePanelState extends ConsumerState<V2SavePanel> {
   String? _message;
   bool _busy = false;
 
-  /// True while a run that may read this Source forward is in flight.
+  /// True while a run this sheet started is still going.
   ///
-  /// **AT MERGE.** The compact running surface for content-affecting source
-  /// automation is `running_operation_panel.dart`, which draws *Downloading*
-  /// over `QueueRunner` and *Checking* over `CheckController` — each of which
-  /// publishes exactly *is it running* and *stop it*. The walk needs the same
-  /// two things published by whatever owns it, and then a third branch in that
-  /// panel with a Stop wired to its cancel, exactly as `_CheckRunning` does.
-  /// Until that seam exists this sentence is what names the operation while it
-  /// happens; it claims nothing the app cannot do yet, and it is not a second
-  /// status surface.
-  bool _readingForward = false;
+  /// **Why the sheet needs its own Stop.** The compact running surface is
+  /// docked at the bottom of the Browser — which is exactly where this sheet
+  /// sits — so a user who started a download from here would have to dismiss
+  /// the sheet to reach the control for the thing the sheet had just started.
+  /// It is the same stop, not a second one: it cancels the row that is
+  /// running, and a sequential capture ends with it rather than carrying on to
+  /// the next entry (V2-D56).
+  bool _runningFromHere = false;
 
   /// Test hook, mirroring `QueueRunner.debugSetRunning`: the in-sheet Stop is
-  /// exercised without driving a real walk over a real site.
+  /// exercised without driving a real capture over a real site.
   @visibleForTesting
-  void debugSetReadingForward(bool value) =>
-      setState(() => _readingForward = value);
+  void debugSetRunningFromHere(bool value) =>
+      setState(() => _runningFromHere = value);
 
   /// The Collection an index page was just added as, so the check can be
   /// offered in the same breath — the listing itself is not an Entry, so
@@ -664,17 +668,12 @@ class _V2SavePanelState extends ConsumerState<V2SavePanel> {
   Future<AddToLibraryReport?> _run(
     Future<AddToLibraryReport> Function() call, {
     SaveStartMode start = SaveStartMode.queueOnly,
-    bool readsForward = false,
   }) async {
-    setState(() {
-      _busy = true;
-      _readingForward = readsForward;
-    });
+    setState(() => _busy = true);
     final report = await call();
     if (!mounted) return report;
     setState(() {
       _busy = false;
-      _readingForward = false;
       _message = report.sentence ?? _fallbackSentence(report);
     });
     // The explicit Start, and the only one: `startQueuedDownloads` authorises
@@ -683,7 +682,12 @@ class _V2SavePanelState extends ConsumerState<V2SavePanel> {
     // with it, so nothing asks them a second time where they would like to
     // wait.
     if (start.starts && report.queued > 0) {
-      await startQueuedDownloads(context, ref, decided: start.where);
+      setState(() => _runningFromHere = true);
+      try {
+        await startQueuedDownloads(context, ref, decided: start.where);
+      } finally {
+        if (mounted) setState(() => _runningFromHere = false);
+      }
     }
     if (!mounted) return report;
     await _rememberMode(report.collectionId ?? _preferenceCollectionId);
@@ -722,7 +726,6 @@ class _V2SavePanelState extends ConsumerState<V2SavePanel> {
         captureModeIsUserSet: _modeIsUserSet,
       ),
       start: start,
-      readsForward: discoverMissing,
     );
   }
 
@@ -851,7 +854,6 @@ class _V2SavePanelState extends ConsumerState<V2SavePanel> {
         captureModeIsUserSet: _modeIsUserSet,
       ),
       start: scope?.start ?? SaveStartMode.queueOnly,
-      readsForward: discoverMissing,
     );
   }
 
@@ -916,7 +918,6 @@ class _V2SavePanelState extends ConsumerState<V2SavePanel> {
         captureModeIsUserSet: _modeIsUserSet,
       ),
       start: scope?.start ?? SaveStartMode.queueOnly,
-      readsForward: discoverMissing,
     );
 
     final collectionId = report?.collectionId;
@@ -940,6 +941,19 @@ class _V2SavePanelState extends ConsumerState<V2SavePanel> {
   Future<void> _start() async {
     await startQueuedDownloads(context, ref);
     if (mounted) await _refresh();
+  }
+
+  /// Stop the run this sheet started, at the next safe point.
+  ///
+  /// The row's own cancel and nothing else — the same one Activity and the
+  /// docked panel ask for, so there is one way a download stops. A sequential
+  /// capture ends with the row it was on: no further page is opened and no
+  /// further row is written (V2-D56).
+  Future<void> _stopRun() async {
+    final queue = ref.read(libraryUiServicesProvider).queue;
+    for (final task in await queue.pending()) {
+      if (task.state == SaveTaskState.running) await queue.cancel(task.id);
+    }
   }
 
   Future<void> _check(String collectionId, String collectionName) async {
@@ -1024,21 +1038,29 @@ class _V2SavePanelState extends ConsumerState<V2SavePanel> {
               ? 'Queued — waiting for Start.'
               : 'Downloading now.',
         ),
-      if (_readingForward) ...[
-        _note(palette, 'Reading this site forward to find the entries…'),
+      if (_runningFromHere) ...[
+        _note(
+          palette,
+          'Downloading from this page onward — each next entry is found as '
+          'the one before it finishes.',
+        ),
         const SizedBox(height: 8),
         // The Stop belongs *here*, not only on the panel underneath. The panel
         // is docked at the bottom of the Browser — which is exactly where this
-        // sheet sits — so a user who started the walk from the sheet would
+        // sheet sits — so a user who started the download from the sheet would
         // have had to dismiss it to find the control for the thing the sheet
         // had just started.
         TextButton.icon(
-          key: const ValueKey('sheetStopReadingForward'),
-          onPressed: () => ref.read(sourceWalkCancellationProvider).cancel(),
+          key: const ValueKey('sheetStopRun'),
+          onPressed: _stopRun,
           icon: const Icon(Icons.stop_circle_outlined, size: 18),
-          label: const Text('Stop finding entries'),
+          label: const Text('Stop downloading'),
         ),
-        _note(palette, 'Stops at the next page. What it found is kept.'),
+        _note(
+          palette,
+          'Stops at the next safe point, and nothing after it is opened. What '
+          'is already on this device stays.',
+        ),
       ],
       if (_message != null) _note(palette, _message!),
       const SizedBox(height: 12),
