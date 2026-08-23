@@ -22,6 +22,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../app.dart' show LeaveBrowserGuard;
 import '../save/queue_task.dart';
+import '../features/check_state.dart';
 import '../ui/palette.dart';
 import '../ui/status_style.dart';
 import '../ui/theme.dart';
@@ -423,6 +424,9 @@ class _CollectionRow extends StatelessWidget {
                           fg: palette.inkMuted,
                           border: palette.border,
                         ),
+                      ] else ...[
+                        const SizedBox(width: 8),
+                        CollectionCheckChip(collectionId: collection.id),
                       ],
                     ],
                   ),

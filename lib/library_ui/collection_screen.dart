@@ -80,6 +80,22 @@ class _CollectionDetail extends ConsumerWidget {
           title: view.name,
           onBack: _backOf(context),
           actions: [
+            // Checking is the Collection's own verb and the reason most
+            // people open it, so it is one tap here rather than three
+            // through the overflow. Archived collections are not offered it:
+            // following has stopped, and there is nothing to keep current.
+            if (!view.archived && ref.read(collectionCheckerProvider) != null)
+              HeaderIconButton(
+                key: const ValueKey('collectionCheckAction'),
+                icon: Icons.manage_search,
+                tooltip: 'Check for new entries',
+                onPressed: () async {
+                  final checker = ref.read(collectionCheckerProvider);
+                  if (checker != null) {
+                    await checker(view.collection.id, view.name);
+                  }
+                },
+              ),
             HeaderIconButton(
               icon: Icons.more_horiz,
               tooltip: 'Collection actions',

@@ -27,6 +27,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../capability/foreground_gate.dart';
 import '../providers.dart';
 import '../recognition/check.dart';
+import 'check_state.dart';
 import 'foreground_gate_sheet.dart';
 
 /// What one check may read, and what it may bring in.
@@ -88,7 +89,11 @@ Future<SourceCheckOutcome?> startCollectionCheck(
     ref.read(shellTabRequestProvider).value = 1;
   }
 
+  // The library rows watch this: a Collection that is being checked says so,
+  // and what the check concluded outlives the snackbar that announced it.
+  final state = ref.read(checkStateProvider)..beginCheck(collectionId);
   final outcome = await check.run(collectionId, limits: kCollectionCheckLimits);
+  state.recordCheck(collectionId, outcome, at: DateTime.now());
   if (!context.mounted) return outcome;
   _say(context, checkOutcomeSentence(outcome));
   return outcome;
