@@ -14,6 +14,7 @@ import 'features/check_controller.dart';
 import 'features/v2_composition.dart';
 import 'library_ui/providers.dart'
     show libraryDatabaseProvider, libraryUiServicesProvider;
+import 'save/capture_preference.dart';
 import 'save/queue_runner.dart';
 import 'storage/cleanup.dart';
 import 'storage/file_store.dart';
@@ -82,6 +83,15 @@ final cleanupProvider = Provider<CleanupService>((ref) {
 /// The device's small key-value settings.
 final localSettingsProvider = Provider<LocalSettingsStore>(
   (ref) => LocalSettingsStore(ref.watch(libraryDatabaseProvider)),
+);
+
+/// What each Collection is normally captured as.
+///
+/// Over the same settings table: a capture preference is an application fact
+/// about a Collection, not a library one, and the frozen schema has no column
+/// for it and needs none.
+final capturePreferenceProvider = Provider<CapturePreferenceStore>(
+  (ref) => CapturePreferenceStore(ref.watch(localSettingsProvider)),
 );
 
 /// What this device is holding, from the copy rows alone.

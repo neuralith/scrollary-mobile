@@ -19,6 +19,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:web_reader/browser/browser_controller.dart';
+import 'package:web_reader/data/local_settings.dart';
 import 'package:web_reader/data/schema.dart';
 import 'package:web_reader/domain/collection.dart';
 import 'package:web_reader/features/v2_check_flow.dart';
@@ -27,6 +28,8 @@ import 'package:web_reader/library_ui/collection_models.dart';
 import 'package:web_reader/library_ui/providers.dart' as libui;
 import 'package:web_reader/providers.dart';
 import 'package:web_reader/recognition/check.dart';
+import 'package:web_reader/save/capture_mode.dart';
+import 'package:web_reader/save/capture_preference.dart';
 import 'package:web_reader/recognition/discovery.dart';
 import 'package:web_reader/ui/palette.dart';
 import 'package:web_reader/ui/theme.dart';
@@ -499,6 +502,56 @@ void main() {
         find.byKey(const ValueKey('collectionArchive')),
         findsOneWidget,
         reason: 'the rest of the menu is unaffected',
+      );
+    });
+
+    screenTest('what this collection is usually saved as is changeable from '
+        'here', (tester) async {
+      // The save sheet is where a preference is set, in the flow that had the
+      // question in front of the user. Someone who changes their mind should
+      // not have to find a page of the work and open the save sheet to get at
+      // it again.
+      await seed();
+      await tester.pumpWidget(app(checkerAttached: true));
+      await tester.tap(find.text('menu'));
+      await _settle(tester);
+
+      await tester.tap(find.byKey(const ValueKey('collectionCaptureMode')));
+      await _settle(tester);
+      await tester.tap(
+        find.byKey(const ValueKey('collectionCaptureMode_imageSequence')),
+      );
+      await _settle(tester);
+
+      expect(
+        await CapturePreferenceStore(
+          LocalSettingsStore(v2.library),
+        ).of(collection.id),
+        CaptureMode.imageSequence,
+      );
+    });
+
+    screenTest('and *Ask each time* is a real answer', (tester) async {
+      await seed();
+      final preferences = CapturePreferenceStore(
+        LocalSettingsStore(v2.library),
+      );
+      await preferences.remember(collection.id, CaptureMode.imageSequence);
+
+      await tester.pumpWidget(app(checkerAttached: true));
+      await tester.tap(find.text('menu'));
+      await _settle(tester);
+      await tester.tap(find.byKey(const ValueKey('collectionCaptureMode')));
+      await _settle(tester);
+      await tester.tap(
+        find.byKey(const ValueKey('collectionCaptureModeAsk')),
+      );
+      await _settle(tester);
+
+      expect(
+        await preferences.of(collection.id),
+        isNull,
+        reason: 'there is no safest mode, so no answer stays expressible',
       );
     });
 

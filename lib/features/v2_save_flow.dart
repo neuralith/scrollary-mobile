@@ -506,6 +506,33 @@ class _V2SavePanelState extends ConsumerState<V2SavePanel> {
   /// chose this" are different facts about the same value.
   bool _modeIsUserSet = false;
 
+  /// What this Collection is normally captured as, when the user has said.
+  ///
+  /// A *proposal*: `CaptureCapabilities.resolve` decides whether this page can
+  /// honour it, and a page that cannot falls back and asks. The preference is
+  /// left alone either way — it was an answer about the work, not about the
+  /// page in front of the user.
+  CaptureMode? _remembered;
+
+  /// The Collection this sheet's answer belongs to, once the library has said
+  /// which one that is. Null for a page that is not in a Collection, and a
+  /// standalone save never writes a preference for anything.
+  String? _preferenceCollectionId;
+
+  /// True once the user has asked to see the full block again. *Change* is a
+  /// one-way door for this sheet: having asked what the options are, being
+  /// shown the collapsed line again would be the sheet arguing.
+  bool _modesExpanded = false;
+
+  /// Whether the collapsed line stands in for the block.
+  bool get _modeIsRemembered {
+    final remembered = _remembered;
+    return remembered != null &&
+        !_modesExpanded &&
+        !_modeIsUserSet &&
+        _capabilities.allows(remembered);
+  }
+
   @override
   void initState() {
     super.initState();
@@ -533,10 +560,21 @@ class _V2SavePanelState extends ConsumerState<V2SavePanel> {
     if (!mounted) return;
     setState(() {
       _capabilities = capabilities;
-      _mode = capabilities.defaultMode;
       _hints = hints;
+      _settleMode();
     });
     await _refresh();
+  }
+
+  /// What this save will produce, given everything the sheet knows so far.
+  ///
+  /// Called whenever either input settles — the page's capabilities, or the
+  /// Collection's remembered answer — because they arrive from two async
+  /// reads in no fixed order and whichever lands second must not undo the
+  /// first. A choice the **user** made outranks both and is never recomputed.
+  void _settleMode() {
+    if (_modeIsUserSet) return;
+    _mode = _capabilities.resolve(_remembered).mode;
   }
 
   Future<void> _refresh() async {
@@ -557,6 +595,43 @@ class _V2SavePanelState extends ConsumerState<V2SavePanel> {
             ? onSource.source.pathKey
             : null,
       );
+    });
+    await _loadPreference(switch (status.result) {
+      RecognisedLocation(:final collection) => collection?.id,
+      RecognisedSource(:final collection) => collection.id,
+      Unrecognised() => null,
+    });
+  }
+
+  /// What this Collection is normally captured as — asked once the library has
+  /// said which Collection this page belongs to, and not before.
+  Future<void> _loadPreference(String? collectionId) async {
+    final remembered = await ref
+        .read(capturePreferenceProvider)
+        .of(collectionId);
+    if (!mounted) return;
+    setState(() {
+      _preferenceCollectionId = collectionId;
+      _remembered = remembered;
+      _settleMode();
+    });
+  }
+
+  /// Keep what the user chose, for the Collection they chose it on.
+  ///
+  /// Only an explicit choice, and only against a Collection: a mode that came
+  /// from detection is the page's answer about that page, and a standalone
+  /// save has no work to be a standing answer for. One Collection's
+  /// preference is never written by an Entry that landed somewhere else —
+  /// the id comes from the report, which names where this save actually went.
+  Future<void> _rememberMode(String? collectionId) async {
+    final mode = _mode;
+    if (!_modeIsUserSet || mode == null || collectionId == null) return;
+    await ref.read(capturePreferenceProvider).remember(collectionId, mode);
+    if (!mounted) return;
+    setState(() {
+      _preferenceCollectionId = collectionId;
+      _remembered = mode;
     });
   }
 
@@ -609,6 +684,8 @@ class _V2SavePanelState extends ConsumerState<V2SavePanel> {
     if (startNow && report.queued > 0) {
       await startQueuedDownloads(context, ref);
     }
+    if (!mounted) return report;
+    await _rememberMode(report.collectionId ?? _preferenceCollectionId);
     if (!mounted) return report;
     await _refresh();
     return report;
@@ -937,14 +1014,23 @@ class _V2SavePanelState extends ConsumerState<V2SavePanel> {
       // A listing writes no queue row, so what to take off a page is not a
       // question it has. Everywhere else it is.
       if (!(result is Unrecognised && shape == PageKind.collectionIndex)) ...[
-        CaptureModeSection(
-          capabilities: _capabilities,
-          selected: _mode,
-          onSelect: (mode) => setState(() {
-            _mode = mode;
-            _modeIsUserSet = true;
-          }),
-        ),
+        // Answered once, for this work: the block collapses to the answer and
+        // a way back to it. Everything the block says is still one tap away,
+        // and a page that cannot honour the remembered mode never gets here.
+        if (_modeIsRemembered)
+          RememberedCaptureLine(
+            mode: _remembered!,
+            onChange: () => setState(() => _modesExpanded = true),
+          )
+        else
+          CaptureModeSection(
+            capabilities: _capabilities,
+            selected: _mode,
+            onSelect: (mode) => setState(() {
+              _mode = mode;
+              _modeIsUserSet = true;
+            }),
+          ),
         const SizedBox(height: 8),
       ],
       ...switch (result) {

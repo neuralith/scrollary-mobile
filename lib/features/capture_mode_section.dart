@@ -79,6 +79,10 @@ class CaptureModeSection extends StatelessWidget {
     CaptureMode.textAndImages: Icons.article_outlined,
   };
 
+  /// The glyph this app draws a mode with, so the collapsed line beside this
+  /// block and the block itself cannot drift apart.
+  static IconData iconFor(CaptureMode mode) => _icons[mode]!;
+
   @override
   Widget build(BuildContext context) {
     final palette = AppPalette.of(context);
@@ -118,6 +122,80 @@ class CaptureModeSection extends StatelessWidget {
           const SizedBox(height: 7),
         ],
       ],
+    );
+  }
+}
+
+/// *What to save*, for a Collection that has already answered.
+///
+/// The whole block, collapsed to a line. Deliberately **not** a variant of
+/// [CaptureModeSection]: that widget is fixed store copy (STORE_PACKAGE.md
+/// §6.3 and §6.6, transcribed word for word and pinned by
+/// `test/capture_mode_section_test.dart`) and it stays exactly as it is. This
+/// is what stands in its place once the question has been answered for this
+/// work, and *Change* is one tap away from the full block with every reason
+/// and every blocked mode still in it.
+///
+/// Only ever drawn for a mode the page can actually honour — a preference
+/// proposes and the page disposes, so a Collection normally kept as images
+/// asks again on the page that has none rather than showing a line that
+/// promises something the save would refuse.
+class RememberedCaptureLine extends StatelessWidget {
+  const RememberedCaptureLine({
+    super.key,
+    required this.mode,
+    required this.onChange,
+  });
+
+  final CaptureMode mode;
+  final VoidCallback onChange;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = AppPalette.of(context);
+    return Container(
+      key: const ValueKey('captureModeRemembered'),
+      padding: const EdgeInsets.fromLTRB(12, 8, 4, 8),
+      decoration: BoxDecoration(
+        color: palette.surfaceMuted,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: palette.border),
+      ),
+      child: Row(
+        children: [
+          Icon(
+            CaptureModeSection.iconFor(mode),
+            size: 18,
+            color: palette.inkMuted,
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  mode.label,
+                  style: TextStyle(
+                    fontSize: 13.5,
+                    fontWeight: FontWeight.w600,
+                    color: palette.ink,
+                  ),
+                ),
+                const SizedBox(height: 1),
+                Text(
+                  'What this collection is usually saved as.',
+                  style: TextStyle(fontSize: 11.5, color: palette.inkMuted),
+                ),
+              ],
+            ),
+          ),
+          TextButton(
+            key: const ValueKey('captureModeChange'),
+            onPressed: onChange,
+            child: const Text('Change'),
+          ),
+        ],
+      ),
     );
   }
 }

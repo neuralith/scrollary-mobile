@@ -25,6 +25,8 @@ import '../domain/reading_state.dart';
 // Collection after all*.
 // STUB IMPORT — switch to '../features/v2_add_flow.dart' at merge.
 import '../features/v2_add_flow.dart';
+import '../providers.dart' show capturePreferenceProvider;
+import '../save/capture_mode.dart';
 import '../save/queue_task.dart';
 import '../ui/palette.dart';
 import '../ui/status_style.dart';
@@ -38,7 +40,7 @@ import 'providers.dart';
 
 // ─── collection ─────────────────────────────────────────────────────────────
 
-enum _CollectionAction { check, archive, follow, move, remove }
+enum _CollectionAction { check, captureMode, archive, follow, move, remove }
 
 Future<void> showCollectionMenu(
   BuildContext context,
@@ -76,6 +78,21 @@ Future<void> showCollectionMenu(
               onTap: () =>
                   Navigator.of(sheetContext).pop(_CollectionAction.check),
             ),
+          // What this collection is normally saved as, changeable after the
+          // fact. The save sheet is where it is *set*; this is where someone
+          // who changed their mind goes, without having to find a page of it
+          // and open the save sheet to get at the question.
+          ListTile(
+            key: const ValueKey('collectionCaptureMode'),
+            leading: const Icon(Icons.tune),
+            title: const Text('What to save'),
+            subtitle: const Text(
+              'Used for entries of this collection, where the page can be '
+              'saved that way.',
+            ),
+            onTap: () =>
+                Navigator.of(sheetContext).pop(_CollectionAction.captureMode),
+          ),
           if (view.archived)
             ListTile(
               key: const ValueKey('collectionFollow'),
@@ -128,6 +145,8 @@ Future<void> showCollectionMenu(
     case _CollectionAction.check:
       final checker = ref.read(collectionCheckerProvider);
       if (checker != null) await checker(view.collection.id, view.name);
+    case _CollectionAction.captureMode:
+      await showCaptureModePreference(context, ref, view);
     case _CollectionAction.archive:
       final violation = await repository.archive(view.collection.id);
       if (violation != null) {
@@ -515,6 +534,87 @@ Future<void> _addEntryToCollection(
   );
   if (!context.mounted) return;
   showLibraryMessage(context, report.sentence ?? 'Added to “${choice.name}”.');
+}
+
+/// Choose what entries of this Collection are normally saved as.
+///
+/// Four answers, and the fourth is a real one: **Ask each time** clears the
+/// preference and goes back to letting the page propose. There is no "safest"
+/// capture mode — each produces a different artifact — so *no answer* has to
+/// stay expressible.
+///
+/// What is chosen here proposes; the page still disposes. A collection kept as
+/// images asks again on an entry that has none, and this preference is
+/// untouched by that: it was an answer about the work.
+Future<void> showCaptureModePreference(
+  BuildContext context,
+  WidgetRef ref,
+  CollectionView view,
+) async {
+  final preferences = ref.read(capturePreferenceProvider);
+  final current = await preferences.of(view.collection.id);
+  if (!context.mounted) return;
+
+  final chosen = await showModalBottomSheet<_ModeChoice>(
+    context: context,
+    builder: (sheetContext) => SafeArea(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 14, 20, 8),
+            child: Text('What to save', style: serifStyle(size: 20)),
+          ),
+          for (final mode in CaptureMode.values)
+            ListTile(
+              key: ValueKey('collectionCaptureMode_${mode.name}'),
+              leading: Icon(
+                current == mode ? Icons.radio_button_checked : Icons
+                    .radio_button_unchecked,
+              ),
+              title: Text(mode.label),
+              subtitle: Text(mode.description),
+              onTap: () =>
+                  Navigator.of(sheetContext).pop(_ModeChoice.remember(mode)),
+            ),
+          ListTile(
+            key: const ValueKey('collectionCaptureModeAsk'),
+            leading: Icon(
+              current == null
+                  ? Icons.radio_button_checked
+                  : Icons.radio_button_unchecked,
+            ),
+            title: const Text('Ask each time'),
+            subtitle: const Text(
+              'Scrollary proposes what the page itself can offer.',
+            ),
+            onTap: () => Navigator.of(sheetContext).pop(const _ModeChoice.ask()),
+          ),
+          const SizedBox(height: 8),
+        ],
+      ),
+    ),
+  );
+  if (chosen == null || !context.mounted) return;
+
+  final mode = chosen.mode;
+  if (mode == null) {
+    await preferences.forget(view.collection.id);
+    if (!context.mounted) return;
+    showLibraryMessage(context, 'Scrollary will ask each time.');
+    return;
+  }
+  await preferences.remember(view.collection.id, mode);
+  if (!context.mounted) return;
+  showLibraryMessage(context, 'Entries of ${view.name} save as ${mode.label}.');
+}
+
+/// A mode, or the deliberate absence of one.
+class _ModeChoice {
+  const _ModeChoice.remember(CaptureMode this.mode);
+  const _ModeChoice.ask() : mode = null;
+
+  final CaptureMode? mode;
 }
 
 /// Opening at the source is two facts, in this order: the page opens, and the

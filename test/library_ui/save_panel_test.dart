@@ -22,7 +22,9 @@ import 'package:web_reader/features/v2_adoption_providers.dart';
 import 'package:web_reader/features/v2_save_flow.dart';
 import 'package:web_reader/library_ui/providers.dart';
 import 'package:web_reader/providers.dart';
+import 'package:web_reader/data/local_settings.dart';
 import 'package:web_reader/save/capture_mode.dart';
+import 'package:web_reader/save/capture_preference.dart';
 import 'package:web_reader/ui/palette.dart';
 import 'package:web_reader/ui/theme.dart';
 
@@ -72,11 +74,17 @@ void main() {
   late List<_AddCall> adds;
   late List<String> standalones;
 
+  /// What the stand-in domain reports as the Collection the save went to, for
+  /// a call that did not name one. The real orchestration answers this from
+  /// the library; a test that seeds a Collection sets it to that one.
+  late String reportedCollectionId;
+
   setUp(() {
     h = UiHarness();
     browser = FakeBrowser();
     adds = [];
     standalones = [];
+    reportedCollectionId = 'made-up-collection';
   });
   tearDown(() => h.close());
 
@@ -105,7 +113,7 @@ void main() {
     );
     return AddToLibraryReport(
       sentence: 'The domain said what it did.',
-      collectionId: collectionId ?? 'made-up-collection',
+      collectionId: collectionId ?? reportedCollectionId,
       entryId: limits == null ? null : 'made-up-entry',
       queued: limits?.maxEntries ?? 0,
     );
@@ -521,6 +529,115 @@ void main() {
       expect(standalones, [_plainUrl]);
       expect(adds, isEmpty);
       expect(find.text('Saved on its own.'), findsOneWidget);
+    });
+  });
+
+  // ─── the question that was asked every single time ──────────────────────
+
+  group('what this collection is usually saved as', () {
+    // The regression: `CaptureMode` was a queue-row column and nothing else,
+    // so *What to save* was asked on the first entry of a work and on the
+    // five-hundredth, with the same three rows and the same detected default.
+    Future<String> seedKnownEntry() async {
+      final root = await h.root();
+      final collection = await h.collection('Alpha', folderId: root.id);
+      final source = await h.source(collection.id, pathKey: '/works/alpha');
+      final entry = await h.entryIn(
+        collection.id,
+        title: _entryTitle,
+        ordinal: 12,
+      );
+      await h.location(entry.id, _entryUrl, sourceId: source.id);
+      reportedCollectionId = collection.id;
+      return collection.id;
+    }
+
+    screenTest('with nothing remembered the full block is asked', (
+      tester,
+    ) async {
+      await seedKnownEntry();
+      await openPanel(tester, _entryUrl, _entryTitle);
+      await pumpUntil(tester, key('v2DownloadEntry'));
+
+      expect(find.text('What to save'), findsOneWidget);
+      expect(key('captureModeRemembered'), findsNothing);
+    });
+
+    screenTest('a remembered answer stands in for the block', (tester) async {
+      final collectionId = await seedKnownEntry();
+      await CapturePreferenceStore(
+        LocalSettingsStore(h.db),
+      ).remember(collectionId, CaptureMode.imageSequence);
+
+      await openPanel(tester, _entryUrl, _entryTitle);
+      await pumpUntil(tester, key('captureModeRemembered'));
+
+      expect(
+        find.text('What to save'),
+        findsNothing,
+        reason: 'the question has an answer, so it is not asked again',
+      );
+      expect(find.text('Images only'), findsOneWidget);
+
+      // And everything the block says is one tap away.
+      await tapAndPump(tester, key('captureModeChange'));
+      expect(find.text('What to save'), findsOneWidget);
+      expect(key('captureModeRemembered'), findsNothing);
+    });
+
+    screenTest('a page that cannot honour it asks again', (tester) async {
+      final collectionId = await seedKnownEntry();
+      await CapturePreferenceStore(
+        LocalSettingsStore(h.db),
+      ).remember(collectionId, CaptureMode.textOnly);
+
+      await openPanel(tester, _entryUrl, _entryTitle);
+      await pumpUntil(tester, key('v2DownloadEntry'));
+
+      // The probe carries no readable prose, so text-only is blocked here.
+      // The preference proposes; the page disposes — and the preference is
+      // left alone, because it was an answer about the work.
+      expect(key('captureModeRemembered'), findsNothing);
+      expect(find.text('What to save'), findsOneWidget);
+      expect(
+        await CapturePreferenceStore(LocalSettingsStore(h.db)).of(collectionId),
+        CaptureMode.textOnly,
+        reason: 'one page could not honour it; that is not a change of mind',
+      );
+    });
+
+    screenTest('choosing a mode and saving remembers it for that collection', (
+      tester,
+    ) async {
+      final collectionId = await seedKnownEntry();
+      await openPanel(tester, _entryUrl, _entryTitle);
+      await pumpUntil(tester, key('v2DownloadEntry'));
+
+      await tapAndPump(tester, key('captureMode_imageSequence'));
+      await tapAndPump(tester, key('v2DownloadEntry'));
+
+      expect(
+        await CapturePreferenceStore(LocalSettingsStore(h.db)).of(collectionId),
+        CaptureMode.imageSequence,
+      );
+    });
+
+    screenTest('a standalone save redefines no collection', (tester) async {
+      // The rule: an Entry-specific choice must not silently become a
+      // standing instruction about a work it has nothing to do with.
+      final collectionId = await seedKnownEntry();
+      await h.root();
+      await openPanel(tester, _plainUrl, _plainTitle);
+      await pumpUntil(tester, key('v2SaveStandalone'));
+
+      await tapAndPump(tester, key('captureMode_imageSequence'));
+      await tapAndPump(tester, key('v2SaveStandalone'));
+
+      expect(standalones, [_plainUrl]);
+      expect(
+        await CapturePreferenceStore(LocalSettingsStore(h.db)).of(collectionId),
+        isNull,
+      );
     });
   });
 }
