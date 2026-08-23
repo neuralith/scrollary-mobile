@@ -15,6 +15,7 @@ import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:web_reader/core/config.dart';
+import 'package:web_reader/core/url_utils.dart';
 import 'package:web_reader/data/recognition_index.dart';
 import 'package:web_reader/data/schema.dart';
 import 'package:web_reader/domain/collection.dart';
@@ -331,6 +332,134 @@ void main() {
       cancellation.shouldContinue(),
       isTrue,
       reason: 'a new walk does not inherit the last one\'s stop',
+    );
+  });
+
+  testWidgets('a count of N captures N, even where the entries have no '
+      'position', (tester) async {
+    // The regression this pins. A Collection ordered by the site\'s own next
+    // links does not support cross-source merging, so `EntryReconciler`
+    // refuses to place anything the walk reads — every resolved Entry is
+    // `unplaced`, which is a real, addressed, downloadable state. Re-planning
+    // over the library after the walk could not see those Entries at all, so
+    // a count the Source had just satisfied came back with one row queued.
+    final root = await services.folders.ensureRoot();
+    final (collection, _) = await services.collections.create(
+      name: 'Quiet Harbour',
+      folderId: root.id,
+      orderingBasis: OrderingBasis.detectedNextLink,
+    );
+    final keys = RecognitionKeys.of(partUrl(kHostA, 1));
+    final (source, _) = await services.collections.addSource(
+      collectionId: collection!.id,
+      host: keys.host,
+      pathKey: keys.pathKey!,
+    );
+    final (first, _) = await services.entries.createInCollection(
+      collectionId: collection.id,
+      ordinal: 101,
+      title: 'Part 101',
+    );
+    await services.entries.addLocation(
+      entryId: first!.id,
+      url: partUrl(kHostA, 101),
+      urlKey: RecognitionKeys.of(partUrl(kHostA, 101)).urlKey,
+      sourceId: source!.id,
+      sourceNumber: 101,
+    );
+
+    final pages = FakeForwardPages.chain(
+      host: kHostA,
+      parts: [101, 102, 103, 104],
+    );
+    final ref = await refWith(tester, realWalkOver(pages));
+
+    final report = await v2AddAndDownload(
+      ref,
+      url: partUrl(kHostA, 101),
+      pageTitle: 'Part 101',
+      limits: count(3),
+      discoverMissing: true,
+    );
+
+    expect(
+      report.queued,
+      3,
+      reason: 'three captures were asked for and three are queued',
+    );
+    expect(report.shortfall, 0);
+    final rows = await db.select(db.saveQueue).get();
+    expect(rows, hasLength(3));
+    expect(
+      {for (final row in rows) row.locationUrl},
+      {partUrl(kHostA, 101), partUrl(kHostA, 102), partUrl(kHostA, 103)},
+    );
+    // And the Entries the walk wrote are unplaced — the point being that a
+    // position is not what makes an Entry downloadable.
+    final entries = await db.select(db.entries).get();
+    expect(entries, hasLength(3));
+    expect(
+      entries.where((e) => e.ordinal == null),
+      hasLength(2),
+      reason: 'this collection does not number, and nothing invented one',
+    );
+  });
+
+  testWidgets('an entry the walk merged into a placed one is queued once', (
+    tester,
+  ) async {
+    // 102 is already in the library, unaddressed on this Source. The walk
+    // reads it, reconciles onto the Entry that is already there, and the
+    // capture list must not carry it twice.
+    final root = await services.folders.ensureRoot();
+    final (collection, _) = await services.collections.create(
+      name: 'Quiet Harbour',
+      folderId: root.id,
+      orderingBasis: OrderingBasis.explicitNumericIndex,
+    );
+    final keys = RecognitionKeys.of(partUrl(kHostA, 1));
+    final (source, _) = await services.collections.addSource(
+      collectionId: collection!.id,
+      host: keys.host,
+      pathKey: keys.pathKey!,
+    );
+    final (first, _) = await services.entries.createInCollection(
+      collectionId: collection.id,
+      ordinal: 101,
+      title: 'Part 101',
+    );
+    await services.entries.addLocation(
+      entryId: first!.id,
+      url: partUrl(kHostA, 101),
+      urlKey: RecognitionKeys.of(partUrl(kHostA, 101)).urlKey,
+      sourceId: source!.id,
+      sourceNumber: 101,
+    );
+    // Known at 102, with no address on this Source yet.
+    await services.entries.createInCollection(
+      collectionId: collection.id,
+      ordinal: 102,
+      title: 'Part 102',
+    );
+
+    final pages = FakeForwardPages.chain(host: kHostA, parts: [101, 102, 103]);
+    final ref = await refWith(tester, realWalkOver(pages));
+
+    final report = await v2AddAndDownload(
+      ref,
+      url: partUrl(kHostA, 101),
+      pageTitle: 'Part 101',
+      limits: count(3),
+      discoverMissing: true,
+    );
+
+    expect(report.queued, 3);
+    final rows = await db.select(db.saveQueue).get();
+    expect(rows, hasLength(3));
+    expect(
+      {for (final row in rows) row.entryId},
+      hasLength(3),
+      reason: 'one row per entry — a merge is not a second target',
     );
   });
 }

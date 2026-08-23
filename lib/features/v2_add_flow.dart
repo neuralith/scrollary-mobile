@@ -347,9 +347,10 @@ class _Queueing {
 /// is planned against **first**, opening nothing — so a request the library
 /// can already answer in full never drives a browser. Only what is missing
 /// after that is walked for, and only when the caller asked
-/// ([discoverMissing]). The walk resolves identity and writes library rows;
-/// the plan is then rebuilt over what it found and queued through the same
-/// enqueue as everything else.
+/// ([discoverMissing]). The walk resolves identity and writes library rows,
+/// and **what it resolved is what gets queued** — the Entries it names, not a
+/// second plan derived from the library afterwards, which cannot see an Entry
+/// the Source left unnumbered.
 Future<_Queueing> _queue(
   WidgetRef ref, {
   required String startEntryId,
@@ -367,7 +368,7 @@ Future<_Queueing> _queue(
     preferSourceId: preferSourceId,
   );
 
-  var plan = await planNow();
+  final plan = await planNow();
 
   // *Download the next N from here.* The count is a claim about the Source,
   // so the ones the library cannot name are read forward on the site the user
@@ -392,14 +393,40 @@ Future<_Queueing> _queue(
       // stops saying a site is being read.
       cancellation.finish();
     }
-    // Everything the walk resolved is in the library now, however it ended.
-    if (walk.resolved > 0) plan = await planNow();
+  }
+
+  // What will actually be captured, in the order it was decided: the library's
+  // own plan, then the Entries the walk resolved beyond it.
+  //
+  // **The walk's answer is used as it stands, not re-derived.** Re-planning
+  // over the library after a walk looks equivalent and is not: the planner
+  // takes a Collection's rows in ordinal order from the starting Entry, and a
+  // page that printed no number reconciles to an Entry with no ordinal
+  // (`EntryReconciler`). Those Entries are real, addressed and downloadable —
+  // position is organisation, not permission — but a plan cannot see them, so
+  // the count that had just been satisfied on the Source came back short or
+  // empty. A `WalkedEntry` already names the Entry and the Location; that is
+  // the target, and nothing about it has to be looked up again.
+  final targets = <({String entryId, String locationId, String url})>[];
+  final seen = <String>{};
+  void want(String entryId, String locationId, String url) {
+    if (seen.add(entryId)) {
+      targets.add((entryId: entryId, locationId: locationId, url: url));
+    }
+  }
+
+  for (final save in plan.saves) {
+    want(save.entryId, save.locationId, save.url);
+  }
+  for (final entry in walk?.entries ?? const <WalkedEntry>[]) {
+    if (targets.length >= limits.maxEntries) break;
+    want(entry.entryId, entry.locationId, entry.url);
   }
 
   var queued = 0;
   var waiting = 0;
   String? refusal;
-  for (final save in plan.saves) {
+  for (final save in targets) {
     final result = await queue.enqueue(
       entryId: save.entryId,
       locationId: save.locationId,
