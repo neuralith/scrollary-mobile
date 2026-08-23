@@ -216,6 +216,13 @@ Future<void> startQueuedDownloads(
   BuildContext context,
   WidgetRef ref, {
   String? firstTaskId,
+
+  /// Where the user already said they would wait, when the flow that got here
+  /// asked. Null means nobody has asked yet, and the starter asks — which is
+  /// right for Activity, for a row's own menu and for the sheet's Start
+  /// button, where this *is* the question. It is not right after a launch
+  /// that has just been chosen, and asking again there was the second modal.
+  StartWhere? decided,
 }) async {
   final queue = ref.read(saveQueueRepoProvider);
   final starter = ref.read(saveQueueStarterProvider);
@@ -243,7 +250,7 @@ Future<void> startQueuedDownloads(
     context,
     'Starting ${waiting.length} download${waiting.length == 1 ? '' : 's'}.',
   );
-  await starter();
+  await starter(decided: decided);
 }
 
 // ─── stopping ───────────────────────────────────────────────────────────────

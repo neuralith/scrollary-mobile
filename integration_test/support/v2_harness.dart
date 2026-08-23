@@ -373,7 +373,7 @@ class V2App {
             (url) async => v2.openSource?.call(url),
           ),
           libui.saveQueueStarterProvider.overrideWithValue(
-            () async => v2.startQueue?.call(),
+            ({decided}) async => v2.startQueue?.call(decided: decided),
           ),
           libui.collectionCheckerProvider.overrideWithValue(
             (id, name) async => v2.checkCollection?.call(id, name),

@@ -18,7 +18,6 @@ import '../recognition/history.dart';
 import '../recognition/page_kind.dart';
 import '../recognition/recognise.dart';
 import '../recognition/reconcile.dart';
-import '../recognition/walk.dart';
 import '../save/capture_mode.dart';
 import '../save/capture_policy.dart';
 import '../save/entry_capture.dart';
@@ -664,7 +663,7 @@ class _V2SavePanelState extends ConsumerState<V2SavePanel> {
   /// asked for that in the same tap.
   Future<AddToLibraryReport?> _run(
     Future<AddToLibraryReport> Function() call, {
-    bool startNow = false,
+    SaveStartMode start = SaveStartMode.queueOnly,
     bool readsForward = false,
   }) async {
     setState(() {
@@ -680,9 +679,11 @@ class _V2SavePanelState extends ConsumerState<V2SavePanel> {
     });
     // The explicit Start, and the only one: `startQueuedDownloads` authorises
     // the waiting rows and hands them to whatever runs them. Nothing about
-    // queueing implies it.
-    if (startNow && report.queued > 0) {
-      await startQueuedDownloads(context, ref);
+    // queueing implies it — and the launch the user already chose travels
+    // with it, so nothing asks them a second time where they would like to
+    // wait.
+    if (start.starts && report.queued > 0) {
+      await startQueuedDownloads(context, ref, decided: start.where);
     }
     if (!mounted) return report;
     await _rememberMode(report.collectionId ?? _preferenceCollectionId);
@@ -707,7 +708,7 @@ class _V2SavePanelState extends ConsumerState<V2SavePanel> {
 
   Future<void> _download({
     required SaveLimits limits,
-    bool startNow = false,
+    SaveStartMode start = SaveStartMode.queueOnly,
     bool discoverMissing = false,
   }) {
     return _run(
@@ -720,7 +721,7 @@ class _V2SavePanelState extends ConsumerState<V2SavePanel> {
         captureMode: _mode,
         captureModeIsUserSet: _modeIsUserSet,
       ),
-      startNow: startNow,
+      start: start,
       readsForward: discoverMissing,
     );
   }
@@ -736,58 +737,86 @@ class _V2SavePanelState extends ConsumerState<V2SavePanel> {
       context,
       collectionName: collectionName,
       alreadyDownloadedBytes: costs,
+      launchActions: _launchActions,
     );
     if (scope == null || !mounted) return;
-    if (!await _authoriseReadingForward(scope)) return;
+    _prepareLaunch(scope);
     await _download(
       limits: scope.limits,
-      startNow: scope.startNow,
+      start: scope.start,
       discoverMissing: scope.discoverMissing,
     );
   }
 
-  /// A run that may open pages asks the same question the check asks.
+  /// The launch row the scope sheet draws — **the whole of the start
+  /// decision, asked once**.
   ///
-  /// **Why it is asked before the run rather than at the first page.** Whether
-  /// anything has to be opened is what the walk finds out; a sheet that
-  /// appeared once a gap was found would be asking permission after the app
-  /// had already gone to the site. So the question is asked whenever the
-  /// answer *could* involve opening one: the count is a claim about the Source
-  /// and it is more than the page in front of the user. A count of one opens
-  /// nothing and is never gated, and neither is the quieter range, which reads
-  /// the library and stops.
+  /// **Why it lives here and not in the sheet.** Where the user waits is the
+  /// one thing the foreground boundary owns (CLAUDE.md, "Free and Pro"), and
+  /// `library_ui/` may not reach it. So the sheet that asks *how many* is
+  /// handed these rows and asks *how many and what happens next* in one
+  /// breath, and the queue's own Start is told the answer rather than asking
+  /// for it again.
   ///
-  /// The gate decides **where the user waits**, never whether the work
-  /// happens: backing out of the sheet starts nothing and changes nothing, and
-  /// this file asks no question of its own about what a person may do — it
-  /// reuses the one sheet that asks, exactly as `startCollectionCheck` does.
-  Future<bool> _authoriseReadingForward(SaveScopeChoice scope) async {
-    final wanted = scope.limits.maxEntries;
-    if (!scope.discoverMissing || wanted <= 1) return true;
-    final choice = await showStartOptionsSheet(
-      context: context,
-      ref: ref,
-      action: ForegroundGateAction.startEntrySave,
-      title: 'Download $wanted entries from here?',
-      summary:
-          'Scrollary downloads up to $wanted entries, from this page onward — '
-          'counting this one. For any your library does not have yet, it '
-          'opens this site in the Browser and reads forward to find them, at '
-          'most $kMaxWalkPages pages. Nothing else is downloaded, and you can '
-          'stop it at any point.',
+  /// What this replaces: a *Start now* button in the sheet, a gate sheet
+  /// before the run asking where to wait, and a second gate sheet from the
+  /// Start afterwards asking the same thing. Three questions about one
+  /// decision, and one combination of them — *Add to queue*, then *Start in
+  /// Browser* — started nothing at all while showing the user the Browser.
+  ///
+  /// The gate decides where the user waits, never whether the work happens:
+  /// dismissing the sheet starts nothing and changes nothing, and *Queue only*
+  /// is a full answer that needs no capability.
+  Widget _launchActions(
+    BuildContext sheetContext,
+    void Function(SaveStartMode) submit,
+  ) {
+    final gate = ref.read(foregroundMultitaskingProvider).startGate;
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        ForegroundStartActions(
+          gate: gate,
+          action: ForegroundGateAction.startEntrySave,
+          inBrowserLabel: 'Start now',
+          keepUsingAppLabel: 'Start and keep using Scrollary',
+          onChoice: (choice) async {
+            if (choice == StartChoice.enableAndKeepUsingApp) {
+              await setKeepWorkingPreference(ref, true);
+            }
+            submit(switch (choice) {
+              StartChoice.inBrowser => SaveStartMode.startNow,
+              StartChoice.keepUsingApp ||
+              StartChoice.enableAndKeepUsingApp => SaveStartMode.keepWorking,
+            });
+          },
+        ),
+        const SizedBox(height: 8),
+        OutlinedButton(
+          key: const ValueKey('saveScopeAddToQueue'),
+          onPressed: () => submit(SaveStartMode.queueOnly),
+          child: const Text(
+            'Queue only',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+        ),
+      ],
     );
-    if (choice == null || !mounted) return false;
-    if (choice == StartChoice.enableAndKeepUsingApp) {
-      await setKeepWorkingPreference(ref, true);
-      if (!mounted) return false;
+  }
+
+  /// Browser first, automation second — the order `startCollectionCheck`
+  /// starts in, and for its reason: the surface has to be there before
+  /// anything opens a page on it.
+  ///
+  /// Only the tab, and only for the launch that means *watch it happen*.
+  /// Whether anything is authorised at all is [SaveScopeChoice.start]'s, and
+  /// it is answered where the user answered it.
+  void _prepareLaunch(SaveScopeChoice scope) {
+    if (scope.start == SaveStartMode.startNow) {
+      ref.read(shellTabRequestProvider).value = kBrowserTabIndex;
     }
-    // Browser first, automation second — the order `startCollectionCheck`
-    // starts in, and for its reason: the surface has to be there before
-    // anything opens a page on it.
-    if (choice == StartChoice.inBrowser) {
-      ref.read(shellTabRequestProvider).value = 1;
-    }
-    return true;
   }
 
   /// Add this page to a Collection that already holds it as a Source.
@@ -804,9 +833,10 @@ class _V2SavePanelState extends ConsumerState<V2SavePanel> {
         context,
         collectionName: collectionName,
         alreadyDownloadedBytes: costs,
+        launchActions: _launchActions,
       );
       if (scope == null || !mounted) return;
-      if (!await _authoriseReadingForward(scope)) return;
+      _prepareLaunch(scope);
     }
     final discoverMissing = scope?.discoverMissing ?? false;
     await _run(
@@ -820,7 +850,7 @@ class _V2SavePanelState extends ConsumerState<V2SavePanel> {
         captureMode: _mode,
         captureModeIsUserSet: _modeIsUserSet,
       ),
-      startNow: scope?.startNow ?? false,
+      start: scope?.start ?? SaveStartMode.queueOnly,
       readsForward: discoverMissing,
     );
   }
@@ -854,9 +884,10 @@ class _V2SavePanelState extends ConsumerState<V2SavePanel> {
         context,
         collectionName: name,
         alreadyDownloadedBytes: costs,
+        launchActions: _launchActions,
       );
       if (scope == null || !mounted) return;
-      if (!await _authoriseReadingForward(scope)) return;
+      _prepareLaunch(scope);
     }
     final discoverMissing = scope?.discoverMissing ?? false;
 
@@ -884,7 +915,7 @@ class _V2SavePanelState extends ConsumerState<V2SavePanel> {
         captureMode: _mode,
         captureModeIsUserSet: _modeIsUserSet,
       ),
-      startNow: scope?.startNow ?? false,
+      start: scope?.start ?? SaveStartMode.queueOnly,
       readsForward: discoverMissing,
     );
 

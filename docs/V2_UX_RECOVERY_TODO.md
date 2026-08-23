@@ -16,9 +16,9 @@ tests it.
 | 3 | Entry number and title read from page evidence | DONE |
 | 4 | Reading progress: Source and OfflineCopy | DONE |
 | 5 | The Collection remembers what to capture | DONE |
-| 6 | Queue only / Start now / Start in background | TODO |
+| 6 | Queue only / Start now / Start in background | DONE |
 | 7 | Queued work is visible and startable without scrolling | TODO |
-| 8 | Each decision asked once | TODO |
+| 8 | Each decision asked once | DONE |
 | 9 | Tests that drive the journey, not the widget | TODO |
 | 10 | The routine flow stays short | TODO |
 

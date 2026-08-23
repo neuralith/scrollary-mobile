@@ -196,7 +196,7 @@ void main() {
           locationUrl: _entryUrl,
         );
       }
-      return entry.id;
+      return collection.id;
     }
 
     screenTest('a walk in flight is stopped from the sheet that started it', (
@@ -262,9 +262,14 @@ void main() {
       expect(find.text('The domain said what it did.'), findsOneWidget);
     });
 
-    screenTest('the count sheet carries the number onto the call', (
-      tester,
-    ) async {
+    // *How many* and *what happens next* are one sheet and one answer. What
+    // these three replace: a *Start now* button here, a gate sheet before the
+    // run asking where to wait, and the queue's own gate sheet afterwards
+    // asking it again — three questions about one decision, and one route
+    // through them (*Add to queue*, then *Start in Browser*) that showed the
+    // user the Browser and started nothing.
+    screenTest('the count sheet carries the number onto the call, and asks '
+        'nothing else', (tester) async {
       await seed();
       await openPanel(tester, _entryUrl, _entryTitle);
       await pumpUntil(tester, key('v2DownloadEntries'));
@@ -272,14 +277,10 @@ void main() {
       await tapAndPump(tester, key('v2DownloadEntries'));
       await tapAndPump(tester, key('saveScopeFromHere'));
       await tester.enterText(key('saveCountField'), '5');
+      // The launch rows are in this sheet: the foreground boundary's own,
+      // beside a *Queue only* that needs no capability at all.
+      expect(key('startInBrowser'), findsOneWidget);
       await tapAndPump(tester, key('saveScopeAddToQueue'));
-
-      // A count taken from the Source may have to open a page, so the panel
-      // asks where the user waits before anything starts — the check's sheet,
-      // not a second one.
-      await pumpUntil(tester, key('startInBrowser'));
-      expect(adds, isEmpty, reason: 'nothing runs until that is answered');
-      await tapAndPump(tester, key('startInBrowser'));
 
       expect(adds, hasLength(1));
       expect(adds.single.limits!.maxEntries, 5);
@@ -288,9 +289,55 @@ void main() {
         isTrue,
         reason: 'the typed count is a claim about the Source',
       );
+      expect(
+        key('startOptionsCancel'),
+        findsNothing,
+        reason: 'the launch was chosen; there is no second question',
+      );
+      expect(h.starts, 0, reason: 'Queue only starts nothing');
     });
 
-    screenTest('backing out of that question starts nothing at all', (
+    screenTest('Start now actually starts', (tester) async {
+      final collectionId = await seed();
+      // A row already waiting, for an Entry that is not this page: the Start
+      // this launch authorises is the queue's, and the queue has to have
+      // something in it for "it started" to mean anything.
+      final other = await h.entryIn(
+        collectionId,
+        title: 'Alpha 13',
+        ordinal: 13,
+      );
+      final otherUrl = 'https://reading.example.com/works/alpha/13';
+      final source = await h.source(collectionId, pathKey: '/works/alpha-2');
+      final otherLocation = await h.location(
+        other.id,
+        otherUrl,
+        sourceId: source.id,
+      );
+      await h.queue.enqueue(
+        entryId: other.id,
+        locationId: otherLocation.id,
+        locationUrl: otherUrl,
+      );
+
+      await openPanel(tester, _entryUrl, _entryTitle);
+      await pumpUntil(tester, key('v2DownloadEntries'));
+
+      await tapAndPump(tester, key('v2DownloadEntries'));
+      await tapAndPump(tester, key('saveScopeFromHere'));
+      await tester.enterText(key('saveCountField'), '3');
+      await tapAndPump(tester, key('startInBrowser'));
+
+      expect(adds, hasLength(1));
+      expect(
+        key('startOptionsCancel'),
+        findsNothing,
+        reason: 'asking again where to wait is the modal this removes',
+      );
+      expect(h.starts, 1, reason: 'Start now means it started');
+    });
+
+    screenTest('backing out of the sheet starts nothing at all', (
       tester,
     ) async {
       await seed();
@@ -300,11 +347,10 @@ void main() {
       await tapAndPump(tester, key('v2DownloadEntries'));
       await tapAndPump(tester, key('saveScopeFromHere'));
       await tester.enterText(key('saveCountField'), '4');
-      await tapAndPump(tester, key('saveScopeAddToQueue'));
-      await pumpUntil(tester, key('startOptionsCancel'));
-      await tapAndPump(tester, key('startOptionsCancel'));
+      await tapAndPump(tester, key('saveScopeCancel'));
 
       expect(adds, isEmpty);
+      expect(h.starts, 0);
     });
 
     screenTest('the quieter range opens nothing, so it is never gated', (

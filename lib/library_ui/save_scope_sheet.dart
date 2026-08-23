@@ -33,16 +33,45 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../core/config.dart';
+import 'providers.dart' show StartWhere;
 import '../features/storage_screen.dart' show formatBytes;
+import '../recognition/walk.dart' show kMaxWalkPages;
 import '../save/size_estimate.dart';
 import '../ui/palette.dart';
 import '../ui/status_style.dart';
 
-/// The range the user chose, and whether they asked for it to start.
+/// What the user asked to happen once the rows are added.
+///
+/// Three answers, and each one is unambiguous about *what happens next*. The
+/// pair they replace — a *Start now* button here and a separate sheet
+/// afterwards asking where to wait — meant a user could choose *Add to queue*,
+/// then choose *Start in Browser*, and have nothing start.
+enum SaveStartMode {
+  /// Add the work. Start nothing. The rows wait, as they do by default.
+  queueOnly,
+
+  /// Add it and start, with the Browser in front of the user.
+  startNow,
+
+  /// Add it and start, leaving the user where they are.
+  keepWorking;
+
+  bool get starts => this != SaveStartMode.queueOnly;
+
+  /// The same answer in the vocabulary a Start is handed. Null for a launch
+  /// that starts nothing and has nowhere to say.
+  StartWhere? get where => switch (this) {
+    SaveStartMode.queueOnly => null,
+    SaveStartMode.startNow => StartWhere.inBrowser,
+    SaveStartMode.keepWorking => StartWhere.keepWorking,
+  };
+}
+
+/// The range the user chose, and what they asked to happen with it.
 class SaveScopeChoice {
   const SaveScopeChoice({
     required this.limits,
-    required this.startNow,
+    required this.start,
     this.discoverMissing = false,
   });
 
@@ -50,9 +79,12 @@ class SaveScopeChoice {
   /// representation of an unbounded run in this file.
   final SaveLimits limits;
 
-  /// True for *Start now*: authorise the waiting queue as well as adding to
-  /// it. False leaves the rows waiting, which is what they do by default.
-  final bool startNow;
+  /// Queue only, start now, or start and keep working. Whatever it says is
+  /// what happens — this is the whole of the launch decision, taken once.
+  final SaveStartMode start;
+
+  /// Whether anything is started at all.
+  bool get startNow => start.starts;
 
   /// True when the count is a claim about the **Source** rather than about
   /// the library: if the later Entries are not known yet, read forward on
@@ -67,11 +99,18 @@ class SaveScopeChoice {
 /// Ask how much of [collectionName] to download, starting from this page.
 ///
 /// Returns null when the sheet was dismissed — nothing chosen, nothing queued.
+/// [launchActions] supplies the launch row, so the surface that owns the
+/// foreground boundary can offer *its* rows here rather than in a second sheet
+/// afterwards. It is handed a callback that validates the typed count and pops
+/// with the chosen mode; it must not pop the sheet itself. Null falls back to
+/// the two launches this lane can describe on its own, which is what a test
+/// with no such surface around it sees.
 Future<SaveScopeChoice?> showSaveScopeSheet(
   BuildContext context, {
   required String collectionName,
   int initialCount = 2,
   List<int> alreadyDownloadedBytes = const [],
+  Widget Function(BuildContext, void Function(SaveStartMode))? launchActions,
 }) {
   return showModalBottomSheet<SaveScopeChoice>(
     context: context,
@@ -80,6 +119,7 @@ Future<SaveScopeChoice?> showSaveScopeSheet(
       collectionName: collectionName,
       initialCount: initialCount,
       alreadyDownloadedBytes: alreadyDownloadedBytes,
+      launchActions: launchActions,
     ),
   );
 }
@@ -89,10 +129,15 @@ class _SaveScopeSheet extends StatefulWidget {
     required this.collectionName,
     required this.initialCount,
     this.alreadyDownloadedBytes = const [],
+    this.launchActions,
   });
 
   final String collectionName;
   final int initialCount;
+
+  /// The launch row, when a caller owns one. See [showSaveScopeSheet].
+  final Widget Function(BuildContext, void Function(SaveStartMode))?
+  launchActions;
 
   /// What entries of this collection have already cost on this device. The
   /// only input the estimate has, and empty is an honest state.
@@ -218,7 +263,7 @@ class _SaveScopeSheetState extends State<_SaveScopeSheet> {
     _countFocus.unfocus();
   }
 
-  void _submit({required bool startNow}) {
+  void _submit(SaveStartMode start) {
     if (_busy) return;
     final count = _validated();
     if (count == null) return;
@@ -228,7 +273,7 @@ class _SaveScopeSheetState extends State<_SaveScopeSheet> {
         // The only way a limit is built, here as everywhere: it clamps the
         // number to the same ceiling the sentence above states.
         limits: SaveLimits.forScope(_scope, requestedCount: count),
-        startNow: startNow,
+        start: start,
         // *This entry* is the page already in front of the user: there is
         // nothing after it to look for, so it never asks a site for anything.
         discoverMissing: _scope == SaveScope.fixedCount && _discoverMissing,
@@ -377,9 +422,10 @@ class _SaveScopeSheetState extends State<_SaveScopeSheet> {
                             ? '5 means this entry and the next four. If your '
                                   'library does not have the later ones yet, '
                                   'Scrollary opens this site and reads '
-                                  'forward from this page to find them. '
-                                  'Nothing else is downloaded, and you can '
-                                  'stop it at any point.'
+                                  'forward from this page to find them, at '
+                                  'most $kMaxWalkPages pages. Nothing else is '
+                                  'downloaded, and you can stop it at any '
+                                  'point.'
                             : '5 means this entry and the next four. Only '
                                   'entries your library already knows are '
                                   'queued, and this site is not opened — if '
@@ -414,37 +460,43 @@ class _SaveScopeSheetState extends State<_SaveScopeSheet> {
                       ),
                     ),
                     const SizedBox(height: 12),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: OutlinedButton(
-                            key: const ValueKey('saveScopeAddToQueue'),
-                            onPressed: _busy
-                                ? null
-                                : () => _submit(startNow: false),
-                            child: const Text(
-                              'Add to queue',
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
+                    // The launch, taken once. The caller's rows when it has
+                    // them — the same rows the foreground boundary offers
+                    // everywhere else — and this lane's two when it does not.
+                    if (widget.launchActions case final build?)
+                      build(context, _busy ? (_) {} : _submit)
+                    else
+                      Row(
+                        children: [
+                          Expanded(
+                            child: OutlinedButton(
+                              key: const ValueKey('saveScopeAddToQueue'),
+                              onPressed: _busy
+                                  ? null
+                                  : () => _submit(SaveStartMode.queueOnly),
+                              child: const Text(
+                                'Queue only',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
                             ),
                           ),
-                        ),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: FilledButton(
-                            key: const ValueKey('saveScopeStartNow'),
-                            onPressed: _busy
-                                ? null
-                                : () => _submit(startNow: true),
-                            child: const Text(
-                              'Start now',
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: FilledButton(
+                              key: const ValueKey('saveScopeStartNow'),
+                              onPressed: _busy
+                                  ? null
+                                  : () => _submit(SaveStartMode.startNow),
+                              child: const Text(
+                                'Start now',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
                             ),
                           ),
-                        ),
-                      ],
-                    ),
+                        ],
+                      ),
                     Align(
                       alignment: Alignment.centerRight,
                       child: TextButton(

@@ -426,7 +426,7 @@ class _ShellState extends ConsumerState<_Shell> {
   /// the work happens: dismissing it, or *Not now*, leaves every row queued
   /// exactly where it was, and the visible-Browser start is fully functional
   /// without Pro.
-  Future<void> _startQueuedDownloads() async {
+  Future<void> _startQueuedDownloads({StartWhere? decided}) async {
     if (!mounted) return;
     final queue = ref.read(saveQueueRepoProvider);
     final waiting = [
@@ -441,18 +441,26 @@ class _ShellState extends ConsumerState<_Shell> {
       return;
     }
 
+    // The user may already have answered this. A save flow that offered the
+    // three launches in the sheet that asked *how many* has taken exactly
+    // this decision, and asking it a second time here was the second modal on
+    // a path that is supposed to have none (docs/V2_SAVE_FLOW.md §4).
     final n = waiting.length;
-    final choice = await showStartOptionsSheet(
-      context: context,
-      ref: ref,
-      action: ForegroundGateAction.startQueuedSaves,
-      title: n == 1
-          ? 'Start the waiting download?'
-          : 'Start $n waiting downloads?',
-      summary:
-          'Each page has to be read in the Browser before its images can be '
-          'downloaded. Nothing runs once you close the app.',
-    );
+    final choice = switch (decided) {
+      StartWhere.inBrowser => StartChoice.inBrowser,
+      StartWhere.keepWorking => StartChoice.keepUsingApp,
+      null => await showStartOptionsSheet(
+        context: context,
+        ref: ref,
+        action: ForegroundGateAction.startQueuedSaves,
+        title: n == 1
+            ? 'Start the waiting download?'
+            : 'Start $n waiting downloads?',
+        summary:
+            'Each page has to be read in the Browser before its images can be '
+            'downloaded. Nothing runs once you close the app.',
+      ),
+    };
     // Dismissed, or *Not now*: nothing was authorised.
     if (choice == null || !mounted) return;
 

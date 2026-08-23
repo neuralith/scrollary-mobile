@@ -120,9 +120,24 @@ final sourceOpenerProvider = Provider<SourceOpener?>((ref) => null);
 /// a save drives the Browser, and nothing in `lib/library_ui/` may. Null means
 /// no runner is attached, and the user is told that rather than being handed a
 /// Start that authorises work nothing will pick up.
-typedef SaveQueueStarter = Future<void> Function();
+typedef SaveQueueStarter = Future<void> Function({StartWhere? decided});
 
 final saveQueueStarterProvider = Provider<SaveQueueStarter?>((ref) => null);
+
+/// Where the user already said they would wait, when they have said.
+///
+/// Passed through a Start so the thing that runs it does not ask a question
+/// the user has just answered. Deliberately in this lane's own words: it says
+/// where the person will be, which is a fact about the flow, and it decides
+/// nothing about what may happen — the surface that owns that boundary reads
+/// this as an answer it already has, and asks for itself when it is null.
+enum StartWhere {
+  /// The Browser comes forward and the run happens in front of the user.
+  inBrowser,
+
+  /// The user stays where they are and the app keeps the page painted.
+  keepWorking,
+}
 
 /// How a placement leaves this device (roadmap D6).
 ///

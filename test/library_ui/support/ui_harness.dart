@@ -66,7 +66,7 @@ class UiHarness {
   /// The runner the Start control hands the queue to. **Set it before calling
   /// [app]** — the override is read when the tree is built. Null stands for a
   /// composition with nothing attached, where a Start authorises nothing.
-  late SaveQueueStarter? starter = () async => starts++;
+  late SaveQueueStarter? starter = ({decided}) async => starts++;
 
   /// Every placement this UI submitted, in order.
   final placements = <PlacementRequest>[];
@@ -246,8 +246,20 @@ class UiHarness {
 
 /// Pump frames until [finder] matches, then stop. 80 × 25ms is far longer than
 /// an in-memory query takes and short enough to fail a hang quickly.
+/// How many frames a wait is given before it is called a failure.
+///
+/// Raised from 80 when a screen's first paint grew another asynchronous read
+/// or two — the Collection list now also asks how far through each Entry the
+/// reading got, and the save sheet asks what its Collection is usually saved
+/// as. Each one is a handful more turns of the loop, and under a full
+/// `flutter test` run's parallelism the old budget occasionally ran out
+/// *before* the query it was waiting for came back, which fails as a product
+/// bug and is not one. Pumps are cheap; a wait that is generous costs a
+/// millisecond and a wait that is tight costs an afternoon.
+const int _pumpBudget = 240;
+
 Future<void> pumpUntil(WidgetTester tester, Finder finder) async {
-  for (var i = 0; i < 80; i++) {
+  for (var i = 0; i < _pumpBudget; i++) {
     await tester.pump(const Duration(milliseconds: 25));
     if (finder.evaluate().isNotEmpty) return;
   }
@@ -270,7 +282,7 @@ Future<void> letFilesSettle(WidgetTester tester) async {
 }
 
 Future<void> pumpUntilGone(WidgetTester tester, Finder finder) async {
-  for (var i = 0; i < 80; i++) {
+  for (var i = 0; i < _pumpBudget; i++) {
     await tester.pump(const Duration(milliseconds: 25));
     if (finder.evaluate().isEmpty) return;
   }

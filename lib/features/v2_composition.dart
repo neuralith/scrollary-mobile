@@ -103,7 +103,10 @@ class V2Services {
   Future<void> Function(String url)? openSource;
 
   /// Set by the shell: ensure the Browser surface, then start the runner.
-  Future<void> Function()? startQueue;
+  ///
+  /// Carries where the user already said they would wait, when the flow that
+  /// asked for the Start had that answer — so the shell does not ask again.
+  Future<void> Function({StartWhere? decided})? startQueue;
 
   /// Set by the shell: ask the foreground gate, then run a Collection check.
   Future<void> Function(String collectionId, String collectionName)?
