@@ -55,6 +55,9 @@ class ReaderScreen extends ConsumerStatefulWidget {
     required this.entryId,
     required this.offline,
     this.collectionId,
+    this.previousEntryId,
+    this.nextEntryId,
+    this.onOpenEntry,
   });
 
   final String entryId;
@@ -68,6 +71,22 @@ class ReaderScreen extends ConsumerStatefulWidget {
   /// or a caller that has no route to go back to — leaves the gesture with
   /// nowhere to land, and it does nothing.
   final String? collectionId;
+
+  /// The entries either side of this one in the Collection's order.
+  ///
+  /// Resolved by the route, for the same reason [collectionId] is: neighbours
+  /// are a fact about a **Collection**, and this screen is handed a package.
+  /// Null at the ends of a Collection, and for a standalone or unplaced Entry
+  /// — which has no neighbours by construction.
+  ///
+  /// A neighbour need not be downloaded. Opening one this device does not hold
+  /// lands on the reader's own not-downloaded state, where downloading and
+  /// opening at the source are already offered.
+  final String? previousEntryId;
+  final String? nextEntryId;
+
+  /// Open another Entry. Null leaves the controls out entirely.
+  final void Function(String entryId)? onOpenEntry;
 
   /// The Entry's package, resolved by the caller, and the session its reading
   /// goes back through (`lib/reading_v2/offline_read.dart`).
@@ -874,6 +893,9 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
               },
             ),
             _ReaderChrome(
+              previousEntryId: widget.previousEntryId,
+              nextEntryId: widget.nextEntryId,
+              onOpenEntry: widget.onOpenEntry,
               visible: _chromeVisible,
               data: data,
               completed: _completed,
@@ -903,6 +925,9 @@ class _ReaderChrome extends StatelessWidget {
     required this.completed,
     required this.position,
     required this.onToggleRead,
+    this.previousEntryId,
+    this.nextEntryId,
+    this.onOpenEntry,
   });
 
   final bool visible;
@@ -910,6 +935,11 @@ class _ReaderChrome extends StatelessWidget {
   final bool completed;
   final ValueListenable<ReadingPosition> position;
   final VoidCallback onToggleRead;
+
+  /// Where the two ends of the bottom bar go. Resolved by the route.
+  final String? previousEntryId;
+  final String? nextEntryId;
+  final void Function(String entryId)? onOpenEntry;
 
   @override
   Widget build(BuildContext context) {
@@ -1026,11 +1056,33 @@ class _ReaderChrome extends StatelessWidget {
                       ),
                     ),
                     const SizedBox(height: 6),
-                    // The percentage, centred and alone. The two entry
-                    // controls that used to flank it were the read side of a
-                    // neighbour list, and neighbours are a fact about a
-                    // Collection rather than about a package on this device.
-                    _ReadingPercent(position: position, completed: completed),
+                    // The percentage, flanked by where you can go. Neighbours
+                    // are a fact about a Collection, so the route resolves
+                    // them and hands them down — this bar only draws them.
+                    Row(
+                      children: [
+                        _NeighbourButton(
+                          key: const ValueKey('readerPreviousEntry'),
+                          icon: Icons.chevron_left,
+                          tooltip: 'Previous entry',
+                          entryId: previousEntryId,
+                          onOpen: onOpenEntry,
+                        ),
+                        Expanded(
+                          child: _ReadingPercent(
+                            position: position,
+                            completed: completed,
+                          ),
+                        ),
+                        _NeighbourButton(
+                          key: const ValueKey('readerNextEntry'),
+                          icon: Icons.chevron_right,
+                          tooltip: 'Next entry',
+                          entryId: nextEntryId,
+                          onOpen: onOpenEntry,
+                        ),
+                      ],
+                    ),
                   ],
                 ),
               ),
@@ -1498,3 +1550,43 @@ class _ReaderData {
 /// Re-exported so the reader route can resolve files without importing
 /// `file_store.dart` in the router.
 typedef ReaderFileStore = FileStore;
+
+/// One end of the bottom bar: the entry before this one, or the one after.
+///
+/// Takes the same width whether or not there is somewhere to go, so the
+/// percentage between them does not shift as the reader moves through a
+/// collection. Disabled at the ends rather than absent, which is the honest
+/// shape: there *is* no next entry, and a control that vanished would read as
+/// something having gone wrong.
+class _NeighbourButton extends StatelessWidget {
+  const _NeighbourButton({
+    super.key,
+    required this.icon,
+    required this.tooltip,
+    required this.entryId,
+    required this.onOpen,
+  });
+
+  final IconData icon;
+  final String tooltip;
+  final String? entryId;
+  final void Function(String entryId)? onOpen;
+
+  @override
+  Widget build(BuildContext context) {
+    final id = entryId;
+    final open = onOpen;
+    final enabled = id != null && open != null;
+    return SizedBox(
+      width: 44,
+      child: IconButton(
+        tooltip: enabled ? tooltip : null,
+        icon: Icon(
+          icon,
+          color: enabled ? ReaderColors.accent : ReaderColors.track,
+        ),
+        onPressed: enabled ? () => open(id) : null,
+      ),
+    );
+  }
+}
