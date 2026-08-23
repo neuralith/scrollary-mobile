@@ -30,7 +30,6 @@ import '../ui/theme.dart';
 import 'collection_actions.dart';
 import 'collection_models.dart';
 import 'continue_reading_strip.dart';
-import 'collection_screen.dart';
 import 'entry_offline.dart';
 import 'folder_actions.dart';
 import 'folder_models.dart';
@@ -384,11 +383,16 @@ class _CollectionRow extends StatelessWidget {
     final palette = AppPalette.of(context);
     return InkWell(
       key: ValueKey('collectionRow-${collection.id}'),
-      onTap: () => Navigator.of(context).push(
-        MaterialPageRoute<void>(
-          builder: (_) => CollectionScreen(collectionId: collection.id),
-        ),
-      ),
+      // Through the router, like every other screen above the shell. A raw
+      // `MaterialPageRoute` was the app's only one, and it costs two things
+      // the rest of the app relies on: the route is opaque, so the shell
+      // beneath stops being painted — which is the whole foreground
+      // -multitasking mechanism (`ui/app_page.dart`) — and the router's own
+      // match count stays at 1, so the app reports a painted surface while an
+      // opaque route covers it. A check started from here then drove an
+      // uncomposited WebView.
+      onTap: () =>
+          LeaveBrowserGuard.push(context, '/collection/${collection.id}'),
       child: Padding(
         padding: EdgeInsets.fromLTRB(16 + _indent(depth), 13, 16, 14),
         child: Row(

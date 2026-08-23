@@ -64,6 +64,42 @@ List<String> routesBypassingThePageHelper(String source) {
 }
 
 void main() {
+  test('no screen is pushed outside the router', () {
+    // The audit found the app's only raw `MaterialPageRoute` — the Collection
+    // row. It costs two things: the route is opaque, so the shell beneath
+    // stops being painted, which is the whole foreground-multitasking
+    // mechanism; and the router's match count stays at 1, so the app reports a
+    // painted surface while an opaque route covers it. A check started from
+    // that screen then drove an uncomposited WebView.
+    //
+    // This scan is deliberately over `lib/` rather than over the GoRouter
+    // block: an imperative push is invisible to a test that parses the route
+    // table, which is exactly why the last one survived.
+    final offences = <String>[];
+    for (final file in Directory('lib').listSync(recursive: true)) {
+      if (file is! File || !file.path.endsWith('.dart')) continue;
+      final lines = file.readAsStringSync().split('\n');
+      for (var i = 0; i < lines.length; i++) {
+        final line = lines[i];
+        // Code, not prose: the comment explaining why this rule exists names
+        // the thing it forbids.
+        if (line.trimLeft().startsWith('//')) continue;
+        if (line.contains('MaterialPageRoute')) {
+          offences.add('${file.path}:${i + 1}');
+        }
+      }
+    }
+
+    expect(
+      offences,
+      isEmpty,
+      reason:
+          'push through the router (`context.push` / `LeaveBrowserGuard.push`) '
+          'so the screen is an AppPage and the shell below it keeps painting:\n'
+          '${offences.join('\n')}',
+    );
+  });
+
   test('the guard actually catches a bypassing route', () {
     // A route written the ordinary go_router way — which is exactly the mistake
     // a future contributor will make, because it is what every example shows.
