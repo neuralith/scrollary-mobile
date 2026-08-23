@@ -548,6 +548,23 @@ class _V2SavePanelState extends ConsumerState<V2SavePanel> {
     });
   }
 
+  /// What entries of [collectionId] have already cost on this device.
+  ///
+  /// The estimate's only input. Empty is the honest answer for a Collection
+  /// nothing has been downloaded from, and the sheet then says nothing about
+  /// size rather than inventing a figure.
+  Future<List<int>> _downloadedBytesOf(String? collectionId) async {
+    if (collectionId == null) return const [];
+    final services = ref.read(libraryUiServicesProvider);
+    final entries = await services.entries.entriesOf(collectionId);
+    final held = <int>[];
+    for (final entry in entries) {
+      final copy = await services.offline.activeCopyOf(entry.id);
+      if (copy != null && copy.byteSize > 0) held.add(copy.byteSize);
+    }
+    return held;
+  }
+
   /// The title to suggest for a Collection: what the page named the work,
   /// falling back to the page's own title. A suggestion, never a match key —
   /// it pre-fills a field and filters a list, and selects nothing.
@@ -621,9 +638,15 @@ class _V2SavePanelState extends ConsumerState<V2SavePanel> {
 
   /// *Download entries…* — the count, then the rows.
   Future<void> _downloadRange(String collectionName) async {
+    final result = _status?.result;
+    final costs = await _downloadedBytesOf(
+      result is RecognisedLocation ? result.collection?.id : null,
+    );
+    if (!mounted) return;
     final scope = await showSaveScopeSheet(
       context,
       collectionName: collectionName,
+      alreadyDownloadedBytes: costs,
     );
     if (scope == null || !mounted) return;
     if (!await _authoriseReadingForward(scope)) return;
@@ -686,7 +709,13 @@ class _V2SavePanelState extends ConsumerState<V2SavePanel> {
   }) async {
     SaveScopeChoice? scope;
     if (askHowMany) {
-      scope = await showSaveScopeSheet(context, collectionName: collectionName);
+      final costs = await _downloadedBytesOf(collectionId);
+      if (!mounted) return;
+      scope = await showSaveScopeSheet(
+        context,
+        collectionName: collectionName,
+        alreadyDownloadedBytes: costs,
+      );
       if (scope == null || !mounted) return;
       if (!await _authoriseReadingForward(scope)) return;
     }
@@ -727,7 +756,16 @@ class _V2SavePanelState extends ConsumerState<V2SavePanel> {
 
     SaveScopeChoice? scope;
     if (!indexOnly) {
-      scope = await showSaveScopeSheet(context, collectionName: name);
+      final costs = await _downloadedBytesOf(switch (choice) {
+        ExistingCollectionChoice(:final id) => id,
+        NewCollectionChoice() => null,
+      });
+      if (!mounted) return;
+      scope = await showSaveScopeSheet(
+        context,
+        collectionName: name,
+        alreadyDownloadedBytes: costs,
+      );
       if (scope == null || !mounted) return;
       if (!await _authoriseReadingForward(scope)) return;
     }
@@ -867,11 +905,7 @@ class _V2SavePanelState extends ConsumerState<V2SavePanel> {
               : 'Downloading now.',
         ),
       if (_readingForward) ...[
-        _note(
-          palette,
-          'Reading this site forward from this page to find the entries you '
-          'asked for. Nothing else is downloaded.',
-        ),
+        _note(palette, 'Reading this site forward to find the entries…'),
         const SizedBox(height: 8),
         // The Stop belongs *here*, not only on the panel underneath. The panel
         // is docked at the bottom of the Browser — which is exactly where this
@@ -884,11 +918,7 @@ class _V2SavePanelState extends ConsumerState<V2SavePanel> {
           icon: const Icon(Icons.stop_circle_outlined, size: 18),
           label: const Text('Stop finding entries'),
         ),
-        _note(
-          palette,
-          'Stops at the next page. Entries already found stay in your '
-          'library.',
-        ),
+        _note(palette, 'Stops at the next page. What it found is kept.'),
       ],
       if (_message != null) _note(palette, _message!),
       const SizedBox(height: 12),
@@ -966,13 +996,9 @@ class _V2SavePanelState extends ConsumerState<V2SavePanel> {
 
   /// What the page said about itself — never what it is going to become.
   String _shapeSentence() => switch (_shape?.kind ?? PageKind.unknownPage) {
-    PageKind.entryPage =>
-      'This page looks like one entry of a collection, so it is not saved on '
-          'its own unless you say so.',
-    PageKind.collectionIndex =>
-      'This page looks like a collection\'s own listing.',
-    PageKind.unknownPage =>
-      'Scrollary could not tell what this page is, so it is asking.',
+    PageKind.entryPage => 'Looks like one entry of a collection.',
+    PageKind.collectionIndex => 'Looks like a collection\'s own listing.',
+    PageKind.unknownPage => 'Scrollary could not tell what this page is.',
   };
 
   // ─── the matrix ───────────────────────────────────────────────────────────
@@ -1015,11 +1041,7 @@ class _V2SavePanelState extends ConsumerState<V2SavePanel> {
     // Entry for it would invent one the site never published.
     if (shape == PageKind.collectionIndex) {
       return [
-        _note(
-          palette,
-          'This is this collection\'s listing, so there is no entry here to '
-          'add. Checking it is how its entries are found.',
-        ),
+        _note(palette, 'The listing — check it to find new entries.'),
         const SizedBox(height: 4),
         FilledButton(
           key: const ValueKey('v2CheckCollection'),
@@ -1107,12 +1129,7 @@ class _V2SavePanelState extends ConsumerState<V2SavePanel> {
             child: const Text('Add this collection to your library'),
           ),
         _adoptionNote(palette),
-        _note(
-          palette,
-          'A listing is not an entry, so nothing is downloaded by adding it. '
-          'Checking the collection is how its entries are found, and you '
-          'start that yourself.',
-        ),
+        _note(palette, 'Nothing is downloaded — checking finds the entries.'),
         if (added != null) ...[
           const SizedBox(height: 4),
           FilledButton(
@@ -1169,9 +1186,7 @@ class _V2SavePanelState extends ConsumerState<V2SavePanel> {
   /// picker's rows do not say which is which on their own.
   Widget _adoptionNote(AppPalette palette) => _note(
     palette,
-    'Choosing a collection you already have adds this site as another source '
-    'of it. Creating one starts a new collection with this site as its first '
-    'source.',
+    'An existing collection gains this site as another source.',
   );
 
   // ─── small pieces ─────────────────────────────────────────────────────────

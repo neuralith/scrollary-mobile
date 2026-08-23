@@ -442,7 +442,7 @@ void main() {
       );
       expect(tester.widget(key('v2SaveStandalone')), isA<TextButton>());
       expect(
-        find.textContaining('adds this site as another source'),
+        find.textContaining('another source'),
         findsOneWidget,
         reason: 'joining a collection and starting one are different acts',
       );

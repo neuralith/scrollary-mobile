@@ -33,6 +33,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../core/config.dart';
+import '../features/storage_screen.dart' show formatBytes;
+import '../save/size_estimate.dart';
 import '../ui/palette.dart';
 import '../ui/status_style.dart';
 
@@ -69,6 +71,7 @@ Future<SaveScopeChoice?> showSaveScopeSheet(
   BuildContext context, {
   required String collectionName,
   int initialCount = 2,
+  List<int> alreadyDownloadedBytes = const [],
 }) {
   return showModalBottomSheet<SaveScopeChoice>(
     context: context,
@@ -76,6 +79,7 @@ Future<SaveScopeChoice?> showSaveScopeSheet(
     builder: (sheetContext) => _SaveScopeSheet(
       collectionName: collectionName,
       initialCount: initialCount,
+      alreadyDownloadedBytes: alreadyDownloadedBytes,
     ),
   );
 }
@@ -84,16 +88,43 @@ class _SaveScopeSheet extends StatefulWidget {
   const _SaveScopeSheet({
     required this.collectionName,
     required this.initialCount,
+    this.alreadyDownloadedBytes = const [],
   });
 
   final String collectionName;
   final int initialCount;
+
+  /// What entries of this collection have already cost on this device. The
+  /// only input the estimate has, and empty is an honest state.
+  final List<int> alreadyDownloadedBytes;
 
   @override
   State<_SaveScopeSheet> createState() => _SaveScopeSheetState();
 }
 
 class _SaveScopeSheetState extends State<_SaveScopeSheet> {
+  /// What this many entries would be expected to cost, in words.
+  Widget? _estimateLine(AppPalette palette) {
+    final count = _parsed;
+    if (count == null || count < 1) return null;
+    final sentence = downloadEstimateSentence(
+      estimateDownload(
+        alreadyDownloaded: widget.alreadyDownloadedBytes,
+        entries: count,
+      ),
+      formatBytes,
+    );
+    if (sentence == null) return null;
+    return Padding(
+      key: const ValueKey('saveScopeEstimate'),
+      padding: const EdgeInsets.only(top: 6),
+      child: Text(
+        sentence,
+        style: TextStyle(fontSize: 11.5, height: 1.45, color: palette.inkMuted),
+      ),
+    );
+  }
+
   /// A harmless editable default, not a preset: the field opens with the
   /// range, the value is fully replaceable, and nothing is queued until one of
   /// the two launches is pressed.
@@ -363,6 +394,12 @@ class _SaveScopeSheetState extends State<_SaveScopeSheet> {
                           color: palette.inkMuted,
                         ),
                       ),
+                      // Roughly what it will cost, from what this collection
+                      // has actually cost. Absent when nothing comparable has
+                      // been downloaded, because a number invented for a
+                      // collection nothing has been saved from is a guess
+                      // wearing an estimate's clothes.
+                      ?_estimateLine(palette),
                     ],
                     const SizedBox(height: 12),
                     Text(
