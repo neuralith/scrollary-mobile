@@ -5,6 +5,7 @@ import '../providers.dart';
 import '../save/queue_runner.dart';
 import '../save/queue_task.dart';
 import 'check_controller.dart';
+import 'v2_save_flow.dart';
 import '../ui/palette.dart';
 import '../ui/status_style.dart';
 
@@ -247,14 +248,16 @@ class _OperationIndicatorState extends ConsumerState<OperationIndicator> {
 
   /// True when the operation will not move again until a person does
   /// something. Distinct from merely waiting, which resolves itself.
-  /// The V2 flows hold nothing **on the user** mid-run: a save either moves or
-  /// ends in a named outcome, and a check is cancellable but never blocked on
-  /// an answer. User-assisted selection — V1's one producer of this state — has
-  /// no host on the V2 capture path, so answering true here would be inventing
-  /// a state nothing can enter or leave. Kept as a hook because the wiring
-  /// above it is device-tested, and because restoring user assist restores
-  /// this with it.
-  bool get _needsUser => false;
+  ///
+  /// V2's one producer is user-assisted selection: `v2CaptureWithAssist` holds
+  /// a capture on [V2AssistController.ask] when it cannot find the reading area
+  /// or the next control, and that hold ends only when someone points at it.
+  /// Off the Browser, such a run is otherwise indistinguishable from one that
+  /// is working — which is the whole reason this state has a name.
+  ///
+  /// Never gated. Knowing the device is waiting on you is not a paid feature
+  /// (docs/V2_CAPABILITY_PARITY.md).
+  bool get _needsUser => ref.watch(v2AssistProvider).pendingSelection != null;
 
   /// Held, and expected to continue on its own — docs/FOREGROUND_MULTITASKING.md
   /// §5's *Waiting*.

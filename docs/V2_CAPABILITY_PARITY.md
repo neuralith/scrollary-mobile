@@ -103,3 +103,4 @@ anything.
 | Boot recovery rebuilding rows from disk | V2-D22 / I14 — the storage survey reports instead |
 | A separate Archived screen | V2-D48 — archived Collections are a filter on the one Library page |
 | V1's eleven-choice save preflight | V2-D49 — only states V2 can actually distinguish are offered |
+| Undo on a storage cleanup | V2-D33's reasoning — cleanup deletes packages outright, so the confirmation with real counts *is* the reversibility; a button that cannot restore would be a lie |

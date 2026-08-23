@@ -279,6 +279,54 @@ void main() {
     );
   });
 
+  screenTest('a failed row offers Retry, and taking it queues the work '
+      'again', (tester) async {
+    final collection = await shelf();
+    final row = await entry(collection);
+    final gone = await failed(row, 'The download did not finish.');
+    await openScreen(tester);
+    await pumpUntil(tester, find.byKey(ValueKey('activityRetry-${gone.id}')));
+
+    await tapAndPump(tester, find.byKey(ValueKey('activityRetry-${gone.id}')));
+
+    // Recovery is Free and it is a *re-queue*, not a second kind of start:
+    // the new row waits like every other one.
+    final tasks = await h.queue.all();
+    final waitingAgain = tasks.where((t) => t.state == SaveTaskState.queued);
+    expect(waitingAgain, hasLength(1));
+    expect(waitingAgain.single.entryId, row.id);
+    expect(h.queue.saveStartAuthorised, isFalse);
+  });
+
+  screenTest('a finished row offers no Retry — there is nothing to try '
+      'again', (tester) async {
+    final collection = await shelf();
+    final done = await completed(await entry(collection));
+    await openScreen(tester);
+    await pumpUntil(tester, find.byKey(ValueKey('activityRemove-${done.id}')));
+
+    expect(find.byKey(ValueKey('activityRetry-${done.id}')), findsNothing);
+  });
+
+  screenTest('a finished row never prints a file path at the user', (
+    tester,
+  ) async {
+    final collection = await shelf();
+    final row = await entry(collection);
+    final task = await running(row);
+    // What the runner actually writes on a successful capture.
+    await h.queue.finish(
+      task.id,
+      state: SaveTaskState.completed,
+      outcome: 'Downloaded to this device · 18 images.',
+    );
+    await openScreen(tester);
+    await pumpUntil(tester, find.textContaining('Downloaded to this device'));
+
+    expect(find.textContaining('library/'), findsNothing);
+    expect(find.textContaining('manifest.json'), findsNothing);
+  });
+
   screenTest('removing a finished row deletes the row and nothing else', (
     tester,
   ) async {

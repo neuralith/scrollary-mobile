@@ -301,6 +301,31 @@ Future<void> stopRunningDownload(
   );
 }
 
+/// *Retry*: put a failed download back at the end of the queue.
+///
+/// Recovery is Free and has always been (docs/V2_CAPABILITY_PARITY.md). The
+/// repository does the work — a terminal row becomes a fresh `queued` one, and
+/// the restricted-site policy refuses it there rather than here, so a history
+/// row on a service this app does not capture from cannot be turned back into
+/// work that runs.
+///
+/// Like every other enqueue, this **waits**: nothing navigates and nothing is
+/// fetched until the user presses Start.
+Future<void> retryDownload(
+  BuildContext context,
+  WidgetRef ref,
+  SaveTask task,
+) async {
+  final again = await ref.read(saveQueueRepoProvider).retry(task.id);
+  if (!context.mounted) return;
+  showLibraryMessage(
+    context,
+    again == null
+        ? 'That download cannot be retried.'
+        : 'Back in the queue. Nothing starts until you start it.',
+  );
+}
+
 /// *Remove from Activity*: drop one finished row.
 ///
 /// Only a terminal row can be reached from here, and the repository refuses

@@ -179,7 +179,7 @@ class QueueRunner extends ChangeNotifier {
           await queue.finish(
             task.id,
             state: SaveTaskState.completed,
-            outcome: result.contentPath,
+            outcome: _capturedSentence(result),
           );
         case EntryCaptureStatus.refused:
           await queue.finish(
@@ -210,3 +210,24 @@ class QueueRunner extends ChangeNotifier {
     super.dispose();
   }
 }
+
+/// What a finished download says for itself in Activity.
+///
+/// `outcome` is a **sentence column** — every other writer puts words in it —
+/// and this one used to put `contentPath` there, so a finished row showed the
+/// user a relative store path. The counts come from the manifest the capture
+/// just wrote, which is where "saved with gaps" is decided.
+String _capturedSentence(EntryCaptureResult result) {
+  final manifest = result.manifest;
+  if (manifest == null) return 'Downloaded to this device.';
+  final detected = manifest.detectedAssetCount;
+  final stored = manifest.storedAssetCount;
+  if (detected <= 0) return 'Downloaded to this device.';
+  // "Finished" and "finished with gaps" are different outcomes and are never
+  // folded into one (CLAUDE.md, "The app stops; it never works around").
+  return stored >= detected
+      ? 'Downloaded to this device · $stored ${_images(stored)}.'
+      : 'Downloaded with gaps · $stored of $detected images.';
+}
+
+String _images(int n) => n == 1 ? 'image' : 'images';

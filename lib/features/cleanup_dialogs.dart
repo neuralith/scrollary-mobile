@@ -147,10 +147,17 @@ Row _toastRow(AppPalette palette, IconData icon, String text) => Row(
 );
 
 /// The design's dark toast, with an optional Undo.
+/// Say what a cleanup did.
+///
+/// **There is no Undo here, and there deliberately is not one.** Cleanup
+/// deletes packages from disk outright — `FileStore.deleteEntryContent` is a
+/// recursive delete, not a move to staging — so an Undo action would be a
+/// button that cannot do what it says. The honest version of reversibility is
+/// the confirmation before it: it names the entries and the space, and it is
+/// the same reasoning V2-D33 records for Folder deletion.
 void showCleanupToast(
   BuildContext context, {
   required String text,
-  Future<void> Function()? undo,
   IconData icon = Icons.delete_sweep,
 }) {
   final messenger = ScaffoldMessenger.maybeOf(context);
@@ -160,30 +167,8 @@ void showCleanupToast(
   messenger.showSnackBar(
     SnackBar(
       duration: const Duration(milliseconds: 4200),
-      // `SnackBar.persist` defaults to `action != null`, which means a snack
-      // bar with an Undo NEVER times out — [duration] is ignored and it sits
-      // there until something dismisses it. Only a screen reader has a real
-      // claim on that behaviour (reaching the action takes longer), so that is
-      // the only case where it is kept.
-      persist: MediaQuery.maybeOf(context)?.accessibleNavigation ?? false,
       backgroundColor: palette.toastSurface,
       content: _toastRow(palette, icon, text),
-      action: undo == null
-          ? null
-          : SnackBarAction(
-              label: 'Undo',
-              textColor: palette.toastAccent,
-              onPressed: () async {
-                await undo();
-                if (context.mounted) {
-                  showCleanupToast(
-                    context,
-                    text: 'Restored — the files are back',
-                    icon: Icons.undo,
-                  );
-                }
-              },
-            ),
     ),
   );
 }

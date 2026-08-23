@@ -216,9 +216,27 @@ class _TaskRow extends ConsumerWidget {
       icon: const Icon(Icons.close),
       onPressed: () => removeWaitingDownload(context, ref, task),
     ),
-    SaveTaskState.completed ||
-    SaveTaskState.failed ||
-    SaveTaskState.cancelled => IconButton(
+    // A failure is the one terminal state with something left to try, so it
+    // gets two verbs where the others get one. Retry is Free — recovery has
+    // never been a paid feature (docs/V2_CAPABILITY_PARITY.md).
+    SaveTaskState.failed || SaveTaskState.cancelled => Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        IconButton(
+          key: ValueKey('activityRetry-${task.id}'),
+          tooltip: 'Try this download again',
+          icon: const Icon(Icons.refresh),
+          onPressed: () => retryDownload(context, ref, task),
+        ),
+        IconButton(
+          key: ValueKey('activityRemove-${task.id}'),
+          tooltip: 'Remove from activity',
+          icon: const Icon(Icons.delete_outline),
+          onPressed: () => removeDownloadFromActivity(context, ref, task),
+        ),
+      ],
+    ),
+    SaveTaskState.completed => IconButton(
       key: ValueKey('activityRemove-${task.id}'),
       tooltip: 'Remove from activity',
       icon: const Icon(Icons.delete_outline),
