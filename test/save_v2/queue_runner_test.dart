@@ -100,6 +100,29 @@ void main() {
     fail('timed out waiting for $what');
   }
 
+  test(
+    'the batch counts what it set out to do, and how far it has got',
+    () async {
+      // The numbers the panel draws "Entry 3 of 10" from. V2 captures one row at
+      // a time, so which entry is a fact about the loop rather than about the
+      // engine — the engine only ever sees one.
+      for (var i = 1; i <= 3; i++) {
+        await queueEntry(i);
+      }
+      expect(runner.batchTotal, 0, reason: 'nothing running, nothing to count');
+      expect(runner.batchPosition, 0);
+
+      await runner.start();
+
+      expect(runner.batchDone, 3);
+      expect(
+        runner.batchPosition,
+        0,
+        reason: 'the batch is over, so there is no entry to be on',
+      );
+    },
+  );
+
   group('the queue drains one row at a time', () {
     test('the second task starts only after the first has finished', () async {
       final first = await queueEntry(102);

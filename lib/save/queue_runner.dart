@@ -71,9 +71,25 @@ class QueueRunner extends ChangeNotifier {
   bool _running = false;
   bool _disposed = false;
   String? _activeTaskId;
+  int _batchTotal = 0;
+  int _batchDone = 0;
 
   /// True while the loop is claiming or capturing.
   bool get isRunning => _running;
+
+  /// How many rows this batch set out to capture.
+  ///
+  /// Taken when the loop starts and raised if more work appears while it runs,
+  /// because a batch is what the queue holds rather than a number promised in
+  /// advance. Zero when nothing is running.
+  int get batchTotal => _batchTotal;
+
+  /// How many of them have reached a terminal state, however they got there.
+  int get batchDone => _batchDone;
+
+  /// The 1-based position of the row being captured — the *3* in "entry 3 of
+  /// 10". Zero when nothing is running.
+  int get batchPosition => _running ? _batchDone + 1 : 0;
 
   /// Test hook, mirroring the V1 controller's: the shell's surface and leave
   /// gates are exercised without driving a real capture.
@@ -95,12 +111,22 @@ class QueueRunner extends ChangeNotifier {
   Future<void> start() async {
     if (_running || _disposed) return;
     _running = true;
+    _batchTotal = 0;
+    _batchDone = 0;
     notifyListeners();
     queue.authoriseStart();
     try {
       while (!_disposed) {
         final eligible = await queue.eligible();
         if (eligible.isEmpty) break;
+        // What is left, plus what has already been settled, is what this batch
+        // is trying to do. Recomputed each pass so a row enqueued mid-batch is
+        // counted rather than making the total a promise that goes stale.
+        final total = _batchDone + eligible.length;
+        if (total != _batchTotal) {
+          _batchTotal = total;
+          if (!_disposed) notifyListeners();
+        }
         // The disk gate, asked once per row rather than once per batch: free
         // space is a moving figure, and a batch that checked only at the start
         // would fill the device on its fourth entry. Carried over from V1's
@@ -117,6 +143,8 @@ class QueueRunner extends ChangeNotifier {
         // loser is told, and the row keeps its own verdict.
         if (claimed == null) continue;
         await _run(claimed);
+        _batchDone++;
+        if (!_disposed) notifyListeners();
       }
     } finally {
       queue.revokeStart();

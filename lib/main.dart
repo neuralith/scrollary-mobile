@@ -18,6 +18,7 @@ import 'data/recognition_index.dart';
 import 'data/schema.dart' show LibraryDatabase;
 import 'data/reading_state_repository.dart';
 import 'features/check_controller.dart';
+import 'features/operation_progress.dart';
 import 'features/source_observation_browser.dart';
 import 'features/v2_composition.dart';
 import 'features/v2_save_flow.dart';
@@ -187,6 +188,7 @@ class _AppBootState extends State<AppBoot> with WidgetsBindingObserver {
                 // user selection is visible from wherever the user is, not
                 // only from the Browser it is parked on.
                 assistHoldProvider.overrideWithValue(_startup.v2.assist),
+                operationProgressProvider.overrideWithValue(_startup.progress),
               ],
               child: const WebReaderApp(),
             ),
@@ -228,9 +230,17 @@ class AppStartup {
   AppServices? _services;
   V2Services? _v2;
 
+  /// The live capture reading, and the log behind it. Built here because the
+  /// engine has to be handed its callbacks at construction, and read by the
+  /// panel through `operationProgressProvider`.
+  final OperationProgress _progress = OperationProgress();
+
   /// Available once the sequence has completed without a critical failure.
   AppServices get services => _services!;
   V2Services get v2 => _v2!;
+
+  /// What the entry being captured is doing right now.
+  OperationProgress get progress => _progress;
 
   late final List<StartupStep> steps = [
     StartupStep(label: 'Opening your library', critical: true, run: _open),
@@ -310,15 +320,24 @@ class AppStartup {
         fileStore: fileStore,
         source: SaveEnginePageCaptureSource(
           browser: browser,
-          engineFor: (sink) => SaveEngine(
-            browser: browser,
-            fileStore: fileStore,
-            downloader: AssetFetcher(
+          engineFor: (sink) {
+            // The counters are a new entry's, not the previous one's.
+            _progress.beginEntry();
+            return SaveEngine(
               browser: browser,
-              config: kDefaultSaveConfig,
-            ),
-            sink: sink,
-          ),
+              fileStore: fileStore,
+              downloader: AssetFetcher(
+                browser: browser,
+                config: kDefaultSaveConfig,
+              ),
+              sink: sink,
+              // The two callbacks the V2 composition never passed. Without
+              // them the engine's progress and log lines were not merely
+              // unrendered — they were never produced.
+              onProgress: _progress.apply,
+              onLog: _progress.record,
+            );
+          },
         ),
       ),
     );

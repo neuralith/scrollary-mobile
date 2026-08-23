@@ -28,9 +28,12 @@ import '../library_ui/entry_offline.dart';
 import '../library_ui/providers.dart';
 import '../providers.dart';
 import '../save/queue_task.dart';
+import '../save/queue_runner.dart';
+import '../save/save_state.dart';
 import '../ui/palette.dart';
 import '../ui/status_style.dart';
 import 'v2_adoption_providers.dart';
+import 'operation_progress.dart';
 
 /// The task the queue runner is working on, and what to call it.
 final _activeSaveProvider = FutureProvider.autoDispose
@@ -245,6 +248,8 @@ class _SaveRunning extends ConsumerWidget {
           style: TextStyle(fontSize: 12, height: 1.35, color: palette.ink),
         ),
         const SizedBox(height: 10),
+        const OperationProgressLine(),
+        const SizedBox(height: 10),
         const _IndeterminateBar(),
         const SizedBox(height: 12),
         _StopRow(
@@ -260,6 +265,97 @@ class _SaveRunning extends ConsumerWidget {
       ],
     );
   }
+}
+
+/// *Entry 3 of 10 · 12 of 18 images* — the counts, and nothing else.
+///
+/// Two sources, because they answer two different questions and neither can
+/// answer the other's. The batch position is the queue runner's: V2 captures
+/// one row at a time, so "which entry" is a fact about the loop. The image
+/// counts are the engine's, published through [OperationProgress] — the
+/// callbacks the composition used not to pass.
+///
+/// Absent rather than zeroed when there is nothing to say: a line reading
+/// "0 of 0 images" is worse than no line. Never gated
+/// (docs/V2_CAPABILITY_PARITY.md).
+class OperationProgressLine extends ConsumerStatefulWidget {
+  const OperationProgressLine({super.key, this.compact = false});
+
+  /// One line instead of two, for the Browser's own strip.
+  final bool compact;
+
+  @override
+  ConsumerState<OperationProgressLine> createState() =>
+      _OperationProgressLineState();
+}
+
+class _OperationProgressLineState extends ConsumerState<OperationProgressLine> {
+  late final OperationProgress _progress;
+  late final QueueRunner _runner;
+
+  @override
+  void initState() {
+    super.initState();
+    _progress = ref.read(operationProgressProvider);
+    _runner = ref.read(queueRunnerProvider);
+    _progress.addListener(_onChanged);
+    _runner.addListener(_onChanged);
+  }
+
+  @override
+  void dispose() {
+    _progress.removeListener(_onChanged);
+    _runner.removeListener(_onChanged);
+    super.dispose();
+  }
+
+  void _onChanged() {
+    if (mounted) setState(() {});
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = AppPalette.of(context);
+    final parts = operationProgressParts(
+      position: _runner.batchPosition,
+      total: _runner.batchTotal,
+      progress: _progress.progress,
+    );
+    if (parts.isEmpty) return const SizedBox.shrink();
+
+    return Text(
+      parts.join(' · '),
+      key: const ValueKey('operationProgressLine'),
+      maxLines: widget.compact ? 1 : 2,
+      overflow: TextOverflow.ellipsis,
+      style: monoStyle(size: 12, color: palette.ink),
+    );
+  }
+}
+
+/// The pieces of the progress line, in order, leaving out what is not known.
+///
+/// Pure so the wording is testable without a widget tree, and so "what does a
+/// user see at this moment" is one function rather than a render.
+List<String> operationProgressParts({
+  required int position,
+  required int total,
+  required SaveProgress progress,
+}) {
+  final parts = <String>[];
+  // A batch of one needs no position: "entry 1 of 1" is noise.
+  if (position > 0 && total > 1) parts.add('Entry $position of $total');
+  final detected = progress.detectedImages;
+  final stored = progress.storedImages;
+  if (detected > 0) {
+    parts.add('$stored of $detected images');
+  } else if (stored > 0) {
+    parts.add('$stored ${stored == 1 ? 'image' : 'images'}');
+  }
+  if (progress.failedImages > 0) {
+    parts.add('${progress.failedImages} could not be fetched');
+  }
+  return parts;
 }
 
 class _CheckRunning extends ConsumerWidget {
