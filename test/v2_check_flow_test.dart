@@ -128,6 +128,35 @@ void main() {
       );
     });
 
+    test('a source that stops listing something says so, and says what was '
+        'not deleted', () {
+      // V2 has always computed retractions and never told anyone. "No longer
+      // listed" and "deleted from your device" are different things, and the
+      // sentence has to carry the difference or it reads as data loss.
+      final sentence = checkOutcomeSentence(
+        _outcome(state: SourceCheckState.upToDate, retracted: 2),
+      );
+
+      expect(sentence, contains('2 entries are no longer listed'));
+      expect(sentence, contains('nothing on this device was deleted'));
+    });
+
+    test('one retraction is not "1 entries"', () {
+      expect(
+        checkOutcomeSentence(
+          _outcome(state: SourceCheckState.upToDate, retracted: 1),
+        ),
+        contains('1 entry is no longer listed'),
+      );
+    });
+
+    test('a check that retracted nothing says nothing about it', () {
+      expect(
+        checkOutcomeSentence(_outcome(state: SourceCheckState.upToDate)),
+        isNot(contains('no longer listed')),
+      );
+    });
+
     test('a reading that could not happen never says "check again"', () {
       // The regression: nine of twelve stop reasons produced "Read 0 page(s)
       // and found nothing new. There is more of the list to read — check
@@ -501,6 +530,7 @@ SourceCheckOutcome _outcome({
   SourceCheckStop? stop,
   int found = 0,
   int pagesRead = 0,
+  int retracted = 0,
 }) => SourceCheckOutcome(
   sourceId: 'source-1',
   state: state,
@@ -508,6 +538,7 @@ SourceCheckOutcome _outcome({
   pagesRead: pagesRead,
   discovery: DiscoveryOutcome(
     createdEntryIds: [for (var i = 0; i < found; i++) 'entry-$i'],
+    retractedLocationIds: [for (var i = 0; i < retracted; i++) 'loc-$i'],
   ),
 );
 

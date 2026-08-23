@@ -158,6 +158,18 @@ String checkOutcomeSentence(SourceCheckOutcome? outcome) {
   if (refusal != null && found == 0) return refusal;
 
   final added = found == 1 ? '1 new entry' : '$found new entries';
+  // A Source that stops listing something is news, and V2 has always computed
+  // it and never said it. Said calmly and with the reassurance attached,
+  // because "no longer listed" and "deleted from your device" are different
+  // things and only the first happened.
+  final retracted = outcome.discovery.retractedLocationIds.length;
+  final gone = retracted == 0
+      ? ''
+      : retracted == 1
+      ? ' 1 entry is no longer listed on this site — nothing on this device '
+            'was deleted.'
+      : ' $retracted entries are no longer listed on this site — nothing on '
+            'this device was deleted.';
   // The ceilings are the one case where checking again genuinely continues:
   // the reading stopped because it had taken as much as it is allowed to, not
   // because anything was wrong.
@@ -168,13 +180,13 @@ String checkOutcomeSentence(SourceCheckOutcome? outcome) {
   if (found == 0) {
     return hasMore
         ? 'Read what it is allowed to in one go and found nothing new — check '
-              'again to carry on.'
-        : 'Up to date. Nothing new on this collection\'s site.';
+              'again to carry on.$gone'
+        : 'Up to date. Nothing new on this collection\'s site.$gone';
   }
   return hasMore
       ? '$added added. There is more of the list to read — check again to '
-            'carry on.'
-      : '$added added to your library. Nothing was downloaded.';
+            'carry on.$gone'
+      : '$added added to your library. Nothing was downloaded.$gone';
 }
 
 void _say(BuildContext context, String message) {
