@@ -19,6 +19,34 @@ void main() {
   setUp(() => h = UiHarness());
   tearDown(() => h.close());
 
+  screenTest('an archived collection stays on the shelf, marked as archived', (
+    tester,
+  ) async {
+    // Archived content remains discoverable — V2-D48. V1 had a separate
+    // Archived screen; V2 has one Library page, so archiving marks a row
+    // rather than moving it somewhere the user has to know about.
+    final root = await h.root();
+    final kept = await h.collection('Still reading', folderId: root.id);
+    final done = await h.collection('Finished with', folderId: root.id);
+    expect(await h.collections.archive(done.id), isNull);
+
+    await tester.pumpWidget(h.app(const ShelfScreen()));
+    await pumpUntil(tester, find.text('Still reading'));
+
+    expect(find.text('Still reading'), findsOneWidget);
+    expect(
+      find.text('Finished with'),
+      findsOneWidget,
+      reason: 'archiving is not hiding',
+    );
+    expect(find.text('Archived'), findsOneWidget);
+    expect(
+      find.byKey(ValueKey('collectionCheckChip-${kept.id}')),
+      findsNothing,
+      reason: 'a collection nobody has checked says nothing about checking',
+    );
+  });
+
   screenTest('shows folders, collections and standalone entries', (
     tester,
   ) async {

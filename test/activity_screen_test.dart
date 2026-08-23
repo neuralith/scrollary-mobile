@@ -327,6 +327,53 @@ void main() {
     expect(find.textContaining('manifest.json'), findsNothing);
   });
 
+  screenTest('a waiting row can be run next', (tester) async {
+    final collection = await shelf();
+    final first = await waiting(await entry(collection));
+    final second = await waiting(await entry(collection));
+    await openScreen(tester);
+    await pumpUntil(
+      tester,
+      find.byKey(ValueKey('activityRunNext-${second.id}')),
+    );
+
+    await tapAndPump(
+      tester,
+      find.byKey(ValueKey('activityRunNext-${second.id}')),
+    );
+
+    // Still waiting — moving to the front is not a second kind of start.
+    final rows =
+        (await h.queue.all())
+            .where((t) => t.state == SaveTaskState.queued)
+            .toList()
+          ..sort((a, b) => a.orderIndex.compareTo(b.orderIndex));
+    expect(rows.first.id, second.id);
+    expect(rows.map((t) => t.id), contains(first.id));
+    expect(h.queue.saveStartAuthorised, isFalse);
+  });
+
+  screenTest('clearing the queue cancels what is waiting and keeps the '
+      'rows', (tester) async {
+    final collection = await shelf();
+    await waiting(await entry(collection));
+    await waiting(await entry(collection));
+    await openScreen(tester);
+    await pumpUntil(tester, find.byKey(const ValueKey('activityClearWaiting')));
+
+    await tapAndPump(
+      tester,
+      find.byKey(const ValueKey('activityClearWaiting')),
+    );
+    await pumpUntil(tester, find.text('Remove'));
+    await tapAndPump(tester, find.text('Remove'));
+
+    // Cancelled, not deleted: a state the user can see and retry from.
+    final rows = await h.queue.all();
+    expect(rows, hasLength(2));
+    expect(rows.every((t) => t.state == SaveTaskState.cancelled), isTrue);
+  });
+
   screenTest('removing a finished row deletes the row and nothing else', (
     tester,
   ) async {

@@ -29,6 +29,7 @@ import '../save/entry_capture.dart';
 import '../save/queue_task.dart';
 import '../ui/palette.dart';
 import '../ui/status_style.dart';
+import '../features/cleanup_dialogs.dart';
 import 'collection_models.dart';
 import 'library_widgets.dart';
 import 'providers.dart';
@@ -132,6 +133,50 @@ Future<void> downloadForOffline(
       'download.',
     );
     return;
+  }
+
+  // The preflight, in the only two states V2 can actually tell apart: this
+  // device holds a complete copy, or it holds one with gaps. V1 classified six
+  // and offered eleven choices; most of them described a resume V2's capture
+  // does not have, and offering a recovery the engine cannot perform is worse
+  // than not offering it.
+  final held = await ref
+      .read(libraryUiServicesProvider)
+      .offline
+      .activeCopyOf(view.id);
+  if (!context.mounted) return;
+  if (held != null) {
+    final manifest = await ref
+        .read(libraryUiServicesProvider)
+        .fileStore
+        .readManifest(held.contentPath);
+    if (!context.mounted) return;
+    final gaps =
+        manifest != null &&
+        manifest.storedAssetCount < manifest.detectedAssetCount;
+    final ok = await showRemovalConfirm(
+      context: context,
+      summary: RemovalSummary(
+        title: gaps
+            ? 'This copy is incomplete — download it again?'
+            : 'Already downloaded — download it again?',
+        body: gaps
+            ? 'Some images could not be fetched last time. Downloading again '
+                  'reads the page from the start and replaces what is here.'
+            : 'This device already holds a complete copy. Downloading again '
+                  'reads the page from the start and replaces it.',
+        facts: [
+          if (gaps)
+            (
+              'Images',
+              '${manifest.storedAssetCount} of '
+                  '${manifest.detectedAssetCount}',
+            ),
+        ],
+        cta: 'Download again',
+      ),
+    );
+    if (!ok || !context.mounted) return;
   }
 
   final result = await ref
@@ -323,6 +368,70 @@ Future<void> retryDownload(
     again == null
         ? 'That download cannot be retried.'
         : 'Back in the queue. Nothing starts until you start it.',
+  );
+}
+
+/// *Run this next*: move one waiting row to the front of the queue.
+///
+/// Not a second kind of start — the row still waits, and Start still
+/// authorises the batch. It is the one piece of queue ordering worth keeping:
+/// "I want that one first" is a real intention, and V1's full move-up /
+/// move-down pair was queue micromanagement on a phone.
+Future<void> runDownloadNext(
+  BuildContext context,
+  WidgetRef ref,
+  SaveTask task,
+) async {
+  await ref.read(saveQueueRepoProvider).moveToFront(task.id);
+  if (!context.mounted) return;
+  showLibraryMessage(context, 'Moved to the front of the queue.');
+}
+
+/// *Clear waiting*: cancel every row that has not started.
+///
+/// Each becomes `cancelled`, which is a state the user can see and retry from
+/// — never a deletion. A running row is left alone: stopping that one is its
+/// own decision, with its own confirmation.
+Future<void> clearWaitingDownloads(BuildContext context, WidgetRef ref) async {
+  final queue = ref.read(saveQueueRepoProvider);
+  final waiting = (await queue.all())
+      .where((t) => t.state == SaveTaskState.queued)
+      .toList();
+  if (waiting.isEmpty) {
+    if (!context.mounted) return;
+    showLibraryMessage(context, 'Nothing is waiting.');
+    return;
+  }
+
+  if (!context.mounted) return;
+  final ok = await showRemovalConfirm(
+    context: context,
+    summary: RemovalSummary(
+      title: waiting.length == 1
+          ? 'Remove the waiting download?'
+          : 'Remove ${waiting.length} waiting downloads?',
+      body:
+          'They stop waiting and can be started again from the entry. '
+          'Nothing on this device is deleted, and anything already '
+          'downloading carries on.',
+      facts: [('Waiting', '${waiting.length}')],
+      cta: 'Remove',
+    ),
+  );
+  if (!ok || !context.mounted) return;
+
+  var removed = 0;
+  for (final task in waiting) {
+    if (await queue.cancel(task.id) == SaveCancelOutcome.cancelledBeforeStart) {
+      removed++;
+    }
+  }
+  if (!context.mounted) return;
+  showLibraryMessage(
+    context,
+    removed == 0
+        ? 'Those had already started.'
+        : '$removed removed from the queue.',
   );
 }
 

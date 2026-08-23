@@ -119,14 +119,28 @@ class _Activity extends ConsumerWidget {
                       ..._section(context, ref, 'WAITING', waiting),
                       Padding(
                         padding: const EdgeInsets.fromLTRB(16, 10, 16, 4),
-                        child: FilledButton(
-                          key: const ValueKey('activityStart'),
-                          onPressed: () => startQueuedDownloads(context, ref),
-                          child: Text(
-                            waiting.length == 1
-                                ? 'Start 1 download'
-                                : 'Start ${waiting.length} downloads',
-                          ),
+                        child: Row(
+                          children: [
+                            Expanded(
+                              child: FilledButton(
+                                key: const ValueKey('activityStart'),
+                                onPressed: () =>
+                                    startQueuedDownloads(context, ref),
+                                child: Text(
+                                  waiting.length == 1
+                                      ? 'Start 1 download'
+                                      : 'Start ${waiting.length} downloads',
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            TextButton(
+                              key: const ValueKey('activityClearWaiting'),
+                              onPressed: () =>
+                                  clearWaitingDownloads(context, ref),
+                              child: const Text('Clear'),
+                            ),
+                          ],
                         ),
                       ),
                     ],
@@ -215,11 +229,25 @@ class _TaskRow extends ConsumerWidget {
       icon: const Icon(Icons.stop_circle_outlined),
       onPressed: () => stopRunningDownload(context, ref, task),
     ),
-    SaveTaskState.queued => IconButton(
-      key: ValueKey('activityRemoveWaiting-${task.id}'),
-      tooltip: 'Remove from the download queue',
-      icon: const Icon(Icons.close),
-      onPressed: () => removeWaitingDownload(context, ref, task),
+    // A waiting row has two useful verbs: put it first, or take it out.
+    // Not V1's full move-up/move-down pair — "I want that one first" is a
+    // real intention; reordering a queue by hand on a phone is not.
+    SaveTaskState.queued => Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        IconButton(
+          key: ValueKey('activityRunNext-${task.id}'),
+          tooltip: 'Run this one next',
+          icon: const Icon(Icons.vertical_align_top),
+          onPressed: () => runDownloadNext(context, ref, task),
+        ),
+        IconButton(
+          key: ValueKey('activityRemoveWaiting-${task.id}'),
+          tooltip: 'Remove from the download queue',
+          icon: const Icon(Icons.close),
+          onPressed: () => removeWaitingDownload(context, ref, task),
+        ),
+      ],
     ),
     // A failure is the one terminal state with something left to try, so it
     // gets two verbs where the others get one. Retry is Free — recovery has
