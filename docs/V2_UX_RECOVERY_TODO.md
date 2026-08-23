@@ -12,7 +12,7 @@ tests it.
 | # | Item | State |
 |---|---|---|
 | 1 | Capture next N captures N | DONE |
-| 2 | Open at Source brings the Browser into view | TODO |
+| 2 | Open at Source brings the Browser into view | DONE |
 | 3 | Entry number and title read from page evidence | TODO |
 | 4 | Reading progress: Source and OfflineCopy | TODO |
 | 5 | The Collection remembers what to capture | TODO |

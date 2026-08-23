@@ -57,6 +57,23 @@ void showBrowserSurfaceWith(GoRouter router, WidgetRef ref) {
   ref.read(shellTabRequestProvider).value = 1;
 }
 
+/// Send the Browser to [url] and put it in front of the user.
+///
+/// The two halves of "open at source", which are two halves and not one: the
+/// request tells the Browser *where*, and [showBrowserSurfaceWith] is what
+/// makes the user *see* it. A call site that stored the request and set the
+/// tab index did neither wrong and still produced the bug this pair exists to
+/// prevent — the page loaded under whatever route the user was standing on.
+///
+/// Deliberately without [openInBrowser]'s validation, take-over confirmation
+/// and reachability probe: this is the composition seam the app root hands to
+/// the library lane, whose callers have already resolved a Location and have
+/// their own sentence for one that has no address.
+void showBrowserAt(GoRouter router, WidgetRef ref, String url) {
+  ref.read(browserNavigatorProvider).request(url);
+  showBrowserSurfaceWith(router, ref);
+}
+
 /// The one way anything in this app opens a page in the Browser.
 ///
 /// Every "Open on website" / "Open in Browser" action funnels through here,

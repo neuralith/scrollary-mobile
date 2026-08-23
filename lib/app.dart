@@ -154,10 +154,15 @@ class _WebReaderAppState extends ConsumerState<WebReaderApp>
     v2.openEntry = (id) async {
       _router.push('/reader/$id');
     };
-    v2.openSource = (url) async {
-      ref.read(browserNavigatorProvider).request(url);
-      ref.read(shellTabRequestProvider).value = 1;
-    };
+    // Two steps, and only one of them was here. Storing the request sends the
+    // Browser somewhere; **showing** it is what puts the user in front of the
+    // page they asked to open. The Browser is a tab inside the shell route and
+    // Collection Detail, Activity and the reader are pushed above it, so
+    // flipping the tab underneath one of them changed nothing anybody could
+    // see — the page loaded and the user stayed where they were.
+    // `showBrowserSurfaceWith` owns the pop and the tab together, which is
+    // exactly why it exists (`features/open_in_browser.dart`).
+    v2.openSource = (url) async => showBrowserAt(_router, ref, url);
     _capability = ref.read(foregroundMultitaskingProvider);
     _sync = v2.sync.scheduler;
     _pendingSurfaceClaim = ref.read(pendingSurfaceClaimProvider);

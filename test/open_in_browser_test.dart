@@ -269,4 +269,43 @@ void main() {
       expect(browser.currentUrl, 'https://a.example/x');
     });
   });
+
+  group('open at source', () {
+    // The composition seam `lib/app.dart` hands to the library lane as
+    // `sourceOpenerProvider`. The regression it carries: it stored the
+    // request and set the tab index, and did not pop — so the page loaded
+    // under the Collection screen the user was standing on, and they stayed
+    // there.
+    testWidgets('the user ends up looking at the Browser, not the screen '
+        'they asked from', (tester) async {
+      late GoRouter router;
+      await tester.pumpWidget(
+        app(
+          collectionBody: (context, ref) {
+            router = GoRouter.of(context);
+            return TextButton(
+              onPressed: () =>
+                  showBrowserAt(router, ref, 'https://a.example/entry-7'),
+              child: const Text('open at source'),
+            );
+          },
+        ),
+      );
+      await pushCollection(tester);
+      expect(tabRequest.value, isNull);
+
+      await tester.tap(find.text('open at source'));
+      await tester.pumpAndSettle();
+
+      expect(
+        find.text('SERIES DETAIL'),
+        findsNothing,
+        reason: 'the pushed route is gone — the shell is what is on screen',
+      );
+      expect(find.text('SHELL'), findsOneWidget);
+      expect(tabRequest.value, 1, reason: 'and the Browser tab is selected');
+      expect(navigator.pending?.url, 'https://a.example/entry-7');
+    });
+
+  });
 }
