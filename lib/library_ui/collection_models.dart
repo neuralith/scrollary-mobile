@@ -17,6 +17,7 @@ import '../domain/collection.dart';
 import '../domain/entry.dart';
 import '../domain/reading_state.dart';
 import '../library/entry_labels.dart';
+import '../library/entry_presentation.dart';
 
 /// The vocabulary this UI speaks about Entries.
 ///
@@ -36,6 +37,9 @@ class EntryRowView {
     required this.availableOffline,
     required this.label,
     this.progress = 0,
+    this.sourceLabel,
+    this.collectionName,
+    this.subtitle,
   });
 
   factory EntryRowView.from({
@@ -43,14 +47,29 @@ class EntryRowView {
     required ReadStatus status,
     required bool availableOffline,
     String? sourceLabel,
+    String? collectionName,
     double progress = 0,
-  }) => EntryRowView(
-    row: row,
-    status: status,
-    availableOffline: availableOffline,
-    label: entryRowLabel(row, sourceLabel: sourceLabel),
-    progress: progress,
-  );
+    EntryContext context = EntryContext.withinCollection,
+  }) {
+    final shown = entryPresentation(
+      context: context,
+      labels: libraryEntryLabels,
+      ordinal: row.ordinal,
+      title: row.title,
+      sourceLabel: sourceLabel,
+      collectionName: collectionName,
+    );
+    return EntryRowView(
+      row: row,
+      status: status,
+      availableOffline: availableOffline,
+      label: shown.primary,
+      subtitle: shown.secondary,
+      progress: progress,
+      sourceLabel: sourceLabel,
+      collectionName: collectionName,
+    );
+  }
 
   final EntryRow row;
   final ReadStatus status;
@@ -59,7 +78,21 @@ class EntryRowView {
   /// hide, sort or group a row.
   final bool availableOffline;
 
+  /// The Entry's identity on a row: its position inside a Collection, its
+  /// name anywhere it has one, and never the work's name repeated.
   final String label;
+
+  /// The quieter line under [label] — what the title still says once the
+  /// position and the work's name are out of it. Null far more often than not.
+  final String? subtitle;
+
+  /// What a site printed for this Entry, kept as evidence. Not what the row
+  /// draws; what *Entry details* shows.
+  final String? sourceLabel;
+
+  /// The Collection this Entry belongs to, when it belongs to one. Held for
+  /// the details surface and for the surfaces that have to name it.
+  final String? collectionName;
 
   /// How far through this Entry a reading got, as it was measured against the
   /// rendering it happened on — 0 when nothing has been measured.
@@ -94,20 +127,26 @@ class EntryRowView {
   };
 }
 
-/// What a row prints for one Entry.
+/// What a row prints for one Entry, wherever it is being drawn.
 ///
-/// The Entry's own title is the name the library holds for it; a Location's
-/// `source_label` is evidence of what one site printed and stands in only when
-/// the Entry has none. The generic noun is the last resort, and no number is
-/// ever fabricated — `entryDisplayLabel` is given none, because nothing in the
-/// V2 schema licenses a numbered style.
-String entryRowLabel(EntryRow row, {String? sourceLabel}) {
-  final title = row.title.trim();
-  return entryDisplayLabel(
-    labels: libraryEntryLabels,
-    title: title.isNotEmpty ? title : sourceLabel,
-  );
-}
+/// One line of forwarding to `library/entry_presentation.dart`, which is where
+/// the rule lives so that a global surface and this one cannot disagree about
+/// it. The Entry's own title is the name the library holds for it; a
+/// Location's `source_label` is evidence of what one site printed and stands
+/// in only when the Entry has none.
+String entryRowLabel(
+  EntryRow row, {
+  String? sourceLabel,
+  String? collectionName,
+  EntryContext context = EntryContext.withinCollection,
+}) => entryPresentation(
+  context: context,
+  labels: libraryEntryLabels,
+  ordinal: row.ordinal,
+  title: row.title,
+  sourceLabel: sourceLabel,
+  collectionName: collectionName,
+).primary;
 
 /// One Collection and its **one** Entry list.
 ///

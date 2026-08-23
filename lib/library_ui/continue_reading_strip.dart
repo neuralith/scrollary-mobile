@@ -62,9 +62,9 @@ class ContinueReadingStrip extends ConsumerWidget {
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                       ),
-                      if (item.collectionName != null)
+                      if (item.subtitle != null)
                         Text(
-                          item.collectionName!,
+                          item.subtitle!,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(

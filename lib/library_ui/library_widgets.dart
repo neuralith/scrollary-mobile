@@ -168,6 +168,24 @@ class EntryRowTile extends StatelessWidget {
                       color: palette.ink,
                     ),
                   ),
+                  // What the source called this Entry, when it said anything
+                  // the position and the work's name had not already said.
+                  // One line, quieter than the identity above it — the row is
+                  // a list item, not a record.
+                  if (view.subtitle case final subtitle?) ...[
+                    const SizedBox(height: 2),
+                    Text(
+                      subtitle,
+                      key: ValueKey('entrySubtitle-${view.id}'),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 12,
+                        height: 1.3,
+                        color: palette.inkMuted,
+                      ),
+                    ),
+                  ],
                   const SizedBox(height: 4),
                   Row(
                     children: [

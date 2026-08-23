@@ -27,6 +27,7 @@ import '../domain/reading_state.dart';
 import '../features/v2_add_flow.dart';
 import '../providers.dart' show capturePreferenceProvider;
 import '../save/capture_mode.dart';
+import 'entry_details.dart';
 import '../save/queue_task.dart';
 import '../ui/palette.dart';
 import '../ui/status_style.dart';
@@ -271,6 +272,7 @@ Future<void> _removeCollectionFromLibrary(
 
 enum _EntryAction {
   read,
+  details,
   markRead,
   markUnread,
   openAtSource,
@@ -355,6 +357,21 @@ Future<void> showEntryMenu(
               onTap: () =>
                   Navigator.of(sheetContext).pop(_EntryAction.markRead),
             ),
+          // What the library actually holds, verbatim. The list rows lead
+          // with an Entry's position and drop the part of a page title that
+          // only repeats it and the work's name — a *presentation* rule, so
+          // the evidence behind it has to be one tap away or the rule is a
+          // deletion pretending to be tidiness.
+          ListTile(
+            key: const ValueKey('entryDetails'),
+            leading: const Icon(Icons.info_outline),
+            title: const Text('Details'),
+            subtitle: const Text(
+              'What the source called it, where it is read from, and what '
+              'this device holds.',
+            ),
+            onTap: () => Navigator.of(sheetContext).pop(_EntryAction.details),
+          ),
           ListTile(
             key: const ValueKey('entryOpenAtSource'),
             leading: const Icon(Icons.open_in_new),
@@ -488,6 +505,8 @@ Future<void> showEntryMenu(
       await ref.read(readingRepoProvider).markRead(view.id);
     case _EntryAction.markUnread:
       await ref.read(readingRepoProvider).markUnread(view.id);
+    case _EntryAction.details:
+      await showEntryDetails(context, ref, view);
     case _EntryAction.openAtSource:
       await _openAtSource(context, ref, view);
     case _EntryAction.place:

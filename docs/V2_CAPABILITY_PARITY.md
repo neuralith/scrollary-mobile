@@ -81,6 +81,8 @@ expected to carry one.
 | Point at the next-entry control when the app can't find it | Browser → assist overlay | Free | `features/selection_overlay.dart` | `integration_test/user_assist_test.dart` | **yes** |
 | Find my archived Collections | Library → **Show archived** | Free | `library_ui/shelf_screen.dart` | `test/library_ui/shelf_test.dart` | — |
 | Dismiss a discovered entry I don't want | entry menu → **Remove from library** | Free | `library_ui/collection_actions.dart` | `test/library_ui/collection_test.dart` | — |
+| Read a serialized collection as a sequence | Library → collection | Free | `library/entry_presentation.dart` | `test/library_ui/entry_presentation_test.dart` | — |
+| See what the source actually called an entry | entry menu → **Details** | Free | `library_ui/entry_details.dart` | `test/library_ui/collection_test.dart` | — |
 | Keep working while something runs | any screen, with Pro | **Pro** | `capability/foreground_gate.dart` | `test/foreground_gate_test.dart` | — |
 | Sync my library across devices | Settings → Sync, with Pro | **Pro** | `features/v2_composition.dart` | `test/settings_sync_capability_test.dart` | — |
 

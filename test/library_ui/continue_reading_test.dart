@@ -200,9 +200,21 @@ void main() {
     await pumpUntil(tester, card(inside.id));
     await pumpUntil(tester, card(alone.id));
 
+    // A surface that spans the library has no work's name above it, so the
+    // card carries one — in the line that identifies the Entry rather than as
+    // a caption under it, because `Serial Alpha · 1` is the whole answer to
+    // "which entry is this" and two lines saying half of it each is not.
     expect(
-      find.descendant(of: card(inside.id), matching: find.text('Serial Alpha')),
+      find.descendant(
+        of: card(inside.id),
+        matching: find.text('Serial Alpha · 1'),
+      ),
       findsOneWidget,
+    );
+    expect(
+      find.descendant(of: card(inside.id), matching: find.text('Inside')),
+      findsOneWidget,
+      reason: 'and the entry\'s own title is still under it',
     );
     expect(
       find.descendant(of: card(inside.id), matching: find.byType(Text)),

@@ -210,7 +210,7 @@ void main() {
       await tester.pumpWidget(
         h.app(CollectionScreen(collectionId: collection.id)),
       );
-      await pumpUntil(tester, find.text('Part 1'));
+      await pumpUntil(tester, find.byKey(ValueKey('entryRow-${read.id}')));
 
       expect(find.byKey(ValueKey('entryProgress-${read.id}')), findsOneWidget);
       expect(
@@ -243,7 +243,7 @@ void main() {
       await tester.pumpWidget(
         h.app(CollectionScreen(collectionId: collection.id)),
       );
-      await pumpUntil(tester, find.text('Part 1'));
+      await pumpUntil(tester, find.byKey(ValueKey('entryRow-${entry.id}')));
 
       final ring = tester.widget<EntryProgressRing>(
         find.descendant(

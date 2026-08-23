@@ -171,6 +171,70 @@ String stripEntryMarker(String title) {
   return out.trim();
 }
 
+/// Remove an entry marker that names exactly [number] — wherever it sits.
+///
+/// The counterpart of [stripEntryMarker], and narrower on purpose. That one
+/// removes any trailing marker in order to find the *work's* name. This one is
+/// for a presentation that has already printed the number: a row reading
+/// **101** should not carry `"Part 101 — The Quiet Night"` underneath it, and
+/// should carry `"The Quiet Night"`.
+///
+/// **Only a marker whose number equals [number] is removed.** That is the
+/// whole safety of it: `"Part 7 recap"` on entry 101 keeps its `"Part 7"`,
+/// because 7 is something the title says and the row does not. Nothing is
+/// removed when [number] is null, and nothing else in the string is touched —
+/// no lower-casing, no reordering, no removal of a word that merely looks like
+/// a marker.
+///
+/// Returns the residue, trimmed of the punctuation the removal left behind.
+/// An empty result means the title said nothing the number had not.
+String stripEntryMarkerFor(String title, double? number) {
+  if (number == null) return title.trim();
+  final digits = number == number.roundToDouble()
+      ? '0*${number.round()}(?:[.,]0+)?'
+      : RegExp.escape('$number').replaceAll(r'\.', r'[.,]');
+
+  final wordThenNumber = RegExp(
+    _entryWordPattern + r'\s*[\.\-–—:#]?\s*' + digits + r'(?![\d.,])',
+    caseSensitive: false,
+    unicode: true,
+  );
+  final numberThenWord = RegExp(
+    r'(?<![\d.,])' + digits + r'\s*\.?\s*' + _entryWordPattern,
+    caseSensitive: false,
+    unicode: true,
+  );
+
+  var out = title.trim();
+  for (final pattern in [wordThenNumber, numberThenWord]) {
+    out = out.replaceFirst(pattern, ' ');
+  }
+  return _trimSeparators(out);
+}
+
+/// Remove [name] from [title] where the title merely repeats it.
+///
+/// Whole-token and case-insensitive, so `"Quiet Harbour Part 101"` gives up
+/// its work name and `"Quietly"` keeps every letter it has. Used by a
+/// presentation whose surface has already named the Collection; the stored
+/// title is never touched.
+String stripCollectionName(String title, String? name) {
+  final work = name?.trim() ?? '';
+  if (work.isEmpty) return _trimSeparators(title);
+  final pattern = RegExp(
+    r'(?<![\p{L}\p{N}])' + RegExp.escape(work) + r'(?![\p{L}\p{N}])',
+    caseSensitive: false,
+    unicode: true,
+  );
+  return _trimSeparators(title.replaceAll(pattern, ' '));
+}
+
+/// Collapse the whitespace and dangling punctuation a removal leaves behind.
+String _trimSeparators(String text) => text
+    .replaceAll(RegExp(r'\s+'), ' ')
+    .replaceAll(RegExp(r'^[\s\-–—:|,\.·•»]+|[\s\-–—:|,\.·•»]+$'), '')
+    .trim();
+
 /// The entry's own number, when it has one.
 ///
 /// Handles decimals (`12.5`) and reads the URL when the title is unhelpful.

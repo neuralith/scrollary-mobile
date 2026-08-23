@@ -24,6 +24,7 @@ import '../data/offline_copy_repository.dart';
 import '../data/reading_state_repository.dart';
 import '../data/schema.dart';
 import '../domain/reading_state.dart';
+import '../library/entry_presentation.dart';
 import '../save/queue_repository.dart';
 import '../save/queue_task.dart';
 import '../storage/file_store.dart';
@@ -396,6 +397,11 @@ Future<ShelfView?> _loadShelf(LibraryDatabase db, String folderId) async {
           availableOffline: offline.contains(e.id),
           sourceLabel: labels[e.id],
           progress: progress[e.id] ?? 0,
+          // The shelf spans the library, so a row here has to name itself.
+          // These are standalone Entries and have no Collection above them
+          // either way — the context is stated rather than defaulted so the
+          // next row added to this list gets the right answer.
+          context: EntryContext.acrossLibrary,
         ),
     ],
   );
@@ -430,6 +436,10 @@ Future<CollectionView?> _loadCollection(
           availableOffline: offline.contains(row.id),
           sourceLabel: labels[row.id],
           progress: progress[row.id] ?? 0,
+          // The Collection's own screen: its name is at the top of the page,
+          // so a row that repeated it would be saying it for the twelfth time.
+          context: EntryContext.withinCollection,
+          collectionName: collection.name,
         ),
     ],
   );
@@ -607,13 +617,20 @@ class ContinueReadItem {
   const ContinueReadItem({
     required this.entryId,
     required this.title,
-    this.collectionName,
+    this.subtitle,
     required this.lastReadAt,
   });
 
   final String entryId;
+
+  /// What names this Entry on a surface that spans the library: the work and
+  /// the position, because nothing above the chip says which work it is.
   final String title;
-  final String? collectionName;
+
+  /// Whatever the Entry's own title still says once [title] has said the work
+  /// and the number — usually nothing, and null when so.
+  final String? subtitle;
+
   final DateTime lastReadAt;
 }
 
@@ -636,12 +653,21 @@ final continueReadingProvider = StreamProvider<List<ContinueReadItem>>((ref) {
       if (collectionId != null) {
         collectionName = (await services.collections.byId(collectionId))?.name;
       }
-      final title = entry.title.trim();
+      // The same presentation rule the Collection list uses, asked the other
+      // question: **here the row has to name itself**, because there is no
+      // work's name above it to lean on.
+      final shown = entryPresentation(
+        context: EntryContext.acrossLibrary,
+        labels: libraryEntryLabels,
+        ordinal: entry.ordinal,
+        title: entry.title,
+        collectionName: collectionName,
+      );
       items.add(
         ContinueReadItem(
           entryId: entry.id,
-          title: title.isEmpty ? (collectionName ?? 'Item') : title,
-          collectionName: collectionName,
+          title: shown.primary,
+          subtitle: shown.secondary,
           lastReadAt: state.lastReadAt!,
         ),
       );

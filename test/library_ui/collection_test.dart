@@ -396,4 +396,204 @@ void main() {
     expect(await h.collections.byId(s.collection.id), isNotNull);
     expect(await h.entries.byId(s.held.id), isNotNull);
   });
+
+  // ─── how a serialized collection reads ──────────────────────────────────
+
+  group('a serialized collection reads as a sequence', () {
+    /// A work whose site titles every page with the work's own name — the
+    /// shape that produced four identical lines with three digits on the end.
+    Future<CollectionRow> serial() async {
+      final root = await h.root();
+      final collection = await h.collection('Quiet Harbour', folderId: root.id);
+      for (final n in [101, 102, 103]) {
+        await h.entryIn(
+          collection.id,
+          title: 'Quiet Harbour — Part $n',
+          ordinal: n.toDouble(),
+        );
+      }
+      return collection;
+    }
+
+    screenTest('the work is named once, at the top, and not on every row', (
+      tester,
+    ) async {
+      final collection = await serial();
+
+      await tester.pumpWidget(
+        h.app(CollectionScreen(collectionId: collection.id)),
+      );
+      await pumpUntil(tester, find.text('101'));
+
+      expect(find.text('101'), findsOneWidget);
+      expect(find.text('102'), findsOneWidget);
+      expect(find.text('103'), findsOneWidget);
+      expect(
+        find.text('Quiet Harbour'),
+        findsOneWidget,
+        reason: 'the header names the work; the rows are the sequence',
+      );
+      expect(
+        find.textContaining('Quiet Harbour — Part'),
+        findsNothing,
+        reason:
+            'nothing repeats the work on a screen that is already about '
+            'it',
+      );
+    });
+
+    screenTest('an entry-specific title stays, quieter than the position', (
+      tester,
+    ) async {
+      final root = await h.root();
+      final collection = await h.collection('Quiet Harbour', folderId: root.id);
+      final named = await h.entryIn(
+        collection.id,
+        title: 'Part 101 - The Quiet Night',
+        ordinal: 101,
+      );
+
+      await tester.pumpWidget(
+        h.app(CollectionScreen(collectionId: collection.id)),
+      );
+      await pumpUntil(tester, find.text('101'));
+
+      expect(find.text('The Quiet Night'), findsOneWidget);
+      final position = tester.getRect(find.text('101'));
+      final subtitle = tester.getRect(
+        find.byKey(ValueKey('entrySubtitle-${named.id}')),
+      );
+      expect(
+        subtitle.top,
+        greaterThanOrEqualTo(position.top),
+        reason: 'identity leads; the title follows it',
+      );
+    });
+
+    screenTest('the order is the sequence, not the alphabet', (tester) async {
+      final root = await h.root();
+      final collection = await h.collection('Quiet Harbour', folderId: root.id);
+      // Written out of order, and with titles whose lexical order is the
+      // reverse of their numeric one.
+      for (final n in [100, 99.5, 101, 99]) {
+        await h.entryIn(
+          collection.id,
+          title: 'Quiet Harbour Part $n',
+          ordinal: n.toDouble(),
+        );
+      }
+
+      await tester.pumpWidget(
+        h.app(CollectionScreen(collectionId: collection.id)),
+      );
+      await pumpUntil(tester, find.text('101'));
+
+      double top(String position) => tester.getTopLeft(find.text(position)).dy;
+      expect(top('99'), lessThan(top('99.5')));
+      expect(top('99.5'), lessThan(top('100')));
+      expect(top('100'), lessThan(top('101')));
+    });
+
+    screenTest('one entry read from two sources is still one row', (
+      tester,
+    ) async {
+      final root = await h.root();
+      final collection = await h.collection('Quiet Harbour', folderId: root.id);
+      final entry = await h.entryIn(
+        collection.id,
+        title: 'Quiet Harbour Part 101',
+        ordinal: 101,
+      );
+      final a = await h.source(collection.id, host: 'alpha.example');
+      final b = await h.source(
+        collection.id,
+        host: 'beta.example',
+        pathKey: 'quiet-harbour',
+      );
+      await h.location(
+        entry.id,
+        'https://alpha.example/quiet-harbour/101',
+        sourceId: a.id,
+      );
+      await h.location(
+        entry.id,
+        'https://beta.example/quiet-harbour/101',
+        sourceId: b.id,
+      );
+
+      await tester.pumpWidget(
+        h.app(CollectionScreen(collectionId: collection.id)),
+      );
+      await pumpUntil(tester, find.text('101'));
+
+      expect(find.byType(EntryRowTile), findsOneWidget);
+      expect(find.text('101'), findsOneWidget);
+    });
+
+    screenTest('an entry with no position keeps its own name', (tester) async {
+      final root = await h.root();
+      final collection = await h.collection('Quiet Harbour', folderId: root.id);
+      await h.entryIn(
+        collection.id,
+        title: 'Prologue',
+        placement: Placement.unplaced,
+      );
+
+      await tester.pumpWidget(
+        h.app(CollectionScreen(collectionId: collection.id)),
+      );
+      await pumpUntil(tester, find.text('Prologue'));
+
+      expect(find.text('Prologue'), findsOneWidget);
+    });
+  });
+
+  group('details keep what the row stopped printing', () {
+    screenTest('the title the source wrote is still there, verbatim', (
+      tester,
+    ) async {
+      final root = await h.root();
+      final collection = await h.collection('Quiet Harbour', folderId: root.id);
+      final entry = await h.entryIn(
+        collection.id,
+        title: 'Quiet Harbour — Part 101',
+        ordinal: 101,
+      );
+      final source = await h.source(collection.id, host: 'alpha.example');
+      await h.location(
+        entry.id,
+        'https://alpha.example/quiet-harbour/101',
+        sourceId: source.id,
+      );
+
+      await tester.pumpWidget(
+        h.app(CollectionScreen(collectionId: collection.id)),
+      );
+      await pumpUntil(tester, find.text('101'));
+
+      await openEntryMenu(tester, entry.id);
+      await tapAndPump(tester, find.byKey(const ValueKey('entryDetails')));
+      await pumpUntil(tester, find.byKey(const ValueKey('entryDetailsSheet')));
+
+      // The row prints `101`. Nothing was thrown away to make it do that.
+      expect(
+        find.text('Quiet Harbour — Part 101'),
+        findsOneWidget,
+        reason: 'the stored title is a record, and this is where it is read',
+      );
+      expect(find.text('Quiet Harbour'), findsWidgets);
+      expect(find.text('101'), findsWidgets);
+      expect(
+        find.text('https://alpha.example/quiet-harbour/101'),
+        findsOneWidget,
+      );
+      // `findsWidgets`: the Collection's own Sources section is on the screen
+      // behind the sheet, and it names the same host.
+      expect(find.text('alpha.example'), findsWidgets);
+      // Four independent facts, and two of them are here as themselves.
+      // `findsWidgets` again: the row underneath the sheet says Unread too.
+      expect(find.text('Unread'), findsWidgets);
+      expect(find.text('Not downloaded'), findsOneWidget);
+    });
+  });
 }

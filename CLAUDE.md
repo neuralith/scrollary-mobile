@@ -88,6 +88,11 @@ in [docs/DECISIONS.md](docs/DECISIONS.md).
   and nothing asks again after it (V2-D52), and a Collection remembers what
   it is normally saved as while the page still decides whether that is
   possible (V2-D53).
+- **How an Entry reads** (`lib/library/entry_presentation.dart`) — inside a
+  Collection a row leads with the Entry's **position**, because the work is
+  already named above the list; across the library it names itself. The
+  stored title is never modified, and *Entry details* is where the record is
+  read (V2-D55).
 - **Library UX** (`lib/library_ui`, D1–D7) — the one-page Library (root
   Collections listed directly, Folders as collapsible sections, Continue
   Reading and the Settings/Activity doors in its header — V2-D43), folder

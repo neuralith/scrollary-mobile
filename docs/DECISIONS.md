@@ -755,3 +755,41 @@ The OfflineCopy half is unchanged in what it stores — the anchor, an index int
 manifest already carries, so a reopened image reader shows the right percentage
 on its first frame instead of 0% until it has measured itself. A document keeps
 0: a paragraph has no height until it is laid out at this width.
+
+### V2-D55 · Inside a Collection, an Entry's position is its identity
+
+Every row in a Collection printed the whole title a site had written for the
+page. On a serialized work whose site titles its pages with the work's own name
+that produced a list where the only thing that varied was three digits at the
+far right of four otherwise identical lines — noise, and worse, it made an
+ordered work look unordered.
+
+`library/entry_presentation.dart` is the one rule, and it takes an
+[EntryContext] because the same Entry needs different things said about it in
+different places. **Inside the Collection** the work is named at the top of the
+screen, so the row leads with the position — `101`, `99.5` — and carries the
+Entry's own title underneath only when that title says something the position
+and the work's name have not. **Across the library** — Continue Reading,
+Activity, a search result — nothing above the row says which work this is, so
+the row names itself: `Quiet Harbour · 101`. There is deliberately no global
+rule that strips a Collection's name; a caller says where it is drawing.
+
+**Two removals, both narrow, and neither touches a stored row.** The work's
+name goes only as a whole token, so `"Quietly"` keeps every letter. A marker
+goes only when it names *this Entry's own number*: `"Part 101"` leaves Entry
+101 and stays on Entry 7, because on Entry 7 the 101 is something the title
+knows and the row does not. What survives both is returned as the site wrote
+it, so `"Part 101 — The Quiet Night"` becomes `"The Quiet Night"` and
+`"Prologue"` stays `"Prologue"`.
+
+**Nothing is deleted to make the row quieter.** *Entry details*
+(`library_ui/entry_details.dart`) is the record: the stored title verbatim,
+what the source printed, the position, the address, the Source, whether the
+Collection can be read elsewhere, the reading state and whether this device
+holds a copy — the four independent facts as four lines, and no verb on the
+sheet at all. A presentation rule with no way back to the evidence is a
+deletion wearing tidiness as a disguise.
+
+Identity, ordering and reconciliation are untouched: `_bySequence` already
+sorted by ordinal, `entries.ordinal` is unchanged, and one Entry read from two
+Sources is still one row.

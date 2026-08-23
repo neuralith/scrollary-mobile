@@ -19,6 +19,10 @@
 /// consumes the interface and applies what comes back.
 library;
 
+import '../library/entry_presentation.dart';
+
+export '../library/entry_presentation.dart' show formatOrdinal;
+
 /// One request: put [entryId] at [ordinal] in [collectionId].
 class PlacementRequest {
   const PlacementRequest({
@@ -117,14 +121,10 @@ Future<PlacementOutcome> localPlacementSubmit(PlacementRequest request) async =>
 
 /// `3`, `3.5`, `12` — never `3.0`.
 ///
-/// A trailing `.0` reads as precision the sequence does not have, and the same
-/// number must print identically in the field, the refusal and the confirmation.
-String formatOrdinal(double ordinal) {
-  if (ordinal == ordinal.roundToDouble() && ordinal.abs() < 1e15) {
-    return ordinal.toStringAsFixed(0);
-  }
-  return ordinal.toString();
-}
+/// Re-exported from `library/entry_presentation.dart`, where it moved once a
+/// Collection row started printing a position too. One implementation, so the
+/// field, the refusal, the confirmation and the row cannot print the same
+/// number four ways.
 
 /// What the user typed, or null when it is not a number yet.
 ///

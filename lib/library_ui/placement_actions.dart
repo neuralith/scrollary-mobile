@@ -24,6 +24,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../data/data_violations.dart';
+import '../library/entry_presentation.dart';
 import '../ui/palette.dart';
 import '../ui/status_style.dart';
 import 'collection_models.dart';
@@ -57,7 +58,9 @@ Future<void> placeEntryInSequence(
       occupantAt: (value) async {
         final row = await entryAtOrdinal(db, collectionId, value);
         if (row == null || row.id == view.id) return null;
-        return entryRowLabel(row);
+        // Its name, not its position: the sentence beside this already prints
+        // the position, and *"taken by 5"* answers nothing.
+        return entryOwnName(labels: libraryEntryLabels, title: row.title);
       },
     ),
   );
@@ -139,7 +142,11 @@ Future<void> _applyLocally(
     context,
     placementConflictSentence(
       ordinal: ordinal,
-      occupantLabel: occupant == null ? null : entryRowLabel(occupant),
+      // The Entry's own name, not its position: the sentence already says
+      // the position, and answering "taken by 5" would be a tautology.
+      occupantLabel: occupant == null
+          ? null
+          : entryOwnName(labels: libraryEntryLabels, title: occupant.title),
     ),
   );
 }
@@ -156,7 +163,9 @@ Future<String?> _occupantLabel(
 }) async {
   if (entryId == null) return fallback;
   final row = await ref.read(entryRepoProvider).byId(entryId);
-  return row == null ? fallback : entryRowLabel(row);
+  return row == null
+      ? fallback
+      : entryOwnName(labels: libraryEntryLabels, title: row.title);
 }
 
 /// The dialog: one number, and the duplicate this device already knows about.
