@@ -39,6 +39,38 @@ Future<EntryCaptureResult> captureTaskDirectly(
   shouldContinue: shouldContinue,
 );
 
+/// What a finished batch came to.
+///
+/// Kept because a snackbar is not an answer to "did my ten entries download".
+/// It lives on the runner rather than in a table: the queue rows are already
+/// the durable record of each entry, and this is the one sentence about the
+/// batch they belonged to. It survives navigation, and it is replaced by the
+/// next run rather than accumulating.
+class RunSummary {
+  const RunSummary({
+    required this.requested,
+    required this.downloaded,
+    required this.failed,
+    required this.cancelled,
+    required this.stoppedEarly,
+  });
+
+  /// What the batch set out to capture.
+  final int requested;
+  final int downloaded;
+  final int failed;
+  final int cancelled;
+
+  /// True when the loop ended with work still eligible — the disk gate, or a
+  /// stop. "Finished" and "stopped short" are different outcomes.
+  final bool stoppedEarly;
+
+  int get settled => downloaded + failed + cancelled;
+
+  /// Whether anything about this run needs a person.
+  bool get needsAttention => failed > 0 || stoppedEarly;
+}
+
 /// Drives the V2 save queue: claims eligible rows one at a time and runs each
 /// through [EntryCaptureService].
 ///
@@ -73,6 +105,10 @@ class QueueRunner extends ChangeNotifier {
   String? _activeTaskId;
   int _batchTotal = 0;
   int _batchDone = 0;
+  int _batchDownloaded = 0;
+  int _batchFailed = 0;
+  int _batchCancelled = 0;
+  RunSummary? _lastRun;
 
   /// True while the loop is claiming or capturing.
   bool get isRunning => _running;
@@ -90,6 +126,17 @@ class QueueRunner extends ChangeNotifier {
   /// The 1-based position of the row being captured — the *3* in "entry 3 of
   /// 10". Zero when nothing is running.
   int get batchPosition => _running ? _batchDone + 1 : 0;
+
+  /// The last finished batch, or null before the first one. Cleared by the
+  /// next [start].
+  RunSummary? get lastRun => _lastRun;
+
+  /// Forget the last run's summary — the user has read it.
+  void clearLastRun() {
+    if (_lastRun == null) return;
+    _lastRun = null;
+    notifyListeners();
+  }
 
   /// Test hook, mirroring the V1 controller's: the shell's surface and leave
   /// gates are exercised without driving a real capture.
@@ -113,6 +160,10 @@ class QueueRunner extends ChangeNotifier {
     _running = true;
     _batchTotal = 0;
     _batchDone = 0;
+    _batchDownloaded = 0;
+    _batchFailed = 0;
+    _batchCancelled = 0;
+    _lastRun = null;
     notifyListeners();
     queue.authoriseStart();
     try {
@@ -144,12 +195,33 @@ class QueueRunner extends ChangeNotifier {
         if (claimed == null) continue;
         await _run(claimed);
         _batchDone++;
+        // The row's own verdict, read back rather than inferred: a cancel that
+        // landed mid-capture is the row's answer, not the loop's.
+        switch ((await queue.byId(claimed.id))?.state) {
+          case SaveTaskState.completed:
+            _batchDownloaded++;
+          case SaveTaskState.cancelled:
+            _batchCancelled++;
+          case SaveTaskState.failed:
+            _batchFailed++;
+          case _:
+            break;
+        }
         if (!_disposed) notifyListeners();
       }
     } finally {
       queue.revokeStart();
       _activeTaskId = null;
       _running = false;
+      if (_batchTotal > 0) {
+        _lastRun = RunSummary(
+          requested: _batchTotal,
+          downloaded: _batchDownloaded,
+          failed: _batchFailed,
+          cancelled: _batchCancelled,
+          stoppedEarly: _batchDone < _batchTotal,
+        );
+      }
       if (!_disposed) notifyListeners();
     }
   }

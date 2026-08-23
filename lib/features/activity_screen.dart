@@ -22,6 +22,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../library_ui/entry_offline.dart';
+import '../library_ui/run_summary.dart';
 import '../library_ui/library_widgets.dart';
 import '../library_ui/providers.dart';
 import '../save/queue_task.dart';
@@ -96,6 +97,10 @@ class _Activity extends ConsumerWidget {
               ? () => Navigator.of(context).pop()
               : null,
         ),
+        // What the last batch came to, above the rows it produced. A run that
+        // is over says so once, here, rather than leaving the user to read a
+        // list of rows and add them up.
+        const RunSummaryCard(),
         Expanded(
           child: rows.isEmpty
               ? const LibraryEmptyState(

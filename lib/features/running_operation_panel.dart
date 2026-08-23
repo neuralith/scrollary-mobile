@@ -25,6 +25,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../library_ui/entry_offline.dart';
+import '../library_ui/run_summary.dart';
 import '../library_ui/providers.dart';
 import '../providers.dart';
 import '../save/queue_task.dart';
@@ -252,6 +253,17 @@ class _SaveRunning extends ConsumerWidget {
         const SizedBox(height: 10),
         const _IndeterminateBar(),
         const SizedBox(height: 12),
+        // Progressive disclosure: the routine surface is the counts above.
+        // What the engine actually said is one tap away, for the moment a
+        // save goes wrong and someone has to explain why.
+        Align(
+          alignment: Alignment.centerLeft,
+          child: TextButton(
+            key: const ValueKey('panelOperationDetails'),
+            onPressed: () => showOperationDetails(context, ref),
+            child: const Text('Details'),
+          ),
+        ),
         _StopRow(
           label: 'Stop download',
           note:
