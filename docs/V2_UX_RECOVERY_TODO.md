@@ -19,7 +19,7 @@ tests it.
 | 6 | Queue only / Start now / Start in background | DONE |
 | 7 | Queued work is visible and startable without scrolling | DONE |
 | 8 | Each decision asked once | DONE |
-| 9 | Tests that drive the journey, not the widget | TODO |
+| 9 | Tests that drive the journey, not the widget | DONE |
 | 10 | The routine flow stays short | TODO |
 
 ---

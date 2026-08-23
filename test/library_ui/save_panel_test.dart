@@ -14,6 +14,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:web_reader/browser/page_data.dart';
+import 'package:web_reader/capability/entitlement.dart';
+import 'package:web_reader/capability/foreground_multitasking.dart';
 import 'package:web_reader/core/config.dart';
 // STUB IMPORT — switch to 'package:web_reader/features/v2_add_flow.dart' at
 // merge.
@@ -79,14 +81,22 @@ void main() {
   /// the library; a test that seeds a Collection sets it to that one.
   late String reportedCollectionId;
 
+  /// The foreground boundary, injected so a test can say what this device may
+  /// do without reaching for a purchase of any kind.
+  late ForegroundMultitasking capability;
+
   setUp(() {
     h = UiHarness();
     browser = FakeBrowser();
     adds = [];
     standalones = [];
     reportedCollectionId = 'made-up-collection';
+    capability = ForegroundMultitasking();
   });
-  tearDown(() => h.close());
+  tearDown(() {
+    capability.dispose();
+    h.close();
+  });
 
   Future<AddToLibraryReport> fakeAdd(
     WidgetRef ref, {
@@ -159,6 +169,7 @@ void main() {
           saveQueueStarterProvider.overrideWithValue(h.starter),
           v2AddAndDownloadProvider.overrideWithValue(fakeAdd),
           v2SaveStandaloneProvider.overrideWithValue(fakeStandalone),
+          foregroundMultitaskingProvider.overrideWithValue(capability),
         ],
         child: MaterialApp(
           theme: appTheme(palette: AppPalette.light),
@@ -683,6 +694,79 @@ void main() {
       expect(
         await CapturePreferenceStore(LocalSettingsStore(h.db)).of(collectionId),
         isNull,
+      );
+    });
+  });
+
+  // ─── where the user waits, and who decides ──────────────────────────────
+
+  group('the launch row is the gate\'s own', () {
+    // The rule this pins: the operation is never gated, and the one thing Pro
+    // buys is where the user waits. Folding the launch into the scope sheet
+    // must not have folded the boundary into it — the rows come from
+    // `ForegroundStartActions`, so there is no second answer to the question
+    // anywhere in this lane.
+    Future<void> seedEntry() async {
+      final root = await h.root();
+      final collection = await h.collection('Alpha', folderId: root.id);
+      final source = await h.source(collection.id, pathKey: '/works/alpha');
+      final entry = await h.entryIn(
+        collection.id,
+        title: _entryTitle,
+        ordinal: 12,
+      );
+      await h.location(entry.id, _entryUrl, sourceId: source.id);
+      reportedCollectionId = collection.id;
+    }
+
+    Future<void> openScope(WidgetTester tester) async {
+      await openPanel(tester, _entryUrl, _entryTitle);
+      await pumpUntil(tester, key('v2DownloadEntries'));
+      await tapAndPump(tester, key('v2DownloadEntries'));
+      await tapAndPump(tester, key('saveScopeFromHere'));
+      await tester.enterText(key('saveCountField'), '3');
+      await tester.pump();
+    }
+
+    screenTest('without the capability, the visible-Browser start is fully '
+        'functional and *Queue only* needs nothing at all', (tester) async {
+      await seedEntry();
+      await openScope(tester);
+
+      expect(key('startInBrowser'), findsOneWidget);
+      expect(key('saveScopeAddToQueue'), findsOneWidget);
+      expect(
+        key('startKeepUsingApp'),
+        findsNothing,
+        reason: 'not available, so not offered as though it were',
+      );
+      expect(
+        key('startKeepUsingAppLocked'),
+        findsOneWidget,
+        reason: 'named and tappable, never a disabled control that explains '
+            'nothing',
+      );
+
+      await tapAndPump(tester, key('startInBrowser'));
+      expect(adds, hasLength(1));
+      expect(adds.single.limits!.maxEntries, 3);
+    });
+
+    screenTest('with it, the launch that keeps the user where they are is '
+        'the same one answer', (tester) async {
+      capability.override = EntitlementOverride.forcePro;
+      capability.preference = true;
+      await seedEntry();
+      await openScope(tester);
+
+      expect(key('startKeepUsingApp'), findsOneWidget);
+      await tapAndPump(tester, key('startKeepUsingApp'));
+
+      expect(adds, hasLength(1));
+      expect(
+        key('startOptionsCancel'),
+        findsNothing,
+        reason: 'the gate was answered here; nothing asks again',
       );
     });
   });
