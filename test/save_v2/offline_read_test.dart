@@ -264,6 +264,25 @@ void main() {
       expect(image.restored.isAtStart, isTrue);
     });
 
+    test('the percentage is right on the first frame, not after the first '
+        'layout', () async {
+      // The anchor is what is stored; the fraction is *derived* from it and
+      // the panel count the manifest already carried. Without one a reopened
+      // reader read 0% until it had measured itself, which is a reading it
+      // could have stated before it drew anything.
+      final captured = await captureImages();
+      final image0 = await h.read(captured.entryId) as OfflineImageRead;
+      expect(image0.pages, hasLength(3));
+
+      await h.repos.offline.saveAnchor(
+        captured.entryId,
+        anchorIndex: 1,
+        anchorOffset: 0.5,
+      );
+      final image = await h.read(captured.entryId) as OfflineImageRead;
+      expect(image.restored.fraction, closeTo(0.5, 0.0001));
+    });
+
     test(
       'the document reader restores TO its block, not at an offset',
       () async {

@@ -214,8 +214,20 @@ class EntryRowTile extends StatelessWidget {
                 ],
               ),
             ),
-            if (view.status == ReadStatus.completed)
-              Icon(Icons.check_circle, size: 18, color: palette.primary),
+            // How far through, drawn once and only when there is something to
+            // say. A completed Entry is a filled ring with a check — the same
+            // mark the row carried before, now the full state of a quantity
+            // rather than the only value of it — and an untouched one gets no
+            // indicator at all rather than an empty circle.
+            if (view.hasProgress)
+              Padding(
+                key: ValueKey('entryProgress-${view.id}'),
+                padding: const EdgeInsets.only(right: 2),
+                child: EntryProgressRing(
+                  fraction: view.readFraction,
+                  completed: view.status == ReadStatus.completed,
+                ),
+              ),
             IconButton(
               key: ValueKey('entryMenu-${view.id}'),
               tooltip: 'Entry actions',

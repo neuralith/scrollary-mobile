@@ -178,14 +178,31 @@ class OfflineDocumentRead extends OfflineRead {
 
 /// The reading position stored on a copy.
 ///
-/// Only the anchor is stored, and deliberately: an index plus an offset inside
-/// *these* bytes is the whole record. There is no per-copy fraction — a
-/// fraction that meant something would have to name the rendering it was
-/// measured against, and that is a Measurement, keyed by `(entry, source)`.
-ReadingPosition positionOfCopy(OfflineCopy copy) => ReadingPosition(
-  anchorIndex: copy.anchorIndex ?? 0,
-  offsetInAnchor: copy.anchorOffset ?? 0,
-);
+/// Only the anchor is **stored**, and deliberately: an index plus an offset
+/// inside *these* bytes is the whole record. There is no per-copy fraction
+/// column — a fraction that meant something would have to name the rendering
+/// it was measured against, and that is a Measurement, keyed by `(entry,
+/// source)`.
+///
+/// [unitCount] is how many units the package holds, when the caller knows —
+/// the panels of an image sequence, counted from the manifest it has already
+/// read. Given one, the fraction is *derived* rather than stored, which is
+/// what lets a reopened reader show the right percentage on its first frame
+/// instead of 0% until the first layout recomputes it. Without one — a
+/// document, whose blocks have no height until they are laid out at this
+/// width — the fraction stays 0 and the anchor is the whole answer, which is
+/// the honest state and the one the reader already handles.
+ReadingPosition positionOfCopy(OfflineCopy copy, {int unitCount = 0}) {
+  final index = copy.anchorIndex ?? 0;
+  final offset = copy.anchorOffset ?? 0;
+  return ReadingPosition(
+    anchorIndex: index,
+    offsetInAnchor: offset,
+    fraction: unitCount <= 0
+        ? 0
+        : ((index + offset) / unitCount).clamp(0.0, 1.0),
+  );
+}
 
 /// Resolve what the reader should open for [entryId].
 ///
@@ -226,7 +243,6 @@ Future<OfflineRead> resolveOfflineRead({
   }
 
   final entryDir = Directory(fileStore.resolve(relative));
-  final restored = positionOfCopy(copy);
 
   if (manifest.isDocument) {
     final document = await fileStore.readDocument(
@@ -244,19 +260,25 @@ Future<OfflineRead> resolveOfflineRead({
       manifest: manifest,
       entryDir: entryDir,
       document: document,
-      restored: restored,
+      // No unit count: a paragraph has no height until it has been laid out,
+      // so the anchor is the whole of what can be said before that happens.
+      restored: positionOfCopy(copy),
     );
   }
 
+  final pages = [
+    for (final asset in manifest.storedAssets)
+      _pageFor(fileStore, relative, asset),
+  ];
   return OfflineImageRead(
     copy: copy,
     manifest: manifest,
     entryDir: entryDir,
-    pages: [
-      for (final asset in manifest.storedAssets)
-        _pageFor(fileStore, relative, asset),
-    ],
-    restored: restored,
+    pages: pages,
+    // Panels are counted before anything decodes, so the percentage is right
+    // on the first frame rather than reading 0% until the reader has measured
+    // itself.
+    restored: positionOfCopy(copy, unitCount: pages.length),
   );
 }
 

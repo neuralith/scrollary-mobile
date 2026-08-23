@@ -171,6 +171,7 @@ class _WebReaderAppState extends ConsumerState<WebReaderApp>
       source.addListener(_recomputeSurface);
     }
     _tab.addListener(_recomputeSurface);
+    _tab.addListener(_onTabChangedForReading);
     _router.routerDelegate.addListener(_recomputeSurface);
     WidgetsBinding.instance.addObserver(this);
     _recomputeSurface();
@@ -196,10 +197,38 @@ class _WebReaderAppState extends ConsumerState<WebReaderApp>
       _sync.onAppResumed();
     } else {
       _sync.onAppPaused();
+      // The reader has stopped reading. The page is still loaded, so this is
+      // the last honest chance to record how far a reading at a Source got —
+      // once the app is back, the site may well have reloaded to the top.
+      unawaited(_measureSourceReading());
     }
   }
 
   bool _foreground = true;
+
+  /// Record where the page currently on screen has been read to.
+  ///
+  /// Called at the moments the app already has and nothing is invented in
+  /// between: the meter refuses a probe of a page it is not watching, a page
+  /// with no position to be at, and a reading that has not got further than
+  /// the one already recorded.
+  ///
+  /// **Never while automation owns the Browser.** A capture scrolls the page
+  /// to the bottom to enumerate it, and recording that as a reading would
+  /// mark an Entry read by downloading it — exactly the conflation
+  /// PRODUCT.md §2.3 forbids.
+  Future<void> _measureSourceReading() async {
+    final meter = ref.read(v2ServicesProvider).sourceReading;
+    if (!meter.isWatching) return;
+    if (_queueRunner.isRunning || _sourceCheck.isRunning) return;
+    if (!_browser.isAttached || _browser.isAutomating) return;
+    try {
+      await meter.record(await _browser.probe());
+    } catch (_) {
+      // A WebView mid-teardown, a page that will not answer: a measurement
+      // that could not be taken is not an error anybody needs to see.
+    }
+  }
 
   @override
   void dispose() {
@@ -208,9 +237,22 @@ class _WebReaderAppState extends ConsumerState<WebReaderApp>
     }
     _pendingSurfaceClaim.removeListener(_recomputeSurface);
     _tab.removeListener(_recomputeSurface);
+    _tab.removeListener(_onTabChangedForReading);
     _router.routerDelegate.removeListener(_recomputeSurface);
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
+  }
+
+  /// The Browser tab index, remembered so leaving it can be told from
+  /// arriving at it. Only the leaving is a moment worth measuring at.
+  int _lastTab = 0;
+
+  void _onTabChangedForReading() {
+    final was = _lastTab;
+    _lastTab = _tab.value;
+    if (was == kBrowserTabIndex && _tab.value != kBrowserTabIndex) {
+      unawaited(_measureSourceReading());
+    }
   }
 
   /// The one place that decides whether the app is painting its WebView, and

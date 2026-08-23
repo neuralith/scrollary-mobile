@@ -21,6 +21,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:web_reader/browser/browser_controller.dart';
+import 'package:web_reader/browser/page_data.dart';
 import 'package:web_reader/browser/favicon_service.dart';
 import 'package:web_reader/core/url_utils.dart';
 import 'package:web_reader/data/schema.dart';
@@ -268,6 +269,53 @@ void main() {
 
       await tester.pumpWidget(const SizedBox.shrink());
       await tester.pump(const Duration(milliseconds: 10));
+    });
+  });
+
+  group('the source-reading meter', () {
+    // `recordCompletedVisit` is where the app finds out what page is on
+    // screen, so it is where the meter is told what it is looking at.
+    // Nothing is measured here — a navigation is not a reading — but a page
+    // the library does not hold must not leave the previous target armed, or
+    // the next measurement lands on the wrong Entry.
+    test('a recognised entry becomes what the meter is watching', () async {
+      final s = await seedLibrary();
+      await browseTo(entryUrl, title: 'Quiet Harbour 3');
+
+      expect(v2.services.sourceReading.isWatching, isTrue);
+
+      // And it measures against that Entry when the page has a position.
+      final fraction = await v2.services.sourceReading.record(
+        PageProbe(
+          url: entryUrl,
+          title: '',
+          documentHeight: 4000,
+          viewportHeight: 1000,
+          scrollY: 1000,
+        ),
+      );
+      expect(fraction, 0.5);
+      final measured = await v2.library.select(v2.library.measurements).get();
+      expect(measured, hasLength(1));
+      expect(measured.single.entryId, s.entry.id);
+    });
+
+    test('moving on to a page the library does not hold disarms it', () async {
+      await seedLibrary();
+      await browseTo(entryUrl, title: 'Quiet Harbour 3');
+      expect(v2.services.sourceReading.isWatching, isTrue);
+
+      await browseTo(strangerUrl, title: 'Somewhere else');
+
+      expect(
+        v2.services.sourceReading.isWatching,
+        isFalse,
+        reason: 'history has no Entry to be a fraction of',
+      );
+      expect(
+        await v2.library.select(v2.library.measurements).get(),
+        isEmpty,
+      );
     });
   });
 }

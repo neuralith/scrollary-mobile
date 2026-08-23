@@ -79,19 +79,19 @@ void main() {
       final shape = readPageShape(
         postUrl(kHostA, 'the-quiet-part'),
         pageTitle: 'Quiet Harbour',
-        hints: const PageHints(h1: 'Chapter 123'),
+        hints: const PageHints(h1: 'Part 123'),
       );
 
       expect(shape.printedNumber, 123);
       expect(shape.kind, PageKind.entryPage);
-      expect(shape.entryLabel, 'Chapter 123');
+      expect(shape.entryLabel, 'Part 123');
     });
 
     test('the og:title counts too', () {
       final shape = readPageShape(
         postUrl(kHostA, 'the-quiet-part'),
         pageTitle: 'Quiet Harbour',
-        hints: const PageHints(ogTitle: 'Episode 42 — Quiet Harbour'),
+        hints: const PageHints(ogTitle: 'Entry 42 — Quiet Harbour'),
       );
 
       expect(shape.printedNumber, 42);
@@ -132,7 +132,7 @@ void main() {
       // `reviewEntryIdentities` is what refuses — unchanged.
       final shape = readPageShape(
         partUrl(kHostA, 102),
-        pageTitle: 'Chapter 1020',
+        pageTitle: 'Part 1020',
       );
 
       expect(shape.printedNumber, 1020, reason: 'the label is read first');

@@ -357,6 +357,7 @@ Future<ShelfView?> _loadShelf(LibraryDatabase db, String folderId) async {
     for (final list in standaloneByFolder.values)
       for (final e in list) e.id,
   ]);
+  final progress = await _progressByEntry(db);
 
   ShelfView build(FolderRow node) => ShelfView(
     folder: node,
@@ -379,6 +380,7 @@ Future<ShelfView?> _loadShelf(LibraryDatabase db, String folderId) async {
           status: status[e.id] ?? ReadStatus.unread,
           availableOffline: offline.contains(e.id),
           sourceLabel: labels[e.id],
+          progress: progress[e.id] ?? 0,
         ),
     ],
   );
@@ -401,6 +403,7 @@ Future<CollectionView?> _loadCollection(
   final status = await _statusByEntry(db);
   final offline = await _entriesWithAnActiveCopy(db);
   final labels = await _sourceLabels(db, [for (final e in rows) e.id]);
+  final progress = await _progressByEntry(db);
 
   return CollectionView.from(
     collection: collection,
@@ -411,9 +414,28 @@ Future<CollectionView?> _loadCollection(
           status: status[row.id] ?? ReadStatus.unread,
           availableOffline: offline.contains(row.id),
           sourceLabel: labels[row.id],
+          progress: progress[row.id] ?? 0,
         ),
     ],
   );
+}
+
+/// The furthest any reading of an Entry got, whichever Source it was measured
+/// against.
+///
+/// One query for the whole list, like the reading-state and offline-copy
+/// lookups beside it: a per-row read would be one statement per row on a
+/// screen that exists to show many. A Measurement keeps its Source (I12) and
+/// this deliberately does not — a *row* answers "how far through this have I
+/// got", and the per-rendering detail belongs where the renderings are named.
+Future<Map<String, double>> _progressByEntry(LibraryDatabase db) async {
+  final rows = await db.select(db.measurements).get();
+  final furthest = <String, double>{};
+  for (final row in rows) {
+    final held = furthest[row.entryId];
+    if (held == null || row.fraction > held) furthest[row.entryId] = row.fraction;
+  }
+  return furthest;
 }
 
 /// Reading state for every Entry that has a row. An absent row reads as

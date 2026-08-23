@@ -116,6 +116,12 @@ final appearanceProvider = StreamProvider<AppearanceMode>(
 Future<void> setAppearance(WidgetRef ref, AppearanceMode mode) =>
     ref.read(localSettingsProvider).set(kAppearanceSettingKey, mode.name);
 
+/// The Browser's place in the shell's bottom bar.
+///
+/// Written out as a name where new code reads it; the literal `1` still
+/// appears at the older call sites and means the same thing.
+const int kBrowserTabIndex = 1;
+
 /// One-shot requests to switch the shell's bottom tab (0 = Library,
 /// 1 = Browser). Written by widgets that live inside a tab (the activity
 /// strip's "Open Browser" action for a save holding on a hidden WebView);

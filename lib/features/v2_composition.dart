@@ -39,6 +39,8 @@ import '../sync/download_intent.dart';
 import '../sync/scheduler.dart';
 import '../sync/session.dart';
 import '../sync/transport.dart';
+import '../data/measurement_repository.dart';
+import '../reading_v2/source_reading.dart';
 import 'check_controller.dart';
 import 'v2_save_flow.dart' show V2AssistController;
 
@@ -84,6 +86,15 @@ class V2Services {
   /// a scheduler that resolves no transport and does nothing, which is a state
   /// rather than an absence.
   final SyncComposition sync;
+
+  /// Where a reading at a Source is recorded as a fraction.
+  ///
+  /// Derived rather than injected: it is one repository over the library this
+  /// object already holds, and every construction site would otherwise have to
+  /// build the same thing to hand it back.
+  late final SourceReadingMeter sourceReading = SourceReadingMeter(
+    MeasurementRepository(library),
+  );
 
   /// Set by the app root once its router exists; consumed by the
   /// entry-opener/source-opener providers. Mutable because navigation cannot
@@ -417,6 +428,22 @@ Future<void> recordCompletedVisit(
 }) async {
   if (!userInitiated || !completed) return;
   final result = await v2.recogniser.recognise(url, pageTitle: title);
+  // What is now on screen, for the meter that records how far a reading at a
+  // Source got. Set here because this is where the app finds out what the
+  // page is; nothing is measured yet, and nothing is measured at all for a
+  // page the library does not hold — that is device-local history, and
+  // history has no Entry to be a fraction of (I11).
+  final location = result is RecognisedLocation ? result : null;
+  final sourceId = location?.location.sourceId;
+  if (location != null && sourceId != null) {
+    v2.sourceReading.watch(
+      entryId: location.entry.id,
+      sourceId: sourceId,
+      url: url,
+    );
+  } else {
+    v2.sourceReading.clear();
+  }
   if (await v2.recogniser.recordAccess(result) != null) return;
   await v2.history.recordVisit(
     landedUrl: url,

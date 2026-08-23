@@ -35,6 +35,7 @@ class EntryRowView {
     required this.status,
     required this.availableOffline,
     required this.label,
+    this.progress = 0,
   });
 
   factory EntryRowView.from({
@@ -42,11 +43,13 @@ class EntryRowView {
     required ReadStatus status,
     required bool availableOffline,
     String? sourceLabel,
+    double progress = 0,
   }) => EntryRowView(
     row: row,
     status: status,
     availableOffline: availableOffline,
     label: entryRowLabel(row, sourceLabel: sourceLabel),
+    progress: progress,
   );
 
   final EntryRow row;
@@ -57,6 +60,26 @@ class EntryRowView {
   final bool availableOffline;
 
   final String label;
+
+  /// How far through this Entry a reading got, as it was measured against the
+  /// rendering it happened on — 0 when nothing has been measured.
+  ///
+  /// A Measurement is scoped to `(entry, source)` and there may be several;
+  /// what a row shows is the furthest any of them reached, because "how far
+  /// through this have I got" is a question about the Entry and the user does
+  /// not think of it per rendering. Never a claim about a download: an Entry
+  /// with no copy on this device has progress exactly when somebody read it
+  /// somewhere.
+  final double progress;
+
+  /// What the row draws. A completed Entry is 100% read because its status
+  /// says so — the rule enforced on write and again here on display (D39).
+  double get readFraction =>
+      status == ReadStatus.completed ? 1 : progress.clamp(0.0, 1.0);
+
+  /// Whether there is anything to draw at all. An untouched Entry gets no
+  /// indicator rather than an empty one.
+  bool get hasProgress => status == ReadStatus.completed || progress > 0;
 
   String get id => row.id;
 

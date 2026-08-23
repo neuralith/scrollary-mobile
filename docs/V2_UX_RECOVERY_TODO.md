@@ -14,7 +14,7 @@ tests it.
 | 1 | Capture next N captures N | DONE |
 | 2 | Open at Source brings the Browser into view | DONE |
 | 3 | Entry number and title read from page evidence | DONE |
-| 4 | Reading progress: Source and OfflineCopy | TODO |
+| 4 | Reading progress: Source and OfflineCopy | DONE |
 | 5 | The Collection remembers what to capture | TODO |
 | 6 | Queue only / Start now / Start in background | TODO |
 | 7 | Queued work is visible and startable without scrolling | TODO |
