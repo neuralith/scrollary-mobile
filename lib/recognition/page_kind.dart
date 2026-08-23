@@ -52,6 +52,7 @@ class PageShape {
     required this.collectionIndexUrl,
     required this.identityIsStrong,
     required this.couldBeListing,
+    this.entryLabel,
   });
 
   final PageKind kind;
@@ -65,6 +66,14 @@ class PageShape {
   /// The work's title as the page named it. A suggestion for the user to
   /// accept or correct — never a match key (V2-D44).
   final String? detectedTitle;
+
+  /// What the page called **this** unit of reading — its own heading, or the
+  /// head of its document title. The other half of [detectedTitle]: one names
+  /// the work, the other names the entry, and a page usually prints both.
+  ///
+  /// Null when the page named nothing, which is an answer. Never a number
+  /// invented from an address.
+  final String? entryLabel;
 
   /// Where this work's listing lives, when the page linked to one or its own
   /// address implies one.
@@ -146,6 +155,7 @@ PageShape readPageShape(
     kind: kind,
     printedNumber: number,
     detectedTitle: identity.detectedTitle,
+    entryLabel: entryLabelFrom(pageTitle: pageTitle, hints: hints),
     collectionIndexUrl: identity.collectionIndexUrl,
     identityIsStrong: strong,
     couldBeListing: strong && number == null && !belowListing && ownPath != '/',

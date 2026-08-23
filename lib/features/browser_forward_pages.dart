@@ -69,8 +69,17 @@ class BrowserForwardPageSource implements ForwardPageSource {
     }
 
     // Evidence, not identity: the number the page printed, read the one way
-    // this app reads one.
-    final shape = readPageShape(landed, pageTitle: probe.title);
+    // this app reads one — and read from **everything the probe already
+    // carried**. `probe.pageHints` holds the page's own `h1`, its `og:title`
+    // and its breadcrumb trail, which is where a great many sites print the
+    // entry's number and its name; passing only the document title threw that
+    // away one line before it was needed, and left every walked Entry
+    // unnumbered and titled with the site's name appended.
+    final shape = readPageShape(
+      landed,
+      pageTitle: probe.title,
+      hints: probe.pageHints,
+    );
 
     final next = resolveNextPage(
       probe,
@@ -90,7 +99,10 @@ class BrowserForwardPageSource implements ForwardPageSource {
     return WalkedPage(
       url: landed,
       printedNumber: shape.printedNumber,
-      title: probe.title,
+      // What the page called *this* entry, not what the browser tab said. A
+      // document title is the entry's name with the work's and the site's
+      // appended; the Entry's own row should not carry all three.
+      title: shape.entryLabel ?? probe.title,
       // `endOfChain` is null here, which the walk reads as the end of what
       // this Source publishes.
       nextUrl: next.hasNext ? next.chosen!.href : null,

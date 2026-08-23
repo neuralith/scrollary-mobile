@@ -8,6 +8,7 @@ import '../capability/foreground_gate.dart';
 import '../core/config.dart';
 import '../data/recognition_index.dart';
 import '../domain/domain.dart';
+import '../library/collection_identity.dart' show PageHints;
 import '../library_ui/collection_picker.dart';
 import '../library_ui/entry_offline.dart';
 import '../library_ui/providers.dart';
@@ -494,6 +495,12 @@ class _V2SavePanelState extends ConsumerState<V2SavePanel> {
   CaptureCapabilities _capabilities = const CaptureCapabilities.unanalysed();
   CaptureMode? _mode;
 
+  /// What the page volunteered about itself — its `h1`, its `og:title`, its
+  /// breadcrumb trail. Read from the same probe the capabilities come from,
+  /// and fed back into [readPageShape]: the number and the name a site prints
+  /// in a heading are evidence the address alone does not carry.
+  PageHints _hints = const PageHints();
+
   /// True once the user has moved the selection off the detected default. It
   /// travels onto the queue row, because "the page chose this" and "the person
   /// chose this" are different facts about the same value.
@@ -512,12 +519,14 @@ class _V2SavePanelState extends ConsumerState<V2SavePanel> {
   Future<void> _analyse() async {
     final browser = ref.read(browserProvider);
     CaptureCapabilities capabilities;
+    var hints = const PageHints();
     try {
       final probe = await browser.probe(withLinks: true);
       capabilities = detectCaptureCapabilities(
         probe,
         config: kDefaultSaveConfig,
       );
+      hints = probe.pageHints;
     } catch (_) {
       capabilities = const CaptureCapabilities.unanalysed();
     }
@@ -525,7 +534,9 @@ class _V2SavePanelState extends ConsumerState<V2SavePanel> {
     setState(() {
       _capabilities = capabilities;
       _mode = capabilities.defaultMode;
+      _hints = hints;
     });
+    await _refresh();
   }
 
   Future<void> _refresh() async {
@@ -541,6 +552,7 @@ class _V2SavePanelState extends ConsumerState<V2SavePanel> {
       _shape = readPageShape(
         widget.url,
         pageTitle: widget.pageTitle,
+        hints: _hints,
         sourcePathKey: onSource is RecognisedSource
             ? onSource.source.pathKey
             : null,

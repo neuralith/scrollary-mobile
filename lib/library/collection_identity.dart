@@ -322,6 +322,47 @@ String? sourceMarkerFrom({String? title, String? url, double? number}) {
   return title?.trim();
 }
 
+/// What the page called **this unit of reading**, when it named one.
+///
+/// The counterpart of [collectionTitleFromPageTitle], which answers the other
+/// question: that one strips the entry marker to find the *work's* name, this
+/// one keeps it, because a marker is exactly the part that names the entry.
+///
+/// Candidates in the order a page volunteers them, and the one that carries an
+/// entry marker wins wherever it sits — a heading reading "Chapter 123" names
+/// this entry, and a document title reading "Quiet Harbour" names the work
+/// however early it appears. Failing that the first non-empty candidate is
+/// used, trimmed at the separator sites append their own name after.
+///
+/// Null when nothing said anything, which leaves the Entry to whatever its
+/// caller falls back to. No number is fabricated and no site is known about.
+String? entryLabelFrom({
+  String? pageTitle,
+  PageHints hints = const PageHints(),
+}) {
+  final candidates = [hints.h1, pageTitle, hints.ogTitle];
+  String head(String text) {
+    final first = text.split(_titleSeparators).first.trim();
+    return first.isEmpty ? text.trim() : first;
+  }
+
+  for (final candidate in candidates) {
+    final text = candidate?.trim() ?? '';
+    if (text.isEmpty) continue;
+    final label = head(text);
+    if (label.isNotEmpty && parseEntryNumber(title: label) != null) {
+      return label;
+    }
+  }
+  for (final candidate in candidates) {
+    final text = candidate?.trim() ?? '';
+    if (text.isEmpty) continue;
+    final label = head(text);
+    if (label.isNotEmpty) return label;
+  }
+  return null;
+}
+
 /// Work out which collection an entry belongs to, and what to call it.
 ///
 /// Order of preference, strongest first:

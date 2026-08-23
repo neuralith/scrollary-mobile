@@ -528,4 +528,32 @@ void main() {
     expect(outcome.entries, isEmpty);
     expect(pages.reads, isEmpty);
   });
+
+  test('what the source called an entry reaches the entry and its '
+      'location', () async {
+    final it = await library(held: [101]);
+    final pages = FakeForwardPages.chain(host: kHostA, parts: [101, 102]);
+
+    final outcome = await walkOver(pages).forward(
+      fromLocationId: it.from.id,
+      wanted: 1,
+      shouldContinue: alwaysContinue,
+    );
+
+    expect(outcome.resolved, 1);
+    final entries = await entriesOf(it.collection);
+    final walked = entries.firstWhere((e) => e.ordinal == 102);
+    expect(
+      walked.title,
+      'Part 102',
+      reason: 'the Entry is named by what the page called it',
+    );
+    final locations = await locationsOf(walked.id);
+    expect(
+      locations.single.sourceLabel,
+      'Part 102',
+      reason: 'and the Location keeps what this Source printed, as a listing '
+          'row does',
+    );
+  });
 }

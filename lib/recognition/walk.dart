@@ -378,6 +378,10 @@ class LibrarySourceWalk implements SourceWalk {
       url: page.url,
       urlKey: normalizeUrl(page.url),
       sourceId: source.id,
+      // What this Source printed for this Entry, kept on the Location beside
+      // the number — the same pair a listing's own row carries, so two rows
+      // discovered two ways describe themselves the same way.
+      sourceLabel: page.title,
       sourceNumber: page.printedNumber,
       discoveryBasis: kForwardWalkBasis,
     );
