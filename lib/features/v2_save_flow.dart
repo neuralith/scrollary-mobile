@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../browser/browser_controller.dart';
+import '../capability/foreground_gate.dart';
 import '../core/config.dart';
 import '../data/recognition_index.dart';
 import '../domain/domain.dart';
@@ -16,6 +17,7 @@ import '../recognition/history.dart';
 import '../recognition/page_kind.dart';
 import '../recognition/recognise.dart';
 import '../recognition/reconcile.dart';
+import '../recognition/walk.dart';
 import '../save/capture_mode.dart';
 import '../save/capture_policy.dart';
 import '../save/entry_capture.dart';
@@ -26,6 +28,7 @@ import '../save/selection_request.dart';
 import '../ui/palette.dart';
 import '../ui/status_style.dart';
 import 'capture_mode_section.dart';
+import 'foreground_gate_sheet.dart';
 import 'selection_overlay.dart';
 // STUB IMPORT — switch to 'v2_add_flow.dart' at merge.
 import 'v2_add_flow.dart';
@@ -386,12 +389,49 @@ typedef V2AddAndDownloadFn =
       String? folderId,
       SaveLimits? limits,
       bool isListing,
+
+      /// The count is a claim about the **Source**: queue what the library
+      /// holds and, for whatever is missing, read forward on the Source the
+      /// user is on to find it (docs/V2_SAVE_FLOW.md §4).
+      bool discoverMissing,
       CaptureMode? captureMode,
       bool captureModeIsUserSet,
     });
 
 final v2AddAndDownloadProvider = Provider<V2AddAndDownloadFn>(
-  (ref) => v2AddAndDownload,
+  (ref) => _addAndDownloadUntilTheWalkLands,
+);
+
+// AT MERGE — delete this adapter and restore `(ref) => v2AddAndDownload`.
+//
+// `discoverMissing` is the parameter the walk half is adding to
+// `v2AddAndDownload`; until that function carries it, the flag is accepted at
+// this seam and dropped. Everything above it is real — the sheet asks the
+// question, the panel gates the answer and passes it on — and the only half
+// missing is the reading forward itself.
+Future<AddToLibraryReport> _addAndDownloadUntilTheWalkLands(
+  WidgetRef ref, {
+  required String url,
+  required String pageTitle,
+  String? collectionId,
+  String? newCollectionName,
+  String? folderId,
+  SaveLimits? limits,
+  bool isListing = false,
+  bool discoverMissing = false,
+  CaptureMode? captureMode,
+  bool captureModeIsUserSet = false,
+}) => v2AddAndDownload(
+  ref,
+  url: url,
+  pageTitle: pageTitle,
+  collectionId: collectionId,
+  newCollectionName: newCollectionName,
+  folderId: folderId,
+  limits: limits,
+  isListing: isListing,
+  captureMode: captureMode,
+  captureModeIsUserSet: captureModeIsUserSet,
 );
 
 typedef V2SaveStandaloneFn =
@@ -442,6 +482,19 @@ class _V2SavePanelState extends ConsumerState<V2SavePanel> {
 
   String? _message;
   bool _busy = false;
+
+  /// True while a run that may read this Source forward is in flight.
+  ///
+  /// **AT MERGE.** The compact running surface for content-affecting source
+  /// automation is `running_operation_panel.dart`, which draws *Downloading*
+  /// over `QueueRunner` and *Checking* over `CheckController` — each of which
+  /// publishes exactly *is it running* and *stop it*. The walk needs the same
+  /// two things published by whatever owns it, and then a third branch in that
+  /// panel with a Stop wired to its cancel, exactly as `_CheckRunning` does.
+  /// Until that seam exists this sentence is what names the operation while it
+  /// happens; it claims nothing the app cannot do yet, and it is not a second
+  /// status surface.
+  bool _readingForward = false;
 
   /// The Collection an index page was just added as, so the check can be
   /// offered in the same breath — the listing itself is not an Entry, so
@@ -523,12 +576,17 @@ class _V2SavePanelState extends ConsumerState<V2SavePanel> {
   Future<AddToLibraryReport?> _run(
     Future<AddToLibraryReport> Function() call, {
     bool startNow = false,
+    bool readsForward = false,
   }) async {
-    setState(() => _busy = true);
+    setState(() {
+      _busy = true;
+      _readingForward = readsForward;
+    });
     final report = await call();
     if (!mounted) return report;
     setState(() {
       _busy = false;
+      _readingForward = false;
       _message = report.sentence ?? _fallbackSentence(report);
     });
     // The explicit Start, and the only one: `startQueuedDownloads` authorises
@@ -556,17 +614,23 @@ class _V2SavePanelState extends ConsumerState<V2SavePanel> {
     return 'Added to your library · $queued waiting for Start.$short';
   }
 
-  Future<void> _download({required SaveLimits limits, bool startNow = false}) {
+  Future<void> _download({
+    required SaveLimits limits,
+    bool startNow = false,
+    bool discoverMissing = false,
+  }) {
     return _run(
       () => ref.read(v2AddAndDownloadProvider)(
         ref,
         url: widget.url,
         pageTitle: widget.pageTitle,
         limits: limits,
+        discoverMissing: discoverMissing,
         captureMode: _mode,
         captureModeIsUserSet: _modeIsUserSet,
       ),
       startNow: startNow,
+      readsForward: discoverMissing,
     );
   }
 
@@ -577,7 +641,56 @@ class _V2SavePanelState extends ConsumerState<V2SavePanel> {
       collectionName: collectionName,
     );
     if (scope == null || !mounted) return;
-    await _download(limits: scope.limits, startNow: scope.startNow);
+    if (!await _authoriseReadingForward(scope)) return;
+    await _download(
+      limits: scope.limits,
+      startNow: scope.startNow,
+      discoverMissing: scope.discoverMissing,
+    );
+  }
+
+  /// A run that may open pages asks the same question the check asks.
+  ///
+  /// **Why it is asked before the run rather than at the first page.** Whether
+  /// anything has to be opened is what the walk finds out; a sheet that
+  /// appeared once a gap was found would be asking permission after the app
+  /// had already gone to the site. So the question is asked whenever the
+  /// answer *could* involve opening one: the count is a claim about the Source
+  /// and it is more than the page in front of the user. A count of one opens
+  /// nothing and is never gated, and neither is the quieter range, which reads
+  /// the library and stops.
+  ///
+  /// The gate decides **where the user waits**, never whether the work
+  /// happens: backing out of the sheet starts nothing and changes nothing, and
+  /// this file asks no question of its own about what a person may do — it
+  /// reuses the one sheet that asks, exactly as `startCollectionCheck` does.
+  Future<bool> _authoriseReadingForward(SaveScopeChoice scope) async {
+    final wanted = scope.limits.maxEntries;
+    if (!scope.discoverMissing || wanted <= 1) return true;
+    final choice = await showStartOptionsSheet(
+      context: context,
+      ref: ref,
+      action: ForegroundGateAction.startEntrySave,
+      title: 'Download $wanted entries from here?',
+      summary:
+          'Scrollary downloads up to $wanted entries, from this page onward — '
+          'counting this one. For any your library does not have yet, it '
+          'opens this site in the Browser and reads forward to find them, at '
+          'most $kMaxWalkPages pages. Nothing else is downloaded, and you can '
+          'stop it at any point.',
+    );
+    if (choice == null || !mounted) return false;
+    if (choice == StartChoice.enableAndKeepUsingApp) {
+      await setKeepWorkingPreference(ref, true);
+      if (!mounted) return false;
+    }
+    // Browser first, automation second — the order `startCollectionCheck`
+    // starts in, and for its reason: the surface has to be there before
+    // anything opens a page on it.
+    if (choice == StartChoice.inBrowser) {
+      ref.read(shellTabRequestProvider).value = 1;
+    }
+    return true;
   }
 
   /// Add this page to a Collection that already holds it as a Source.
@@ -590,7 +703,9 @@ class _V2SavePanelState extends ConsumerState<V2SavePanel> {
     if (askHowMany) {
       scope = await showSaveScopeSheet(context, collectionName: collectionName);
       if (scope == null || !mounted) return;
+      if (!await _authoriseReadingForward(scope)) return;
     }
+    final discoverMissing = scope?.discoverMissing ?? false;
     await _run(
       () => ref.read(v2AddAndDownloadProvider)(
         ref,
@@ -598,10 +713,12 @@ class _V2SavePanelState extends ConsumerState<V2SavePanel> {
         pageTitle: widget.pageTitle,
         collectionId: collectionId,
         limits: scope?.limits ?? SaveLimits.forScope(SaveScope.currentPageOnly),
+        discoverMissing: discoverMissing,
         captureMode: _mode,
         captureModeIsUserSet: _modeIsUserSet,
       ),
       startNow: scope?.startNow ?? false,
+      readsForward: discoverMissing,
     );
   }
 
@@ -627,7 +744,9 @@ class _V2SavePanelState extends ConsumerState<V2SavePanel> {
     if (!indexOnly) {
       scope = await showSaveScopeSheet(context, collectionName: name);
       if (scope == null || !mounted) return;
+      if (!await _authoriseReadingForward(scope)) return;
     }
+    final discoverMissing = scope?.discoverMissing ?? false;
 
     final report = await _run(
       () => ref.read(v2AddAndDownloadProvider)(
@@ -645,6 +764,7 @@ class _V2SavePanelState extends ConsumerState<V2SavePanel> {
         // Null is not "no limit" — it is *queue nothing*, which is what a
         // listing asks for.
         limits: scope?.limits,
+        discoverMissing: discoverMissing,
         // The sheet already asked the library whether this address is a
         // Source's own page; the orchestration is told rather than guessing
         // it a second time from the URL.
@@ -653,6 +773,7 @@ class _V2SavePanelState extends ConsumerState<V2SavePanel> {
         captureModeIsUserSet: _modeIsUserSet,
       ),
       startNow: scope?.startNow ?? false,
+      readsForward: discoverMissing,
     );
 
     final collectionId = report?.collectionId;
@@ -759,6 +880,12 @@ class _V2SavePanelState extends ConsumerState<V2SavePanel> {
           task.state == SaveTaskState.queued
               ? 'Queued — waiting for Start.'
               : 'Downloading now.',
+        ),
+      if (_readingForward)
+        _note(
+          palette,
+          'Reading this site forward from this page to find the entries you '
+          'asked for. Nothing else is downloaded.',
         ),
       if (_message != null) _note(palette, _message!),
       const SizedBox(height: 12),
