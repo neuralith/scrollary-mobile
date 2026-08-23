@@ -19,6 +19,7 @@ import 'data/schema.dart' show LibraryDatabase;
 import 'data/reading_state_repository.dart';
 import 'features/check_controller.dart';
 import 'features/operation_progress.dart';
+import 'library_ui/run_summary.dart';
 import 'features/source_observation_browser.dart';
 import 'features/v2_composition.dart';
 import 'features/v2_save_flow.dart';
@@ -189,6 +190,10 @@ class _AppBootState extends State<AppBoot> with WidgetsBindingObserver {
                 // only from the Browser it is parked on.
                 assistHoldProvider.overrideWithValue(_startup.v2.assist),
                 operationProgressProvider.overrideWithValue(_startup.progress),
+                // The card is drawn on Activity, which is mounted on surfaces
+                // that have no runner; null there means "no run has happened",
+                // which is what it should draw.
+                runSummarySourceProvider.overrideWithValue(_startup.v2.runner),
               ],
               child: const WebReaderApp(),
             ),

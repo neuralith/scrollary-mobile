@@ -64,13 +64,22 @@ String runSummaryDetail(RunSummary run) {
   return parts.join(' · ');
 }
 
+/// Where the summary comes from.
+///
+/// A nullable seam rather than [queueRunnerProvider] itself: Activity is
+/// mounted on surfaces that have no runner — and "no runner" is honestly "no
+/// run has happened", which is exactly what the card should draw. Composition
+/// overrides it with the one runner the app drains through.
+final runSummarySourceProvider = Provider<QueueRunner?>((ref) => null);
+
 /// The card Activity shows above the list once a batch is over.
 class RunSummaryCard extends ConsumerWidget {
   const RunSummaryCard({super.key});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final runner = ref.watch(queueRunnerProvider);
+    final runner = ref.watch(runSummarySourceProvider);
+    if (runner == null) return const SizedBox.shrink();
     return AnimatedBuilder(
       animation: runner,
       builder: (context, _) {
@@ -170,7 +179,7 @@ class _Card extends ConsumerWidget {
       if (await queue.retry(task.id) != null) again++;
     }
     if (!context.mounted) return;
-    ref.read(queueRunnerProvider).clearLastRun();
+    ref.read(runSummarySourceProvider)?.clearLastRun();
     showLibraryMessage(
       context,
       again == 0
