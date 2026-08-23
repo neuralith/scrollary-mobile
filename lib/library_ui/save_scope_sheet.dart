@@ -30,7 +30,11 @@ import '../ui/status_style.dart';
 
 /// The range the user chose, and whether they asked for it to start.
 class SaveScopeChoice {
-  const SaveScopeChoice({required this.limits, required this.startNow});
+  const SaveScopeChoice({
+    required this.limits,
+    required this.startNow,
+    this.discoverMissing = false,
+  });
 
   /// Built only ever through [SaveLimits.forScope], so there is no
   /// representation of an unbounded run in this file.
@@ -39,6 +43,15 @@ class SaveScopeChoice {
   /// True for *Start now*: authorise the waiting queue as well as adding to
   /// it. False leaves the rows waiting, which is what they do by default.
   final bool startNow;
+
+  /// True when the count is a claim about the **Source** rather than about
+  /// the library: if the later Entries are not known yet, read forward on
+  /// this site to find them (docs/V2_SAVE_FLOW.md §4).
+  ///
+  /// False keeps the older, quieter behaviour — queue what the library
+  /// already holds and say how many that was. Both are real answers, and the
+  /// one that opens a site is the one the user picked.
+  final bool discoverMissing;
 }
 
 /// Ask how much of [collectionName] to download, starting from this page.

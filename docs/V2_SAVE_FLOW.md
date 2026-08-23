@@ -75,7 +75,44 @@ Rules that bind every row:
   sheet may offer both in one tap, but they remain two operations
   (PRODUCT.md §2.4).
 
-## 4. How much
+## 4. How much, and how far
+
+**What a typed count means.** It counts the Entry in front of the user as the
+first one. Ten, from entry 101, means 101 through 110 — not 101 plus ten more.
+The sheet says "from this page onward" and the planner walks the Collection's
+order from the starting Entry inclusive; both halves have meant this since the
+count was restored, and nothing below changes it.
+
+Two operations answer that count, and they are not the same question:
+
+| | **Download the ones I have** | **Download the next N from here** |
+|---|---|---|
+| The count is a claim about | the library | the **Source** |
+| Opens a page | never | only for the ones the library is missing |
+| Missing Entries | reported as a short plan | found by reading forward on this Source |
+| Implemented by | `SaveScopePlanner` | `SourceWalk` (`lib/recognition/walk.dart`), then the planner |
+
+The second is what people mean when they are reading entry 101 and ask for ten:
+the library usually knows four of them, and stopping at four because the rest
+had never been seen is the limitation this exists to remove. It is chosen in
+the sheet (`SaveScopeChoice.discoverMissing`), because it opens the site — and
+content-affecting source automation is always user-started, visible, bounded
+and cancellable, exactly like the update check.
+
+The walk is bounded twice: by the typed count, and by `kMaxWalkPages` pages
+opened. It follows only what the page's own links assert, through the same
+`resolveNextPage` capture uses — a number in a URL never manufactures the
+address after it. Every page it reads is reconciled through `EntryReconciler`
+before anything is queued, so an Entry the Collection already holds at that
+position gains a Location rather than a twin, and an address already held is
+reused untouched. A next address that is not on this Source ends the walk.
+
+Ending is never failure: `countReached` and `endOfSource` are both normal, and
+"there were only six" is an answer about the Source. A walk that stops early —
+a page that would not render, a next control only the user can point at, a
+cancellation — keeps every Entry it had already resolved.
+
+## 5. How much (the bound)
 
 The count is `SaveScope.fixedCount` with a typed number, clamped by
 `SaveLimits.forScope` to `SaveConfig.maxEntriesPerRun` — the V1 rule,
@@ -94,7 +131,7 @@ Capture itself is unchanged: each planned save is one `save_queue` row against
 Nothing here starts a run — a queued row waits for an explicit Start, as it
 always has.
 
-## 5. Cross-source equivalence
+## 6. Cross-source equivalence
 
 Entry reconciliation has exactly one implementation, `EntryReconciler`
 (`lib/recognition/reconcile.dart`), used by `SourceDiscovery` and by every
