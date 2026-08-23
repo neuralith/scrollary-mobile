@@ -58,8 +58,8 @@ void main() {
       );
       expect(
         sentence,
-        'Read 3 page(s) and found nothing new. There is more of the list to '
-        'read — check again to continue.',
+        'Read what it is allowed to in one go and found nothing new — check '
+        'again to carry on.',
       );
       expect(
         sentence,
@@ -99,7 +99,7 @@ void main() {
       expect(
         sentence,
         '2 new entries added. There is more of the list to read — check again '
-        'to continue.',
+        'to carry on.',
       );
       expect(
         sentence,
@@ -125,6 +125,65 @@ void main() {
           _outcome(found: 3, stop: SourceCheckStop.cancelledByUser),
         ),
         'Stopped. The 3 found so far are in your library.',
+      );
+    });
+
+    test('a reading that could not happen never says "check again"', () {
+      // The regression: nine of twelve stop reasons produced "Read 0 page(s)
+      // and found nothing new. There is more of the list to read — check
+      // again to continue." That is false in all nine, and it tells the user
+      // to repeat an action that will fail identically.
+      const cannotBeRepeatedAway = [
+        SourceCheckStop.preferredSourceNotChosen,
+        SourceCheckStop.collectionNotFollowed,
+        SourceCheckStop.sourceNotReadable,
+        SourceCheckStop.sourceUnknown,
+        SourceCheckStop.listingUnreadable,
+        SourceCheckStop.listingUnrecognised,
+        SourceCheckStop.listingTruncated,
+        SourceCheckStop.listingOrderingAmbiguous,
+        SourceCheckStop.entryIdentityUnsupported,
+      ];
+
+      final said = <String>{};
+      for (final stop in cannotBeRepeatedAway) {
+        final sentence = checkOutcomeSentence(_outcome(stop: stop));
+        expect(
+          sentence,
+          isNot(contains('check again')),
+          reason: '$stop cannot be fixed by checking again',
+        );
+        expect(
+          sentence,
+          isNot(contains('Up to date')),
+          reason: '$stop concluded nothing, so it may not report currency',
+        );
+        said.add(sentence);
+      }
+
+      expect(
+        said,
+        hasLength(cannotBeRepeatedAway.length),
+        reason: 'each condition says what is actually wrong with it',
+      );
+    });
+
+    test('more than one site with none preferred says which choice to '
+        'make', () {
+      expect(
+        checkOutcomeSentence(
+          _outcome(stop: SourceCheckStop.preferredSourceNotChosen),
+        ),
+        contains('Choose which one to check'),
+      );
+    });
+
+    test('an archived collection is told it is archived', () {
+      expect(
+        checkOutcomeSentence(
+          _outcome(stop: SourceCheckStop.collectionNotFollowed),
+        ),
+        contains('archived'),
       );
     });
 
@@ -203,7 +262,7 @@ void main() {
     final cancel = find.byKey(const ValueKey('startOptionsCancel'));
     final inBrowser = find.byKey(const ValueKey('startInBrowser'));
 
-    screenTest('the start sheet states both of the check\'s limits in words', (
+    screenTest('the start sheet states what the check will actually do', (
       tester,
     ) async {
       await seed();
@@ -212,10 +271,14 @@ void main() {
       await _settle(tester);
 
       expect(find.textContaining(collectionName), findsWidgets);
+      // The production reading takes one page — the observation source
+      // reports no continuation — so the sheet must say one page rather than
+      // quoting a ceiling nothing reaches. A bound the user cannot see is not
+      // a bound they consented to; a bound that is not real is worse.
       expect(
-        find.textContaining('${kCollectionCheckLimits.maxPages} pages'),
+        find.textContaining('one page'),
         findsOneWidget,
-        reason: 'a bound the user cannot see is not a bound they consented to',
+        reason: 'the sentence a user consents to has to be true',
       );
       expect(
         find.textContaining(

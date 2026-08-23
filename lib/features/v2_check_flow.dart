@@ -63,10 +63,14 @@ Future<SourceCheckOutcome?> startCollectionCheck(
     ref: ref,
     action: ForegroundGateAction.startCollectionCheck,
     title: 'Check $collectionName for new entries?',
+    // What it actually does, not what the limits allow. The production
+    // reading takes one page — `BrowserSourceObservationSource` reports no
+    // continuation — so promising "up to 3 pages" described a ceiling nothing
+    // reaches, and the sentence a user reads before consenting has to be true.
     summary:
         'Scrollary opens this collection\'s site in the Browser and reads its '
-        'list — up to ${kCollectionCheckLimits.maxPages} pages, adding at '
-        'most ${kCollectionCheckLimits.maxNewEntries} new entries. '
+        'list of entries — one page, adding at most '
+        '${kCollectionCheckLimits.maxNewEntries} new entries. '
         'Nothing is downloaded. You can stop it at any point.',
   );
   if (choice == null || !context.mounted) return null;
@@ -102,25 +106,74 @@ String checkOutcomeSentence(SourceCheckOutcome? outcome) {
         'now.';
   }
   final found = outcome.newEntryIds.length;
-  final more = outcome.stopReason != null;
-  if (outcome.stopReason == SourceCheckStop.cancelledByUser) {
+  final stop = outcome.stopReason;
+
+  // A reading that was cut short still found what it found, and a reading that
+  // could not happen at all found nothing — those are different sentences, and
+  // the second must never invite the user to repeat an action that cannot
+  // succeed. Each stop below says what is actually wrong, and what would fix
+  // it where anything would.
+  final refusal = switch (stop) {
+    SourceCheckStop.preferredSourceNotChosen =>
+      'This collection is published on more than one site. Choose which one '
+          'to check from its Sources.',
+    SourceCheckStop.collectionNotFollowed =>
+      'This collection is archived, so it is not being kept current. Follow '
+          'it again to check it.',
+    SourceCheckStop.sourceNotReadable =>
+      'The site this collection was published on is marked as gone, so there '
+          'is nothing to read.',
+    SourceCheckStop.sourceUnknown =>
+      'This collection has no site recorded, so there is nothing to check.',
+    // Not [kCaptureRestrictedMessage]: that sentence is about *saving*, and
+    // a check saves nothing. Same policy, same posture — the app's own
+    // refusal, never something the site did — said about the right act.
+    SourceCheckStop.captureRestrictedForSite =>
+      'This collection\'s site is one Scrollary does not read from.',
+    SourceCheckStop.listingUnreadable =>
+      'That page would not load, so nothing could be read from it.',
+    SourceCheckStop.listingUnrecognised =>
+      'That page did not look like this collection\'s list of entries, so '
+          'nothing was read from it.',
+    SourceCheckStop.listingTruncated =>
+      'Only part of the list could be read, so nothing was concluded from it.',
+    SourceCheckStop.listingOrderingAmbiguous =>
+      'The list did not run in an order Scrollary could follow, so nothing '
+          'was concluded from it.',
+    SourceCheckStop.entryIdentityUnsupported =>
+      'The list contradicted itself about an entry\'s number, so the reading '
+          'was stopped rather than guessed at.',
+    _ => null,
+  };
+
+  if (stop == SourceCheckStop.cancelledByUser) {
     return found == 0
         ? 'Stopped. Nothing was added, and nothing was removed.'
         : 'Stopped. The $found found so far are in your library.';
   }
-  if (outcome.isCaptureRestricted) {
-    return 'This collection\'s site is one Scrollary does not read from.';
-  }
+
+  // These end the reading before it can claim anything, so they never carry a
+  // count — and they never say "check again", because checking again does the
+  // same thing.
+  if (refusal != null && found == 0) return refusal;
+
+  final added = found == 1 ? '1 new entry' : '$found new entries';
+  // The ceilings are the one case where checking again genuinely continues:
+  // the reading stopped because it had taken as much as it is allowed to, not
+  // because anything was wrong.
+  final hasMore =
+      stop == SourceCheckStop.pageLimitReached ||
+      stop == SourceCheckStop.newEntryLimitReached;
+
   if (found == 0) {
-    return more
-        ? 'Read ${outcome.pagesRead} page(s) and found nothing new. There is '
-              'more of the list to read — check again to continue.'
+    return hasMore
+        ? 'Read what it is allowed to in one go and found nothing new — check '
+              'again to carry on.'
         : 'Up to date. Nothing new on this collection\'s site.';
   }
-  final added = found == 1 ? '1 new entry' : '$found new entries';
-  return more
+  return hasMore
       ? '$added added. There is more of the list to read — check again to '
-            'continue.'
+            'carry on.'
       : '$added added to your library. Nothing was downloaded.';
 }
 
