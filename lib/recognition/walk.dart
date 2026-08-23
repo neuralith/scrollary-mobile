@@ -33,7 +33,14 @@
 ///   Entries already resolved stay resolved.
 library;
 
+import '../core/url_utils.dart';
+import '../data/collection_repository.dart';
+import '../data/entry_repository.dart';
+import '../data/recognition_index.dart';
 import '../data/schema.dart';
+import '../domain/collection.dart';
+import 'recognise.dart' show RecognitionKeys;
+import 'reconcile.dart';
 
 /// Why a walk ended. Every one of these is an ordinary answer.
 enum WalkStop {
@@ -112,9 +119,16 @@ abstract class ForwardPageSource {
   /// never mid-read. [source] is the Source the walk belongs to, so an
   /// implementation can report [WalkStop.leftTheSource] for an address that
   /// is not on it.
+  ///
+  /// [visited] is the walk's own set of normalised addresses, the ones it has
+  /// already read. It is handed in rather than kept here because one
+  /// implementation serves every walk, and a next-page resolver that cannot
+  /// see where the walk has been will follow a site's *previous* link back
+  /// round for as many pages as its ceiling allows.
   Future<WalkedPage> read({
     required String url,
     required SourceRow source,
+    required Set<String> visited,
     required bool Function() shouldContinue,
   });
 }
@@ -200,4 +214,198 @@ abstract class SourceWalk {
     required bool Function() shouldContinue,
     int maxPages = kMaxWalkPages,
   });
+}
+
+/// How a Location found by walking a Source forward says it was found.
+///
+/// One spelling, beside `kSourceListingBasis` and for the same reason: two
+/// rows discovered the same way must not disagree about how they were.
+const String kForwardWalkBasis = 'forwardWalk';
+
+/// The walk, over the library's own repositories.
+///
+/// Everything it decides is decided elsewhere and called from here: which
+/// Entry an address belongs to is [EntryReconciler]'s, what an address keys is
+/// [RecognitionKeys]'s, and what the next page is belongs to the
+/// [ForwardPageSource] — which on a device is the same `resolveNextPage`
+/// capture uses. What is *here* is the order those happen in, the two
+/// ceilings, and the fact that every stop keeps what it had already resolved.
+class LibrarySourceWalk implements SourceWalk {
+  LibrarySourceWalk({
+    required this._entries,
+    required this._collections,
+    required this._index,
+    required this._pages,
+  });
+
+  final EntryRepository _entries;
+  final CollectionRepository _collections;
+  final RecognitionIndex _index;
+  final ForwardPageSource _pages;
+
+  /// The one cross-source equivalence decision there is (V2-D16).
+  late final EntryReconciler _reconciler = EntryReconciler(
+    entries: _entries,
+    index: _index,
+  );
+
+  @override
+  Future<WalkOutcome> forward({
+    required String fromLocationId,
+    required int wanted,
+    required bool Function() shouldContinue,
+    int maxPages = kMaxWalkPages,
+  }) async {
+    final resolved = <WalkedEntry>[];
+    var pagesRead = 0;
+    WalkOutcome ended(WalkStop stop) => WalkOutcome(
+      entries: List.unmodifiable(resolved),
+      stop: stop,
+      pagesRead: pagesRead,
+      requested: wanted,
+    );
+
+    // **The Source is the one being read** — the starting Location's own, and
+    // never the Collection's preferred one or its first active one. A
+    // standalone Entry's Location has none, so there is no Source to walk and
+    // nothing is opened.
+    final start = await _entries.locationById(fromLocationId);
+    final sourceId = start?.sourceId;
+    if (start == null || sourceId == null) return ended(WalkStop.leftTheSource);
+    final source = await _collections.sourceById(sourceId);
+    if (source == null) return ended(WalkStop.leftTheSource);
+    final collection = await _collections.byId(source.collectionId);
+    if (collection == null) return ended(WalkStop.leftTheSource);
+    final basis = OrderingBasis.values.byName(collection.orderingBasis);
+
+    // Where the walk has been. Seeded with the page it starts on, so a site
+    // whose "next" points back at the entry the reader is already on ends the
+    // walk instead of circling.
+    final visited = <String>{normalizeUrl(start.url)};
+    var currentUrl = start.url;
+
+    /// Whether the page about to be read is one the walk still owes an Entry
+    /// for. The starting page is not: it is what the count counts *from*.
+    var owesAnEntry = false;
+
+    while (true) {
+      if (resolved.length >= wanted) return ended(WalkStop.countReached);
+      if (pagesRead >= maxPages) return ended(WalkStop.pageCeiling);
+      if (!shouldContinue()) return ended(WalkStop.cancelledByUser);
+
+      final page = await _pages.read(
+        url: currentUrl,
+        source: source,
+        visited: visited,
+        shouldContinue: shouldContinue,
+      );
+      pagesRead++;
+      final stop = page.stop;
+      // Nothing is written for a page the walk could not read, and everything
+      // written before it stays written.
+      if (stop != null) return ended(stop);
+      visited.add(normalizeUrl(page.url));
+
+      if (owesAnEntry) {
+        // Judged where the reading LANDED, never where it aimed: a redirect
+        // off this Source must not become a Location claiming to be on it.
+        if (!_isOnSource(page.url, source)) {
+          return ended(WalkStop.leftTheSource);
+        }
+        final landed = await _index.lookupUrl(normalizeUrl(page.url));
+        if (landed != null) {
+          resolved.add(_reuse(landed));
+        } else {
+          final walked = await _resolve(
+            collectionId: source.collectionId,
+            basis: basis,
+            source: source,
+            page: page,
+          );
+          // The library refused the row. The app stops rather than working
+          // around it, and says the page is one it could not take.
+          if (walked == null) return ended(WalkStop.unreadable);
+          resolved.add(walked);
+        }
+        owesAnEntry = false;
+        if (resolved.length >= wanted) return ended(WalkStop.countReached);
+      }
+
+      // **No address is invented**: the next page is whatever the page's own
+      // links asserted, and nothing at all is an ordinary end.
+      final next = page.nextUrl;
+      if (next == null) return ended(WalkStop.endOfSource);
+      final nextKey = normalizeUrl(next);
+      if (visited.contains(nextKey)) return ended(WalkStop.endOfSource);
+
+      // An address the library already holds is reused as it stands: no row
+      // is written, and it still counts toward what was asked for.
+      final held = await _index.lookupUrl(nextKey);
+      if (held != null) {
+        resolved.add(_reuse(held));
+        currentUrl = held.location.url;
+        continue;
+      }
+      if (!_isOnSource(next, source)) return ended(WalkStop.leftTheSource);
+      currentUrl = next;
+      owesAnEntry = true;
+    }
+  }
+
+  /// Reconcile one read page into the Collection, then give it an address.
+  ///
+  /// Null means the library refused, and nothing partial is claimed: a
+  /// refused Location leaves an Entry with no address, which is a visible
+  /// state the user can act on rather than a row that lies about where it can
+  /// be read.
+  Future<WalkedEntry?> _resolve({
+    required String collectionId,
+    required OrderingBasis basis,
+    required SourceRow source,
+    required WalkedPage page,
+  }) async {
+    final result = await _reconciler.entryFor(
+      collectionId: collectionId,
+      basis: basis,
+      printedNumber: page.printedNumber,
+      title: page.title,
+    );
+    final entryId = result.entryId;
+    if (entryId == null) return null;
+
+    final (location, violation) = await _entries.addLocation(
+      entryId: entryId,
+      url: page.url,
+      urlKey: normalizeUrl(page.url),
+      sourceId: source.id,
+      sourceNumber: page.printedNumber,
+      discoveryBasis: kForwardWalkBasis,
+    );
+    if (violation != null || location == null) return null;
+    return WalkedEntry(
+      entryId: entryId,
+      locationId: location.id,
+      url: page.url,
+      printedNumber: page.printedNumber,
+      wasAlreadyHeld: false,
+      mergedIntoExistingEntry: result.mergedIntoExistingEntry,
+    );
+  }
+
+  WalkedEntry _reuse(RecognitionHit hit) => WalkedEntry(
+    entryId: hit.entry.id,
+    locationId: hit.location.id,
+    url: hit.location.url,
+    printedNumber: hit.location.sourceNumber,
+    wasAlreadyHeld: true,
+    mergedIntoExistingEntry: false,
+  );
+
+  /// Whether an address is published by *this* Source: the same `(host,
+  /// path_key)` identity the library keys a Source by, derived by the one
+  /// derivation there is.
+  bool _isOnSource(String url, SourceRow source) {
+    final keys = RecognitionKeys.of(url);
+    return keys.host == source.host && keys.pathKey == source.pathKey;
+  }
 }

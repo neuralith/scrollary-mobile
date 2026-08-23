@@ -11,8 +11,12 @@ library;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../library_ui/providers.dart';
+import '../providers.dart' show browserProvider;
 import '../recognition/adopt.dart';
+import '../recognition/walk.dart';
+import '../save/page_hint_repository.dart';
 import '../save/save_scope.dart';
+import 'browser_forward_pages.dart';
 import 'v2_save_flow.dart' show RecognitionIndexOf;
 
 /// *This page belongs to that Collection*, or *this page starts a new one*.
@@ -33,3 +37,57 @@ final saveScopePlannerProvider = Provider<SaveScopePlanner>((ref) {
   final services = ref.watch(libraryUiServicesProvider);
   return LibrarySaveScopePlanner(db: services.db, entries: services.entries);
 });
+
+/// *Download the next N from here* — the second of the two operations a typed
+/// count can mean (docs/V2_SAVE_FLOW.md §4).
+///
+/// Built from the library services and the one Browser, because those are its
+/// two halves and neither belongs to a widget: identity is written through the
+/// ordinary repositories, and the only thing that touches a WebView is
+/// [BrowserForwardPageSource].
+final sourceWalkProvider = Provider<SourceWalk>((ref) {
+  final services = ref.watch(libraryUiServicesProvider);
+  return LibrarySourceWalk(
+    entries: services.entries,
+    collections: services.collections,
+    index: RecognitionIndexOf(services).index,
+    pages: BrowserForwardPageSource(
+      ref.watch(browserProvider),
+      hints: PageHintRepository.forLibrary(services.db),
+    ),
+  );
+});
+
+/// The cooperative stop a walk is asked at every page boundary.
+///
+/// The same shape the rest of the app already stops things with — the queue's
+/// `shouldContinue(taskId)` and `CheckController.cancel()` are both a flag
+/// raised by whoever asked and read between steps, never an interrupt. A walk
+/// is content-affecting source automation, so it must be cancellable; this is
+/// the smallest thing that is.
+///
+/// One per app, and [begin] is what arms it: a walk that inherited the last
+/// walk's cancellation would refuse to start, and one that never reset it
+/// would run after the user had already said stop.
+class SourceWalkCancellation {
+  bool _cancelled = false;
+
+  /// True once [cancel] has been asked and until the next [begin].
+  bool get isCancelled => _cancelled;
+
+  /// Arm a fresh walk. Called by whatever is about to start one.
+  void begin() => _cancelled = false;
+
+  /// Ask the running walk to stop at its next page boundary. Everything it
+  /// has already resolved stays in the library.
+  void cancel() => _cancelled = true;
+
+  /// The closure handed to [SourceWalk.forward]. A method rather than a field
+  /// so the tear-off is stable across reads of the provider.
+  bool shouldContinue() => !_cancelled;
+}
+
+/// The seam the UI cancels a running walk through.
+final sourceWalkCancellationProvider = Provider<SourceWalkCancellation>(
+  (ref) => SourceWalkCancellation(),
+);

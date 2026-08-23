@@ -26,7 +26,10 @@ import '../domain/invariants.dart';
 import '../library_ui/providers.dart';
 import '../recognition/page_kind.dart';
 import '../recognition/recognise.dart';
+import '../recognition/walk.dart';
 import '../save/capture_mode.dart';
+import '../save/capture_policy.dart' show kCaptureRestrictedMessage;
+import '../save/save_scope.dart' show SaveScopePlan;
 import 'v2_adoption_providers.dart';
 import 'v2_save_flow.dart';
 
@@ -38,6 +41,7 @@ class AddToLibraryReport {
     this.entryId,
     this.queued = 0,
     this.shortfall = 0,
+    this.walkStop,
   });
 
   /// What the user is told, in one sentence. Never null on a refusal.
@@ -57,6 +61,15 @@ class AddToLibraryReport {
   /// address for. Reported, never quietly dropped.
   final int shortfall;
 
+  /// Why the forward walk ended, when one ran. Null when the count was
+  /// answered from the library alone — which is every call that did not ask
+  /// to discover what is missing.
+  ///
+  /// [sentence] already says all of this in words, and that is what the
+  /// surfaces read; this is here for the one that wants to offer *point at
+  /// the next control* rather than only report it.
+  final WalkStop? walkStop;
+
   /// Whether the library changed, or already held what was asked for. A
   /// listing succeeds with no Entry: that is the answer, not a failure.
   bool get succeeded => collectionId != null || entryId != null;
@@ -74,6 +87,13 @@ class AddToLibraryReport {
 /// page*. It is a parameter rather than something re-derived here because
 /// only the library can answer it (`readPageShape`'s `sourcePathKey`), and
 /// the sheet has already asked.
+///
+/// [discoverMissing] chooses which of the two operations a typed count means
+/// (docs/V2_SAVE_FLOW.md §4). False — the default — plans against the library
+/// and opens nothing. True adds the second half: when the library knows fewer
+/// Entries than were asked for, the Source the user is reading is walked
+/// forward for **the shortfall only**, and the plan is rebuilt over what that
+/// found. Nothing is downloaded either way.
 Future<AddToLibraryReport> v2AddAndDownload(
   WidgetRef ref, {
   required String url,
@@ -83,6 +103,7 @@ Future<AddToLibraryReport> v2AddAndDownload(
   String? folderId,
   SaveLimits? limits,
   bool isListing = false,
+  bool discoverMissing = false,
   CaptureMode? captureMode,
   bool captureModeIsUserSet = false,
 }) async {
@@ -182,6 +203,7 @@ Future<AddToLibraryReport> v2AddAndDownload(
     startEntryId: entryId!,
     preferSourceId: sourceId,
     limits: limits,
+    discoverMissing: discoverMissing,
     captureMode: captureMode,
     captureModeIsUserSet: captureModeIsUserSet,
   );
@@ -192,6 +214,7 @@ Future<AddToLibraryReport> v2AddAndDownload(
     entryId: entryId,
     queued: queueing.queued,
     shortfall: queueing.shortfall,
+    walkStop: queueing.walkStop,
   );
 }
 
@@ -307,32 +330,65 @@ class _Queueing {
     required this.sentence,
     required this.queued,
     required this.shortfall,
+    this.walkStop,
   });
 
   final String sentence;
   final int queued;
   final int shortfall;
+  final WalkStop? walkStop;
 }
 
 /// Plan against the library, then enqueue each planned save through the one
 /// enqueue there is. **Nothing is started**: `authoriseStart` is not called
 /// here, and a queued row waits for the user's explicit Start.
+///
+/// The order matters and is the whole of what this function owns. The library
+/// is planned against **first**, opening nothing — so a request the library
+/// can already answer in full never drives a browser. Only what is missing
+/// after that is walked for, and only when the caller asked
+/// ([discoverMissing]). The walk resolves identity and writes library rows;
+/// the plan is then rebuilt over what it found and queued through the same
+/// enqueue as everything else.
 Future<_Queueing> _queue(
   WidgetRef ref, {
   required String startEntryId,
   required String? preferSourceId,
   required SaveLimits limits,
+  required bool discoverMissing,
   required CaptureMode? captureMode,
   required bool captureModeIsUserSet,
 }) async {
   final queue = ref.read(libraryUiServicesProvider).queue;
-  final plan = await ref
-      .read(saveScopePlannerProvider)
-      .plan(
-        startEntryId: startEntryId,
-        limits: limits,
-        preferSourceId: preferSourceId,
-      );
+  final planner = ref.read(saveScopePlannerProvider);
+  Future<SaveScopePlan> planNow() => planner.plan(
+    startEntryId: startEntryId,
+    limits: limits,
+    preferSourceId: preferSourceId,
+  );
+
+  var plan = await planNow();
+
+  // *Download the next N from here.* The count is a claim about the Source,
+  // so the ones the library cannot name are read forward on the site the user
+  // is actually on — from the furthest Entry the plan reached, for the
+  // shortfall and no more. A fully known request never gets here.
+  WalkOutcome? walk;
+  if (discoverMissing &&
+      !plan.startIsUnplaced &&
+      plan.saves.isNotEmpty &&
+      plan.planned < limits.maxEntries) {
+    final cancellation = ref.read(sourceWalkCancellationProvider)..begin();
+    walk = await ref
+        .read(sourceWalkProvider)
+        .forward(
+          fromLocationId: plan.saves.last.locationId,
+          wanted: limits.maxEntries - plan.planned,
+          shouldContinue: cancellation.shouldContinue,
+        );
+    // Everything the walk resolved is in the library now, however it ended.
+    if (walk.resolved > 0) plan = await planNow();
+  }
 
   var queued = 0;
   var waiting = 0;
@@ -372,6 +428,8 @@ Future<_Queueing> _queue(
         ' This entry has no position in its collection, so there is nothing '
         'after it to queue.',
       );
+    } else if (walk != null) {
+      buffer.write(' ${_walkShortfall(walk, queued: queued)}');
     } else {
       buffer.write(
         ' Your library knows $queued of the ${limits.maxEntries} asked for; '
@@ -384,8 +442,40 @@ Future<_Queueing> _queue(
     sentence: buffer.toString(),
     queued: queued,
     shortfall: shortfall,
+    walkStop: walk?.stop,
   );
 }
+
+/// Why a walk that ran still left the request short, in the user's words.
+///
+/// Ending is not failure: *there were only six* is an answer about the Source
+/// and reads as one. The rest name what stopped the reading, because "we found
+/// fewer" and "we were stopped" are different things and only the first is
+/// about the site's contents.
+String _walkShortfall(WalkOutcome walk, {required int queued}) =>
+    switch (walk.stop) {
+      WalkStop.endOfSource =>
+        'That is everything this site publishes after it — there '
+            '${queued == 1 ? 'was only 1' : 'were only $queued'}.',
+      WalkStop.countReached =>
+        'The rest were added to your library with no position in this '
+            'collection, so they are there to place rather than queued.',
+      WalkStop.cancelledByUser =>
+        'You stopped the search — what it had already found is in your '
+            'library.',
+      WalkStop.needsUserAssist =>
+        'Scrollary could not tell which control leads to the next entry on '
+            'this site. Point at it once and it will remember.',
+      WalkStop.leftTheSource =>
+        'The next link leads away from this collection’s site, so the '
+            'search stopped rather than follow it.',
+      WalkStop.unreadable =>
+        'The next page did not load, so the search stopped there.',
+      WalkStop.captureRestrictedForSite => kCaptureRestrictedMessage,
+      WalkStop.pageCeiling =>
+        'Scrollary stopped after ${walk.pagesRead} pages. Ask again from the '
+            'last one to carry on.',
+    };
 
 const String _startFirst = 'nothing is downloaded until you press Start.';
 const String _oneQueued = '1 entry queued — $_startFirst';
