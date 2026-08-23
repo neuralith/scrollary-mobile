@@ -30,6 +30,7 @@ import '../providers.dart';
 import '../save/queue_task.dart';
 import '../ui/palette.dart';
 import '../ui/status_style.dart';
+import 'v2_adoption_providers.dart';
 
 /// The task the queue runner is working on, and what to call it.
 final _activeSaveProvider = FutureProvider.autoDispose
@@ -49,15 +50,66 @@ class RunningOperationPanel extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final runner = ref.watch(queueRunnerProvider);
     final check = ref.watch(checkControllerProvider);
+    final walk = ref.watch(sourceWalkCancellationProvider);
     return AnimatedBuilder(
-      animation: Listenable.merge([runner, check]),
+      animation: Listenable.merge([runner, check, walk]),
       builder: (context, _) {
-        // A check and a save can never run together — the Browser's automation
-        // ownership is single — so this is a choice, not a stack.
+        // A check, a walk and a save can never run together — the Browser's
+        // automation ownership is single — so this is a choice, not a stack.
+        if (walk.isRunning) return const _ReadingForwardRunning();
         if (check.isRunning) return const _CheckRunning();
         if (!runner.isRunning) return const SizedBox.shrink();
         return _SaveRunning(taskId: runner.activeTaskId);
       },
+    );
+  }
+}
+
+/// Reading a Source forward to find the entries after this one.
+///
+/// Drawn for the same reason the check is: it opens pages on a site, and this
+/// app does not do that invisibly. Nothing is downloaded while it is on
+/// screen — the walk writes library rows and the queue captures afterwards,
+/// on the user's Start.
+class _ReadingForwardRunning extends ConsumerWidget {
+  const _ReadingForwardRunning();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final palette = AppPalette.of(context);
+    return _PanelFrame(
+      children: [
+        Row(
+          children: [
+            StatusChip(
+              icon: Icons.menu_book_outlined,
+              label: 'Finding entries',
+              bg: palette.primaryContainer,
+              fg: palette.onPrimaryContainer,
+              border: palette.primaryBorder,
+            ),
+          ],
+        ),
+        const SizedBox(height: 6),
+        Text(
+          'Reading this site forward from the entry you were on — nothing is '
+          'downloaded yet.',
+          maxLines: 2,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(fontSize: 12, height: 1.35, color: palette.ink),
+        ),
+        const SizedBox(height: 10),
+        const _IndeterminateBar(),
+        const SizedBox(height: 12),
+        _StopRow(
+          label: 'Stop finding',
+          note:
+              'Stops at the next page boundary. Entries already found stay in '
+              'your library, and whatever was queued before it stays queued.',
+          buttonKey: const ValueKey('panelStopReadingForward'),
+          onStop: ref.read(sourceWalkCancellationProvider).cancel,
+        ),
+      ],
     );
   }
 }

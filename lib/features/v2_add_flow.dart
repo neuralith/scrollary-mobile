@@ -379,13 +379,19 @@ Future<_Queueing> _queue(
       plan.saves.isNotEmpty &&
       plan.planned < limits.maxEntries) {
     final cancellation = ref.read(sourceWalkCancellationProvider)..begin();
-    walk = await ref
-        .read(sourceWalkProvider)
-        .forward(
-          fromLocationId: plan.saves.last.locationId,
-          wanted: limits.maxEntries - plan.planned,
-          shouldContinue: cancellation.shouldContinue,
-        );
+    try {
+      walk = await ref
+          .read(sourceWalkProvider)
+          .forward(
+            fromLocationId: plan.saves.last.locationId,
+            wanted: limits.maxEntries - plan.planned,
+            shouldContinue: cancellation.shouldContinue,
+          );
+    } finally {
+      // However it ended — its own stop, the user's, or a throw — the panel
+      // stops saying a site is being read.
+      cancellation.finish();
+    }
     // Everything the walk resolved is in the library now, however it ended.
     if (walk.resolved > 0) plan = await planNow();
   }

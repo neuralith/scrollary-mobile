@@ -399,39 +399,7 @@ typedef V2AddAndDownloadFn =
     });
 
 final v2AddAndDownloadProvider = Provider<V2AddAndDownloadFn>(
-  (ref) => _addAndDownloadUntilTheWalkLands,
-);
-
-// AT MERGE — delete this adapter and restore `(ref) => v2AddAndDownload`.
-//
-// `discoverMissing` is the parameter the walk half is adding to
-// `v2AddAndDownload`; until that function carries it, the flag is accepted at
-// this seam and dropped. Everything above it is real — the sheet asks the
-// question, the panel gates the answer and passes it on — and the only half
-// missing is the reading forward itself.
-Future<AddToLibraryReport> _addAndDownloadUntilTheWalkLands(
-  WidgetRef ref, {
-  required String url,
-  required String pageTitle,
-  String? collectionId,
-  String? newCollectionName,
-  String? folderId,
-  SaveLimits? limits,
-  bool isListing = false,
-  bool discoverMissing = false,
-  CaptureMode? captureMode,
-  bool captureModeIsUserSet = false,
-}) => v2AddAndDownload(
-  ref,
-  url: url,
-  pageTitle: pageTitle,
-  collectionId: collectionId,
-  newCollectionName: newCollectionName,
-  folderId: folderId,
-  limits: limits,
-  isListing: isListing,
-  captureMode: captureMode,
-  captureModeIsUserSet: captureModeIsUserSet,
+  (ref) => v2AddAndDownload,
 );
 
 typedef V2SaveStandaloneFn =
