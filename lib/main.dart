@@ -182,6 +182,11 @@ class _AppBootState extends State<AppBoot> with WidgetsBindingObserver {
                 // The same controller the queue's worker holds — see
                 // `AppStartup._open`.
                 v2AssistProvider.overrideWithValue(_startup.v2.assist),
+                // The same controller, as the narrow seam the operation
+                // indicator draws *Needs you* from — so a run parked on a
+                // user selection is visible from wherever the user is, not
+                // only from the Browser it is parked on.
+                assistHoldProvider.overrideWithValue(_startup.v2.assist),
               ],
               child: const WebReaderApp(),
             ),

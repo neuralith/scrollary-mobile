@@ -270,6 +270,16 @@ class V2AssistController extends ChangeNotifier implements SelectionHost {
 }
 
 /// The V2 assist host, one per app.
+/// The hold the operation indicator draws *Needs you* from.
+///
+/// A separate, nullable seam rather than [v2AssistProvider] itself: the
+/// indicator is mounted on surfaces that have no Browser and no library —
+/// reading [v2AssistProvider] there would make every one of them build the
+/// whole capture stack to ask one question. Null means "nothing can hold a
+/// run here", which is the honest answer on those surfaces. `main.dart`
+/// overrides it with the one controller the queue actually holds on.
+final assistHoldProvider = Provider<V2AssistController?>((ref) => null);
+
 final v2AssistProvider = Provider<V2AssistController>((ref) {
   final controller = V2AssistController(
     browser: ref.watch(browserProvider),

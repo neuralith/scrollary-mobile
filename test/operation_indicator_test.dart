@@ -311,6 +311,33 @@ void main() {
       if (root.existsSync()) root.deleteSync(recursive: true);
     });
 
+    testWidgets('a run held on the user is present, and its destination is '
+        'the Browser', (tester) async {
+      // The state the audit found hardcoded to false: v2CaptureWithAssist can
+      // park a capture on a selection, and off the Browser such a run looked
+      // identical to one that was working.
+      final held = BackgroundActivity.resolve(
+        tasks: const [],
+        runningWithoutTask: true,
+        needsUser: true,
+        paused: false,
+      );
+
+      expect(held.isPresent, isTrue);
+      expect(held.needsUser, isTrue);
+
+      // And nothing about it consults an entitlement: knowing the device is
+      // waiting on you is Free (docs/V2_CAPABILITY_PARITY.md).
+      final source = File(
+        'lib/features/operation_indicator.dart',
+      ).readAsStringSync();
+      expect(
+        source.contains('capability/'),
+        isFalse,
+        reason: 'the operation indicator must never import an entitlement',
+      );
+    });
+
     Widget harness() => ProviderScope(
       overrides: [
         v2ServicesProvider.overrideWithValue(v2.services),

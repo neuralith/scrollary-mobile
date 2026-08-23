@@ -209,6 +209,18 @@ class _OperationIndicatorState extends ConsumerState<OperationIndicator> {
   late final ValueNotifier<bool> _browserOnScreen;
   late final ReaderChromeVisibility _readerChromeVisible;
 
+  /// Null on a surface where nothing can hold a run on the user.
+  V2AssistController? _assist;
+
+  List<Listenable> get _sources => [
+    _run,
+    _checker,
+    _surfacePainted,
+    _browserOnScreen,
+    _readerChromeVisible,
+    ?_assist,
+  ];
+
   @override
   void initState() {
     super.initState();
@@ -217,26 +229,15 @@ class _OperationIndicatorState extends ConsumerState<OperationIndicator> {
     _surfacePainted = ref.read(browserSurfacePaintedProvider);
     _browserOnScreen = ref.read(browserOnScreenProvider);
     _readerChromeVisible = ref.read(readerChromeVisibleProvider);
-    for (final source in [
-      _run,
-      _checker,
-      _surfacePainted,
-      _browserOnScreen,
-      _readerChromeVisible,
-    ]) {
+    _assist = ref.read(assistHoldProvider);
+    for (final source in _sources) {
       source.addListener(_onChanged);
     }
   }
 
   @override
   void dispose() {
-    for (final source in [
-      _run,
-      _checker,
-      _surfacePainted,
-      _browserOnScreen,
-      _readerChromeVisible,
-    ]) {
+    for (final source in _sources) {
       source.removeListener(_onChanged);
     }
     super.dispose();
@@ -257,7 +258,7 @@ class _OperationIndicatorState extends ConsumerState<OperationIndicator> {
   ///
   /// Never gated. Knowing the device is waiting on you is not a paid feature
   /// (docs/V2_CAPABILITY_PARITY.md).
-  bool get _needsUser => ref.watch(v2AssistProvider).pendingSelection != null;
+  bool get _needsUser => _assist?.pendingSelection != null;
 
   /// Held, and expected to continue on its own — docs/FOREGROUND_MULTITASKING.md
   /// §5's *Waiting*.
