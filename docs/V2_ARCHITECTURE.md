@@ -400,10 +400,10 @@ Designed from the domain rather than one table per noun.
 mapping table and never written over the local primary key.
 
 **`save_runs` is deliberately absent.** It would be the resume record of a
-Browser-driven traversal, and that orchestration does not exist in V2 yet (see
-the header of `lib/data/schema.dart` and `lib/save/entry_capture.dart` for the
-seam it waits on). Writing the table before its only writer would be a guessed
-shape with no caller.
+Browser-driven traversal. V2 has one — `lib/recognition/walk.dart` — but it is
+a **discovery** act: it writes Entries and Locations as it goes and then ends,
+so what it resolved is durable the moment it is resolved and there is no
+half-finished run to resume. The queue rows it produced are the resume record.
 
 **`sync_state` has no pending-count column.** The count Settings shows is a
 live read of unsent `outbox` rows, not a cached number — there is nothing to

@@ -91,8 +91,7 @@ in [docs/DECISIONS.md](docs/DECISIONS.md).
   becomes device-local history (V2-D40). The V1 library screens, queue,
   update checker and `CollectionDeletionService` are retired — `lib/library/`
   holds only the domain helpers V2 still calls (`entry_labels.dart`,
-  `collection_identity.dart`, `collection_repository.dart`,
-  `content_shape.dart`, `library_sort.dart`), not a screen.
+  `collection_identity.dart`, `content_shape.dart`), not a screen.
 - **Real-system end-to-end harness** (Lane H, H2–H4) — `tool/e2e/run.sh` and
   `test/e2e/` run the suite against a real Go service on a real PostgreSQL,
   over the app's real `HttpSyncTransport`, and assert the no-outbound
@@ -101,6 +100,13 @@ in [docs/DECISIONS.md](docs/DECISIONS.md).
 **Do not describe the V1 shell as the running app.** It is not — the V2
 screens are what `lib/app.dart` routes to, and there is no V1 fallback left to
 route to instead.
+
+**Before removing anything a V1 implementation used to do, read
+[docs/V2_CAPABILITY_PARITY.md](docs/V2_CAPABILITY_PARITY.md).** It lists every
+capability that must stay reachable from app launch, and carries the rule the
+V2 cleanup lacked: an implementation may go only when a durable decision
+retires its capability, or an equivalent surface exists, is reachable, and its
+parity test passes. Deleting a regression test needs the same authorisation.
 
 Rules that still bind: the port checklist
 ([docs/V2_PORT_CHECKLIST.md](docs/V2_PORT_CHECKLIST.md)) governs any further
@@ -276,31 +282,24 @@ and refused. Do not add video URL extraction, HLS/DASH, interception or playback
   `orderIndex`; a running one gets a dialog naming what survives, and its
   cancellation is written the moment it is asked for, because `restore()` demotes
   a killed `running` row back to `queued`. Both the pump's claim and every cancel
-  go through `updateQueueTaskIfState` — one conditional SQL `UPDATE` — so exactly
-  one wins and the loser is told; a pump that loses the claim skips the row and
-  carries on. Never offer a stop that does not stop: `removeOfflineNow` takes
-  `shouldContinue` and is asked between entries, and stopping is cooperative
-  everywhere, so the wording is "at the next safe point".
+  go through `SaveQueueRepository.updateIfState` — one conditional SQL `UPDATE`
+  — so exactly one wins and the loser is told; a pump that loses the claim skips the row and
+  carries on. Never offer a stop that does not stop: stopping is
+  cooperative everywhere — the runner polls the row's state between safe points
+  — so the wording is "at the next safe point".
 
-- Reading state is writable only from `lib/reading/`; `writeEntryReading` is the
-  only DAO method that can reach a reading column.
+- Reading state is writable only through `lib/data/reading_state_repository.dart`;
+  no other code may reach a reading column.
 - A completed entry is 100% read, enforced on write and again on display.
-- Removing offline files is never deleting an entry: only `content_path`,
-  `byte_size` and `offline_removed_at` are written. Archiving is never deleting
+- Removing offline files is never deleting an entry: the copy's own row is
+  marked inactive and nothing on the Entry is touched. Archiving is never deleting
   a collection either: it writes `lifecycle` and `archived_at` and nothing else.
   Neither may be offered as a way to delete.
-- **Permanent deletion is `CollectionDeletionService.delete`, whole.** It
-  cancels the collection's queue work (by collection id, and by address for a
-  save that carries none), refuses while an entry is open in the reader or a
-  save is still on it, moves every owned directory into `tmp/deleting-<id>`
-  **before** any row goes, then deletes the queue rows, the interrupted runs,
-  the entries and the collection in one transaction, then discards the staged
-  tree. The file move is not an optimisation: rows first would leave packages
-  under `library/` for the storage survey to report as orphans.
-  `deleteCollection` / `deleteEntriesForCollection` /
-  `deleteQueueTasksForCollection` / `allRuns` belong to that service and have no
-  other caller — never delete the collection row on its own. Rationale and the
-  full inventory of what goes and what stays: ARCHITECTURE.md §8.2.
+- **Permanent deletion goes through the V2 repositories, whole** (V2-D42).
+  Removing a Collection cancels its queued work, deletes its Entries and their
+  Locations, and lets the OfflineCopy cascade (I14) take the packages with
+  them. The V1 `CollectionDeletionService` is retired; never delete a
+  collection row on its own. Rationale: DECISIONS.md V2-D42.
 - `entries.source_url` is durable metadata — every writer names its columns.
 - `entries.collection_id` is nullable. A standalone entry is a first-class
   library item; never wrap one in a collection of one.

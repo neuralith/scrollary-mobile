@@ -19,11 +19,12 @@
 ///   offering to remove.
 ///
 /// `save_queue` is the capture lane's own table (E3): V1's `queue_tasks`,
-/// ported and retargeted to `(entry, location)`. `save_runs` is still absent —
-/// it is the resume record of a **Browser-driven traversal**, and that
-/// orchestration does not exist in V2 yet (see `lib/save/entry_capture.dart`
-/// for the seam it waits on). Writing the table before its only writer would
-/// be a guessed shape with no caller.
+/// ported and retargeted to `(entry, location)`. `save_runs` is still absent,
+/// and now for a different reason than when this was written: V2 *does* have a
+/// Browser-driven traversal (`lib/recognition/walk.dart`), but it is a
+/// **discovery** act that writes Entries and Locations and then ends. What it
+/// resolves is durable the moment it is resolved, so there is no half-finished
+/// run to resume — the queue rows it produced are the resume record.
 library;
 
 import 'package:drift/drift.dart';

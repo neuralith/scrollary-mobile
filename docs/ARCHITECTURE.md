@@ -20,14 +20,15 @@
 > and sync work for that is built and merged — see
 > [V2_ARCHITECTURE.md](./V2_ARCHITECTURE.md) and
 > [V2_ROADMAP.md](./V2_ROADMAP.md) for what exists and its current status —
-> decided in [DECISIONS.md](./DECISIONS.md). What has not yet merged is the
-> composition that makes the V2 screens the running app in place of the one
-> this document describes. Until that lands, **this document is right about
-> what the app does today**. §1 below describes the current implementation, in
-> which the library is still effectively organised around what has been
-> downloaded — [V2_ARCHITECTURE.md
-> §7](./V2_ARCHITECTURE.md) itemises every place that is true and what it
-> becomes.
+> decided in [DECISIONS.md](./DECISIONS.md). That composition **has since
+> merged: the V2 screens are the running app**, and this document is the
+> historical record of the V1 build they replaced. Read it for the reasoning
+> behind ported internals — render guards, image enumeration, the decode
+> budget, FileStore, manifests, detection, extraction, stop conditions — and
+> never as a description of what the app does today. §1 below describes a
+> library organised around what has been downloaded, which V2 deliberately
+> undid: [V2_ARCHITECTURE.md §7](./V2_ARCHITECTURE.md) itemises every place
+> that was true and what it became.
 
 ## 1. What the app is
 

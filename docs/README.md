@@ -61,21 +61,24 @@ When two disagree, resolve in this order:
    going to be.
 4. [TERMINOLOGY.md](./TERMINOLOGY.md) and [PRODUCT.md](./PRODUCT.md), for the
    model and the product's intent.
-5. [ARCHITECTURE.md](./ARCHITECTURE.md), for what is built.
-6. The store and privacy documents.
-7. Anything marked historical.
+5. The `V2_*` documents, for what is built — starting with
+   [V2_CAPABILITY_PARITY.md](./V2_CAPABILITY_PARITY.md), which lists every
+   capability that must stay reachable and the rule protecting it.
+6. [ARCHITECTURE.md](./ARCHITECTURE.md), for the V1 build's reasoning. It is
+   history, not current behaviour.
+7. The store and privacy documents.
+8. Anything marked historical.
 
 **Two rules that cut across that order.**
 
-*Built beats designed.* The `V2_*` documents describe the domain, data,
-recognition, capture, library-UX, sync and backend layers that are now built
-and merged — `lib/domain`, `lib/data`, `lib/recognition`, `lib/save`,
-`lib/library_ui`, `lib/sync` and `../scrollary-backend/`. What has not yet
-merged is the composition that wires those V2 screens up as the running app in
-place of V1's ([V2_ROADMAP.md](./V2_ROADMAP.md) §12); until it does, the app a
-user opens is still the V1 shell ARCHITECTURE.md describes. Where a `V2_*`
-document and ARCHITECTURE.md describe the same *running* behaviour
-differently, ARCHITECTURE.md is right about what the user sees today.
+*Built beats designed.* **V2 is the running app.** The `V2_*` documents
+describe the domain, data, recognition, capture, library-UX, sync and backend
+layers the user actually opens — `lib/domain`, `lib/data`, `lib/recognition`,
+`lib/save`, `lib/library_ui`, `lib/sync` and `../scrollary-backend/` — and the
+composition that wires them up merged long ago. Where a `V2_*` document and
+ARCHITECTURE.md describe the same *running* behaviour differently, **the
+`V2_*` document is right**; ARCHITECTURE.md is the historical record of the V1
+build V2 replaced, kept for the reasoning behind ported internals.
 
 *V2 supersedes V1 where they conflict about intent.* ARCHITECTURE.md describes a
 library organised around what has been downloaded. That is accurate about the
