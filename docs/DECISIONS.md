@@ -584,6 +584,50 @@ nobody has seen. Library membership, Entry existence and OfflineCopy stay three
 separate facts (PRODUCT.md §2.3): following downloads nothing, and downloading
 follows nothing.
 
+### V2-D47 · A typed count is a claim about the Source, and reading one forward is gated like a check
+
+V2-D46 restored the question and left the answer where the V2 rewrite had put
+it: a count was planned against Entries the library already held, so ten from
+entry 101 queued the four the library happened to know and reported the
+shortfall. That is a truthful answer to a question nobody asked. A person
+reading entry 101 who asks for ten means 101 through 110 — a claim about the
+**Source**, not about the library — and the library not having seen 105 yet is
+the reason they asked.
+
+So the count sheet returns which of the two it is
+(`SaveScopeChoice.discoverMissing`). *Entries from here* is the default sense
+of a count and is answered by `SourceWalk` (`lib/recognition/walk.dart`):
+reading forward along the Source the reader is on, from the Entry in front of
+them, reconciling each page through `EntryReconciler` before anything is
+queued. *Entries already in your library* keeps the quieter answer, plans
+against `SaveScopePlanner` alone and opens nothing. Both count the Entry the
+user is on as the first one, and the sheet says so in words.
+
+Three properties hold the line, and none of them is new:
+
+- **The walk follows only what a page asserts.** The next address is whatever
+  `resolveNextPage` reads from the page's own links — the resolver capture
+  already uses. A number in a URL never manufactures the address after it, and
+  an address that leaves the Source ends the walk (V2-D15, V2-D44).
+- **It is bounded twice and it stops rather than guesses.** The typed count,
+  clamped by `SaveLimits.forScope` as it always was, and `kMaxWalkPages` pages
+  opened. End of chain, an unreadable page, a next control only the user can
+  identify and a cancellation are each a named stop, and every Entry already
+  resolved stays in the library. "There were only six" is an answer about the
+  Source, not a failure.
+- **It is gated exactly as the update check is**, through
+  `showStartOptionsSheet` with `ForegroundGateAction.startEntrySave`, because
+  it navigates. The question is asked before the run rather than at the first
+  missing Entry — whether a page has to be opened is what the walk finds out,
+  and asking afterwards would be asking permission after the fact. A count of
+  one, and the library-only range, open nothing and are never gated. The gate
+  decides where the user waits and never whether the work happens; nothing on
+  this path is capped, truncated or slowed by it.
+
+Finding Entries and downloading them stay two acts (PRODUCT.md §2.4): the walk
+writes Entries and Locations and queues rows, and not a byte is captured until
+the explicit Start.
+
 ## Open
 
 Only items that are genuinely undecided **and** not already deferred to

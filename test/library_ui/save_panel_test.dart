@@ -49,6 +49,7 @@ class _AddCall {
     required this.newCollectionName,
     required this.limits,
     this.isListing = false,
+    this.discoverMissing = false,
   });
 
   final String url;
@@ -58,6 +59,10 @@ class _AddCall {
 
   /// Whether the sheet told the domain this address is a Source's own page.
   final bool isListing;
+
+  /// Whether the count was a claim about the Source — read this site forward
+  /// for whatever the library is missing.
+  final bool discoverMissing;
 }
 
 void main() {
@@ -83,6 +88,7 @@ void main() {
     String? folderId,
     SaveLimits? limits,
     bool isListing = false,
+    bool discoverMissing = false,
     CaptureMode? captureMode,
     bool captureModeIsUserSet = false,
   }) async {
@@ -93,6 +99,7 @@ void main() {
         newCollectionName: newCollectionName,
         limits: limits,
         isListing: isListing,
+        discoverMissing: discoverMissing,
       ),
     );
     return AddToLibraryReport(
@@ -230,8 +237,72 @@ void main() {
       await tester.enterText(key('saveCountField'), '5');
       await tapAndPump(tester, key('saveScopeAddToQueue'));
 
+      // A count taken from the Source may have to open a page, so the panel
+      // asks where the user waits before anything starts — the check's sheet,
+      // not a second one.
+      await pumpUntil(tester, key('startInBrowser'));
+      expect(adds, isEmpty, reason: 'nothing runs until that is answered');
+      await tapAndPump(tester, key('startInBrowser'));
+
       expect(adds, hasLength(1));
       expect(adds.single.limits!.maxEntries, 5);
+      expect(
+        adds.single.discoverMissing,
+        isTrue,
+        reason: 'the typed count is a claim about the Source',
+      );
+    });
+
+    screenTest('backing out of that question starts nothing at all', (
+      tester,
+    ) async {
+      await seed();
+      await openPanel(tester, _entryUrl, _entryTitle);
+      await pumpUntil(tester, key('v2DownloadEntries'));
+
+      await tapAndPump(tester, key('v2DownloadEntries'));
+      await tapAndPump(tester, key('saveScopeFromHere'));
+      await tester.enterText(key('saveCountField'), '4');
+      await tapAndPump(tester, key('saveScopeAddToQueue'));
+      await pumpUntil(tester, key('startOptionsCancel'));
+      await tapAndPump(tester, key('startOptionsCancel'));
+
+      expect(adds, isEmpty);
+    });
+
+    screenTest('the quieter range opens nothing, so it is never gated', (
+      tester,
+    ) async {
+      await seed();
+      await openPanel(tester, _entryUrl, _entryTitle);
+      await pumpUntil(tester, key('v2DownloadEntries'));
+
+      await tapAndPump(tester, key('v2DownloadEntries'));
+      await tapAndPump(tester, key('saveScopeKnownOnly'));
+      await tester.enterText(key('saveCountField'), '5');
+      await tapAndPump(tester, key('saveScopeAddToQueue'));
+
+      expect(key('startInBrowser'), findsNothing);
+      expect(adds, hasLength(1));
+      expect(adds.single.limits!.maxEntries, 5);
+      expect(adds.single.discoverMissing, isFalse);
+    });
+
+    screenTest('this entry alone is never gated and discovers nothing', (
+      tester,
+    ) async {
+      await seed();
+      await openPanel(tester, _entryUrl, _entryTitle);
+      await pumpUntil(tester, key('v2DownloadEntry'));
+
+      await tapAndPump(tester, key('v2DownloadEntry'));
+
+      expect(
+        key('startInBrowser'),
+        findsNothing,
+        reason: 'the page is already in front of the user; nothing is opened',
+      );
+      expect(adds.single.discoverMissing, isFalse);
     });
 
     screenTest('a row already waiting offers the Start and no second '
@@ -371,6 +442,7 @@ void main() {
       expect(adds.single.collectionId, collection.id);
       expect(adds.single.newCollectionName, isNull);
       expect(adds.single.limits!.maxEntries, 1);
+      expect(adds.single.discoverMissing, isFalse);
       expect(standalones, isEmpty);
     });
 

@@ -5,6 +5,12 @@
 /// zero refused where they were typed, the ceiling stated and enforced, and an
 /// OK that confirms the number without starting anything.
 ///
+/// The two counted ranges are here for the same reason: *Entries from here*
+/// counts on the Source and reads it forward for what the library is missing,
+/// *Entries already in your library* counts on the library and opens nothing,
+/// and which one the sheet returns is the difference between an app that opens
+/// someone's site and one that does not.
+///
 /// The bound itself is not this file's to assert twice — `SaveLimits.forScope`
 /// owns it — but *that the sheet builds its limits through it* is, because a
 /// range whose real ceiling lived somewhere the user could not see is the
@@ -60,6 +66,9 @@ void main() {
   Future<void> chooseTypedRange(WidgetTester tester) =>
       tapAndPump(tester, find.byKey(const ValueKey('saveScopeFromHere')));
 
+  Future<void> chooseLibraryOnlyRange(WidgetTester tester) =>
+      tapAndPump(tester, find.byKey(const ValueKey('saveScopeKnownOnly')));
+
   screenTest('states the ceiling in words before anything is typed', (
     tester,
   ) async {
@@ -71,6 +80,88 @@ void main() {
       findsOneWidget,
       reason: 'the queue never starts itself, and the sheet says so',
     );
+  });
+
+  screenTest('the typed count says what it counts, before it is typed into', (
+    tester,
+  ) async {
+    await openSheet(tester);
+    await chooseTypedRange(tester);
+
+    expect(
+      find.text('How many entries, counting this one?'),
+      findsOneWidget,
+      reason:
+          'ten from entry 101 is 101 through 110, and a sheet that leaves '
+          'that to be inferred has said the wrong thing to half its readers',
+    );
+    expect(
+      find.textContaining('5 means this entry and the next four'),
+      findsOneWidget,
+      reason: 'said again in numbers, where the answer is being typed',
+    );
+    expect(
+      find.textContaining('reads forward from this page'),
+      findsOneWidget,
+      reason: 'the count is a claim about the site, and the site is opened',
+    );
+    expect(find.textContaining('stop it at any point'), findsOneWidget);
+  });
+
+  screenTest('the typed count reads this site forward for what is missing', (
+    tester,
+  ) async {
+    await openSheet(tester);
+    await chooseTypedRange(tester);
+    await tester.enterText(countField(), '10');
+    await tapAndPump(tester, find.byKey(const ValueKey('saveScopeAddToQueue')));
+
+    expect(chosen!.limits.maxEntries, 10);
+    expect(chosen!.discoverMissing, isTrue);
+  });
+
+  screenTest('the quieter range keeps the library-only answer', (tester) async {
+    await openSheet(tester);
+    await chooseLibraryOnlyRange(tester);
+
+    expect(
+      countField(),
+      findsOneWidget,
+      reason: 'it is the same question, answered from the library',
+    );
+    expect(
+      find.textContaining('this site is not opened'),
+      findsOneWidget,
+      reason: 'which is the whole difference, so it is the sentence shown',
+    );
+    expect(
+      find.textContaining('5 means this entry and the next four'),
+      findsOneWidget,
+      reason: 'a count means the same thing whichever range answers it',
+    );
+
+    await tester.enterText(countField(), '6');
+    await tapAndPump(tester, find.byKey(const ValueKey('saveScopeAddToQueue')));
+
+    expect(chosen!.limits.maxEntries, 6);
+    expect(chosen!.discoverMissing, isFalse);
+  });
+
+  screenTest('switching between the two counted ranges keeps the number', (
+    tester,
+  ) async {
+    await openSheet(tester);
+    await chooseTypedRange(tester);
+    await tester.enterText(countField(), '7');
+    await chooseLibraryOnlyRange(tester);
+
+    expect(tester.widget<TextField>(countField()).controller!.text, '7');
+
+    await chooseTypedRange(tester);
+    await tapAndPump(tester, find.byKey(const ValueKey('saveScopeAddToQueue')));
+
+    expect(chosen!.limits.maxEntries, 7);
+    expect(chosen!.discoverMissing, isTrue);
   });
 
   screenTest('the default range is this entry alone', (tester) async {
@@ -87,6 +178,11 @@ void main() {
     expect(chosen!.limits.maxEntries, 1);
     expect(chosen!.limits.isSinglePage, isTrue);
     expect(chosen!.startNow, isFalse);
+    expect(
+      chosen!.discoverMissing,
+      isFalse,
+      reason: 'the page is already in front of the user; nothing is opened',
+    );
   });
 
   screenTest('the typed range opens on a replaceable 2 and returns it', (
