@@ -438,4 +438,43 @@ void main() {
     expect(h.starts, 1);
     expect((await h.queue.eligible()).length, 2);
   });
+
+  screenTest('Start is on screen the moment Activity opens, however long the '
+      'list is', (tester) async {
+    // The regression: the launch row was a child of the `ListView`, filed
+    // under the WAITING rows. On the one screen a user opens *because* they
+    // have a queue — which is exactly when the list is longest — starting the
+    // queue meant scrolling past every row to find the button for it.
+    final collection = await shelf();
+    for (var i = 0; i < 12; i++) {
+      await waiting(await entry(collection));
+    }
+    for (var i = 0; i < 6; i++) {
+      await completed(await entry(collection));
+    }
+
+    await openScreen(tester);
+    await pumpUntil(tester, find.byKey(const ValueKey('activityStart')));
+
+    final start = find.byKey(const ValueKey('activityStart'));
+    expect(start, findsOneWidget);
+    expect(find.text('Start 12 downloads'), findsOneWidget);
+
+    // Not merely present in the tree — inside the window, without a scroll.
+    final box = tester.getRect(start);
+    final window = tester.view.physicalSize / tester.view.devicePixelRatio;
+    expect(box.top, greaterThanOrEqualTo(0));
+    expect(
+      box.bottom,
+      lessThanOrEqualTo(window.height),
+      reason: 'the way to start the queue is not below the fold',
+    );
+
+    // And it is above the list rather than inside it: scrolling the rows
+    // leaves it exactly where it was.
+    final before = tester.getRect(start);
+    await tester.drag(find.byType(ListView), const Offset(0, -400));
+    await tester.pump();
+    expect(tester.getRect(start), before);
+  });
 }

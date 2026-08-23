@@ -101,6 +101,13 @@ class _Activity extends ConsumerWidget {
         // is over says so once, here, rather than leaving the user to read a
         // list of rows and add them up.
         const RunSummaryCard(),
+        // The Start, pinned above the list rather than filed under the WAITING
+        // rows inside it. It was a child of the `ListView`, so the only way to
+        // start queued work was to scroll past every running, waiting, failed
+        // and finished row to find it — on the one screen a user opens
+        // *because* they have a queue, which is exactly when that list is
+        // longest.
+        if (waiting.isNotEmpty) _StartWaiting(count: waiting.length),
         Expanded(
           child: rows.isEmpty
               ? const LibraryEmptyState(
@@ -115,35 +122,8 @@ class _Activity extends ConsumerWidget {
                   children: [
                     if (running.isNotEmpty)
                       ..._section(context, ref, 'RUNNING', running),
-                    if (waiting.isNotEmpty) ...[
+                    if (waiting.isNotEmpty)
                       ..._section(context, ref, 'WAITING', waiting),
-                      Padding(
-                        padding: const EdgeInsets.fromLTRB(16, 10, 16, 4),
-                        child: Row(
-                          children: [
-                            Expanded(
-                              child: FilledButton(
-                                key: const ValueKey('activityStart'),
-                                onPressed: () =>
-                                    startQueuedDownloads(context, ref),
-                                child: Text(
-                                  waiting.length == 1
-                                      ? 'Start 1 download'
-                                      : 'Start ${waiting.length} downloads',
-                                ),
-                              ),
-                            ),
-                            const SizedBox(width: 8),
-                            TextButton(
-                              key: const ValueKey('activityClearWaiting'),
-                              onPressed: () =>
-                                  clearWaitingDownloads(context, ref),
-                              child: const Text('Clear'),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
                     if (failed.isNotEmpty)
                       ..._section(context, ref, 'FAILED', failed),
                     if (done.isNotEmpty)
@@ -276,4 +256,41 @@ class _TaskRow extends ConsumerWidget {
       onPressed: () => removeDownloadFromActivity(context, ref, task),
     ),
   };
+}
+
+/// The queue's launch, above the list.
+///
+/// Its own widget so the count it names comes from the same rows the list is
+/// built from and cannot drift from them, and so the pinned position is one
+/// place rather than a nesting decision inside a builder.
+class _StartWaiting extends ConsumerWidget {
+  const _StartWaiting({required this.count});
+
+  final int count;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) => Padding(
+    padding: const EdgeInsets.fromLTRB(16, 4, 16, 10),
+    child: Row(
+      children: [
+        Expanded(
+          child: FilledButton(
+            key: const ValueKey('activityStart'),
+            // No decision to pass on: this *is* the question here, so the
+            // starter asks where the user would like to wait.
+            onPressed: () => startQueuedDownloads(context, ref),
+            child: Text(
+              count == 1 ? 'Start 1 download' : 'Start $count downloads',
+            ),
+          ),
+        ),
+        const SizedBox(width: 8),
+        TextButton(
+          key: const ValueKey('activityClearWaiting'),
+          onPressed: () => clearWaitingDownloads(context, ref),
+          child: const Text('Clear'),
+        ),
+      ],
+    ),
+  );
 }

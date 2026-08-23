@@ -34,6 +34,7 @@ import '../save/save_state.dart';
 import '../ui/palette.dart';
 import '../ui/status_style.dart';
 import 'v2_adoption_providers.dart';
+import 'operation_indicator.dart' show indicatorTasksProvider;
 import 'operation_progress.dart';
 
 /// The task the queue runner is working on, and what to call it.
@@ -62,9 +63,60 @@ class RunningOperationPanel extends ConsumerWidget {
         // automation ownership is single — so this is a choice, not a stack.
         if (walk.isRunning) return const _ReadingForwardRunning();
         if (check.isRunning) return const _CheckRunning();
-        if (!runner.isRunning) return const SizedBox.shrink();
+        if (!runner.isRunning) return const _WaitingQueue();
         return _SaveRunning(taskId: runner.activeTaskId);
       },
+    );
+  }
+}
+
+/// Work that is queued and has not been started.
+///
+/// **Why the Browser needs this.** The operation indicator carries the count
+/// everywhere else and deliberately stays off this screen, because the panels
+/// here say it in full — but they only ever said it about a run *in flight*.
+/// So the ordinary end of a save flow, *Queue only*, left the user standing on
+/// the Browser with nothing on screen saying they had a queue, and the way to
+/// start it three taps away on a screen they had no reason to open.
+///
+/// A count and a Start, and no more: what each row is, what went wrong with
+/// one, and everything that can be done about it is Activity's, which the
+/// count opens.
+class _WaitingQueue extends ConsumerWidget {
+  const _WaitingQueue();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final tasks = ref.watch(indicatorTasksProvider).value ?? const <SaveTask>[];
+    final waiting = tasks
+        .where((t) => t.state == SaveTaskState.queued)
+        .length;
+    if (waiting == 0) return const SizedBox.shrink();
+
+    final palette = AppPalette.of(context);
+    return _PanelFrame(
+      children: [
+        Row(
+          children: [
+            Expanded(
+              child: Text(
+                waiting == 1
+                    ? '1 download waiting for you to start it.'
+                    : '$waiting downloads waiting for you to start them.',
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(fontSize: 12, height: 1.35, color: palette.ink),
+              ),
+            ),
+            const SizedBox(width: 8),
+            FilledButton(
+              key: const ValueKey('panelStartWaiting'),
+              onPressed: () => startQueuedDownloads(context, ref),
+              child: const Text('Start'),
+            ),
+          ],
+        ),
+      ],
     );
   }
 }

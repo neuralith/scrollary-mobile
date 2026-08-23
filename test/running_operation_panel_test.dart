@@ -67,6 +67,12 @@ void main() {
     overrides: [
       v2ServicesProvider.overrideWithValue(h.services),
       libui.libraryUiServicesProvider.overrideWithValue(h.ui),
+      // A Start authorises rows and hands them on. With nothing attached it
+      // deliberately authorises nothing, so the panel's Start needs a runner
+      // here to be a Start at all.
+      libui.saveQueueStarterProvider.overrideWithValue(
+        ({decided}) async => h.starts++,
+      ),
     ],
     child: MaterialApp(
       theme: appTheme(palette: AppPalette.light),
@@ -315,9 +321,55 @@ void main() {
             'the reading\'s next safe boundary',
       );
       expect(h.check.isRunning, isFalse);
-      expect(panel, findsNothing);
+      expect(
+        stopCheck,
+        findsNothing,
+        reason: 'nothing is running, so nothing is offered a stop',
+      );
+      expect(find.byType(LinearProgressIndicator), findsNothing);
+      // What is left is the queue this seed enqueued, saying so. The panel is
+      // the Browser's only account of the queue — the operation indicator
+      // deliberately stays off this screen — so a row waiting here is
+      // something the user is owed a sentence about, not silence.
+      expect(find.byKey(const ValueKey('panelStartWaiting')), findsOneWidget);
+      expect(
+        find.text('1 download waiting for you to start it.'),
+        findsOneWidget,
+      );
     });
   });
+
+  group('a queue nobody has started', () {
+    // The Browser is the one screen the operation indicator stays off, on the
+    // grounds that the panels here say it in full. They only ever said it
+    // about a run *in flight* — so the ordinary end of a save flow, *Queue
+    // only*, left the user standing on the Browser with no sign they had a
+    // queue at all, and the way to start it three taps away on a screen they
+    // had no reason to open.
+    screenTest('says how much is waiting, and offers the Start', (
+      tester,
+    ) async {
+      await h.seed();
+      await tester.pumpWidget(app());
+      await _pumpUntil(tester, find.byKey(const ValueKey('panelStartWaiting')));
+
+      expect(
+        find.text('1 download waiting for you to start it.'),
+        findsOneWidget,
+      );
+      expect(
+        find.byType(LinearProgressIndicator),
+        findsNothing,
+        reason: 'a queue is not motion, and a bar here would claim it was',
+      );
+
+      await tester.tap(find.byKey(const ValueKey('panelStartWaiting')));
+      await _turn(tester);
+      expect(h.ui.queue.saveStartAuthorised, isTrue);
+      expect(h.starts, 1);
+    });
+  });
+
 }
 
 // ─── driving two real operations ────────────────────────────────────────────
@@ -365,6 +417,10 @@ class _Harness {
   }
 
   final Directory storeRoot;
+
+  /// How many times the panel's Start handed the queue to a runner.
+  int starts = 0;
+
   final BrowserController browser = BrowserController();
 
   late final LibraryDatabase library = LibraryDatabase.forTesting(
