@@ -853,3 +853,47 @@ moment at which the whole range is known.
 *Queue only* still queues and starts nothing: it writes the one row and holds
 the journey on the runner, in memory, exactly as the Start authorisation is
 held in memory (`queue_repository.dart`). A relaunch has neither.
+
+### V2-D57 · Starting a Collection is the picker, then one sheet
+
+New Collection creation from the Entry save flow uses the existing Collection
+picker first, then one combined Collection-name + save-scope sheet. Naming and
+scope are not separate modal steps.
+
+The path it replaces had three surfaces between *Add to a Collection…* and the
+thing that saves: the picker's list, the picker's own naming state, and the
+scope sheet. The middle one held a single text field, and the sheet after it
+opened by printing that field's value back — *From Quiet Harbour, starting at
+this page.* A whole screen for one answer that the next screen states as a
+fact is a step, not a question.
+
+So the header line becomes the field. `showSaveScopeSheet` takes a
+[NewCollectionNaming] — the suggested name and the host about to become the
+Collection's first Source — draws `collectionNameField` where the subtitle was,
+states `First source · host` under it rather than saying "this site" without
+naming it, and returns the trimmed answer on `SaveScopeChoice.collectionName`.
+A blank name is refused where it was typed, exactly as a blank count is, and
+identity is validated before the number: complaining about the count under a
+nameless Collection would answer the second question first.
+
+**The picker stays, and stays first.** Skipping it is what would make this
+unsafe: the Collections the user already holds must be visible before another
+is started, or a work they already have from one site quietly becomes a second
+Collection when they save it from another — the duplicate V2-D45 exists to
+prevent. What changed is only what *New collection* costs after the list has
+been seen. `showCollectionPicker` gained `confirmNameHere`, and the flag is
+answered by whether a sheet follows: a listing is not an Entry, nothing follows
+it, and it still names the Collection in the picker as it always did.
+
+Nothing about the write changed. `LibraryAdoption.createCollection` is still
+called once, after every answer is collected, and still writes Collection,
+Source, Entry and Location in one transaction — the four surfaces before it
+never wrote anything, which is what made the collapse a question of order
+alone. Folder is not asked here and root remains the answer (V2-D21).
+
+The other rule this keeps is the one that decides which collapse was allowed.
+The picker's list and its name field are still never on screen together:
+"naming a new Collection and picking an existing one are two answers to the
+same question, and offering both at once is how a tap lands on the wrong one."
+Moving the field to the next surface honours that; putting it beside the list
+would not.

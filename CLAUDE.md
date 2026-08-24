@@ -92,7 +92,10 @@ in [docs/DECISIONS.md](docs/DECISIONS.md).
   captured first, the next is found only when the one before it is on the
   device, each page is opened once, and stopping the download stops the
   traversal with it. Never reintroduce a phase that resolves the range before
-  anything is captured.
+  anything is captured. Starting a Collection is the picker, then **one**
+  sheet: the picker is always first, because the Collections already held must
+  be visible before another begins, and the name is confirmed on the sheet
+  that asks the count rather than on a screen of its own (V2-D57).
 - **How an Entry reads** (`lib/library/entry_presentation.dart`) — inside a
   Collection a row leads with the Entry's **position**, because the work is
   already named above the list; across the library it names itself. The

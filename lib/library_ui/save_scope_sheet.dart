@@ -27,6 +27,17 @@
 /// counts on the library and opens nothing. Both count the entry the user is
 /// on as the first one, and the sheet says so in words rather than leaving it
 /// to be inferred from a number.
+///
+/// **A Collection that does not exist yet is named here**
+/// ([NewCollectionNaming], V2-D57). The sheet already printed the Collection's
+/// name in its header, so the name arrived confirmed by a screen of its own
+/// whose only content was one text field. That screen is gone: the header line
+/// becomes the field, the site about to become the Collection's first Source
+/// is stated beside it, and the answer travels back on
+/// [SaveScopeChoice.collectionName]. Which
+/// Collection this is remains the picker's question and is not asked here —
+/// this sheet only ever names the new one the user has already chosen to
+/// start.
 library;
 
 import 'package:flutter/material.dart';
@@ -66,12 +77,31 @@ enum SaveStartMode {
   };
 }
 
+/// A Collection that does not exist yet, named on the sheet that asks how
+/// much of it to download.
+///
+/// Present only for *New collection*: an existing Collection's name is not
+/// editable here, because renaming one on the way past is not what the user
+/// came to this sheet to do.
+class NewCollectionNaming {
+  const NewCollectionNaming({required this.suggestedName, this.host = ''});
+
+  /// What the page called the work. A suggestion the user may correct, and
+  /// never a match key — nothing is selected or merged from it (V2-D44).
+  final String suggestedName;
+
+  /// The site this address is on, which becomes the Collection's first Source.
+  /// Empty where the address has no host to name, and then simply not said.
+  final String host;
+}
+
 /// The range the user chose, and what they asked to happen with it.
 class SaveScopeChoice {
   const SaveScopeChoice({
     required this.limits,
     required this.start,
     this.discoverMissing = false,
+    this.collectionName,
   });
 
   /// Built only ever through [SaveLimits.forScope], so there is no
@@ -93,6 +123,10 @@ class SaveScopeChoice {
   /// already holds and say how many that was, opening nothing. Both are real
   /// answers, and the one that opens a site is the one the user picked.
   final bool discoverMissing;
+
+  /// The name for the Collection about to be created, trimmed and non-empty.
+  /// Null whenever the sheet was not naming one, which is every other caller.
+  final String? collectionName;
 }
 
 /// Ask how much of [collectionName] to download, starting from this page.
@@ -104,12 +138,19 @@ class SaveScopeChoice {
 /// with the chosen mode; it must not pop the sheet itself. Null falls back to
 /// the two launches this lane can describe on its own, which is what a test
 /// with no such surface around it sees.
+///
+/// [naming] is set only for a Collection that does not exist yet: the header
+/// line becomes an editable field, and the confirmed name comes back on
+/// [SaveScopeChoice.collectionName] (V2-D57). [collectionName] is still what
+/// the sheet is *about* either way, and is the field's initial value when
+/// [naming] is set.
 Future<SaveScopeChoice?> showSaveScopeSheet(
   BuildContext context, {
   required String collectionName,
   int initialCount = 2,
   List<int> alreadyDownloadedBytes = const [],
   Widget Function(BuildContext, void Function(SaveStartMode))? launchActions,
+  NewCollectionNaming? naming,
 }) {
   return showModalBottomSheet<SaveScopeChoice>(
     context: context,
@@ -119,6 +160,7 @@ Future<SaveScopeChoice?> showSaveScopeSheet(
       initialCount: initialCount,
       alreadyDownloadedBytes: alreadyDownloadedBytes,
       launchActions: launchActions,
+      naming: naming,
     ),
   );
 }
@@ -129,10 +171,15 @@ class _SaveScopeSheet extends StatefulWidget {
     required this.initialCount,
     this.alreadyDownloadedBytes = const [],
     this.launchActions,
+    this.naming,
   });
 
   final String collectionName;
   final int initialCount;
+
+  /// The Collection this sheet is about to bring into existence, when it is
+  /// about to. See [showSaveScopeSheet].
+  final NewCollectionNaming? naming;
 
   /// The launch row, when a caller owns one. See [showSaveScopeSheet].
   final Widget Function(BuildContext, void Function(SaveStartMode))?
@@ -180,6 +227,20 @@ class _SaveScopeSheetState extends State<_SaveScopeSheet> {
   /// a number is refused.
   final _countFocus = FocusNode(debugLabel: 'saveCountField');
 
+  /// The new Collection's name, and the focus a blank one is sent back to.
+  ///
+  /// **Not autofocused.** The field opens holding what the page called the
+  /// work, and the common answer to it is *yes*: raising a keyboard over the
+  /// ranges and the launches would make confirming the suggestion cost a
+  /// dismissal, which is the opposite of what removing the naming screen was
+  /// for. Tapping it is how the minority who correct it get there.
+  late final TextEditingController _name = TextEditingController(
+    text: widget.naming?.suggestedName ?? '',
+  );
+  final _nameFocus = FocusNode(debugLabel: 'saveCollectionNameField');
+
+  String? _nameError;
+
   SaveScope _scope = SaveScope.currentPageOnly;
 
   /// Which of the two counted ranges is selected, while [_scope] is
@@ -203,6 +264,8 @@ class _SaveScopeSheetState extends State<_SaveScopeSheet> {
       ..removeListener(_onCountFocusChanged)
       ..dispose();
     _count.dispose();
+    _nameFocus.dispose();
+    _name.dispose();
     super.dispose();
   }
 
@@ -246,6 +309,23 @@ class _SaveScopeSheetState extends State<_SaveScopeSheet> {
     _countFocus.requestFocus();
   }
 
+  /// The name for a Collection about to exist. Null and refused **where it was
+  /// typed**, exactly as a blank count is: a Collection with no name is not a
+  /// thing this sheet can ask the domain to create.
+  ///
+  /// Returns null for a sheet that is not naming anything, which is not a
+  /// refusal — there is simply no name to give.
+  String? _validatedName() {
+    if (widget.naming == null) return null;
+    final name = _name.text.trim();
+    if (name.isEmpty) {
+      setState(() => _nameError = 'Give this collection a name.');
+      _nameFocus.requestFocus();
+      return null;
+    }
+    return name;
+  }
+
   /// "OK": accept the number that has been typed and put the keyboard away.
   ///
   /// Not a launch. It keeps the typed value, runs the same validation the two
@@ -264,6 +344,11 @@ class _SaveScopeSheetState extends State<_SaveScopeSheet> {
 
   void _submit(SaveStartMode start) {
     if (_busy) return;
+    // Identity before quantity, which is the order they are read in: a sheet
+    // that complained about the number under a nameless collection would be
+    // answering the second question first.
+    final name = _validatedName();
+    if (widget.naming != null && name == null) return;
     final count = _validated();
     if (count == null) return;
     setState(() => _busy = true);
@@ -276,6 +361,7 @@ class _SaveScopeSheetState extends State<_SaveScopeSheet> {
         // *This entry* is the page already in front of the user: there is
         // nothing after it to look for, so it never asks a site for anything.
         discoverMissing: _scope == SaveScope.fixedCount && _discoverMissing,
+        collectionName: name,
       ),
     );
   }
@@ -284,6 +370,7 @@ class _SaveScopeSheetState extends State<_SaveScopeSheet> {
   Widget build(BuildContext context) {
     final palette = AppPalette.of(context);
     final typed = _scope == SaveScope.fixedCount;
+    final naming = widget.naming;
 
     return SafeArea(
       child: Padding(
@@ -308,20 +395,70 @@ class _SaveScopeSheetState extends State<_SaveScopeSheet> {
                   children: [
                     const SizedBox(height: 14),
                     Text(
-                      'How many entries',
+                      naming == null ? 'How many entries' : 'New collection',
                       style: serifStyle(size: 20, color: palette.ink),
                     ),
                     const SizedBox(height: 4),
-                    Text(
-                      'From ${widget.collectionName}, starting at this page.',
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        fontSize: 12.5,
-                        height: 1.5,
-                        color: palette.inkMuted,
+                    // One header, two shapes. Without a Collection to name it
+                    // says which one this is about; with one, the same line
+                    // becomes the field that decides — and the site about to
+                    // become its first Source is stated rather than implied,
+                    // because "this site" is the only thing the old naming
+                    // screen said about it and it never named it.
+                    if (naming != null) ...[
+                      TextField(
+                        key: const ValueKey('collectionNameField'),
+                        controller: _name,
+                        focusNode: _nameFocus,
+                        textCapitalization: TextCapitalization.sentences,
+                        textInputAction: TextInputAction.done,
+                        style: TextStyle(fontSize: 14, color: palette.ink),
+                        onChanged: (_) => setState(() => _nameError = null),
+                        onSubmitted: (_) => _nameFocus.unfocus(),
+                        onTapOutside: (_) => _nameFocus.unfocus(),
+                        decoration: InputDecoration(
+                          labelText: 'Collection name',
+                          errorText: _nameError,
+                          errorMaxLines: 2,
+                        ),
                       ),
-                    ),
+                      const SizedBox(height: 6),
+                      Text(
+                        naming.host.isEmpty
+                            ? 'This site becomes its first source. Nothing is '
+                                  'merged with anything you already have.'
+                            : 'First source · ${naming.host}',
+                        key: const ValueKey('newCollectionSourceFact'),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: naming.host.isEmpty
+                            ? TextStyle(
+                                fontSize: 11.5,
+                                height: 1.45,
+                                color: palette.inkMuted,
+                              )
+                            : monoStyle(size: 12, color: palette.inkFaint),
+                      ),
+                      const SizedBox(height: 12),
+                      Text(
+                        'How many entries, starting at this page.',
+                        style: TextStyle(
+                          fontSize: 12.5,
+                          height: 1.5,
+                          color: palette.inkMuted,
+                        ),
+                      ),
+                    ] else
+                      Text(
+                        'From ${widget.collectionName}, starting at this page.',
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 12.5,
+                          height: 1.5,
+                          color: palette.inkMuted,
+                        ),
+                      ),
                     const SizedBox(height: 14),
                     _RangeOption(
                       key: const ValueKey('saveScopeThisEntry'),

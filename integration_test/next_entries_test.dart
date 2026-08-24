@@ -136,10 +136,17 @@ void main() {
     await tester.tap(key('v2AddToCollection'), warnIfMissed: false);
     await pumpFor(tester, const Duration(seconds: 2));
 
+    // *New collection* lands on the sheet that asks how many: the name it
+    // detected is the field at the top of it, and there is no screen in
+    // between holding that field on its own (V2-D57).
     await tester.tap(key('collectionPickerNew'), warnIfMissed: false);
-    await pumpFor(tester, const Duration(seconds: 1));
-    await tester.tap(key('collectionCreateConfirm'), warnIfMissed: false);
     await pumpFor(tester, const Duration(seconds: 2));
+
+    expect(
+      key('collectionNameField'),
+      findsOneWidget,
+      reason: 'the collection is named on the sheet that queues it',
+    );
 
     expect(
       key('saveScopeFromHere'),

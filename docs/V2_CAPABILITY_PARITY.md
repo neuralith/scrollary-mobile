@@ -51,6 +51,8 @@ expected to carry one.
 | Save the page I'm reading | Browser → save action → **Save** | Free | `features/v2_save_flow.dart` | `test/v2_save_flow_test.dart` | — |
 | Say which Collection a page belongs to | Browser → save → **Add to a Collection…** | Free | `recognition/adopt.dart` | `test/recognition/adopt_test.dart` | — |
 | Add this site as another Source of a Collection | same, choose an existing Collection | Free | `recognition/adopt.dart` | `test/recognition/adopt_test.dart` | — |
+| Start a Collection for the page I'm on | same, **New collection** → one sheet: the detected name, its first Source, the count and the launch | Free | `library_ui/save_scope_sheet.dart` | `test/library_ui/save_panel_test.dart` | — |
+| Correct the name Scrollary detected for it | same sheet, `collectionNameField` — prefilled, editable, blank refused in place | Free | `library_ui/save_scope_sheet.dart` | `test/library_ui/save_scope_sheet_test.dart` | — |
 | Download this entry | save sheet → **Download this entry** | Free | `features/v2_add_flow.dart` | `test/save_v2/add_flow_test.dart` | — |
 | Download a number of entries I type | save sheet → **Entries from here** → count | Free | `library_ui/save_scope_sheet.dart` | `test/library_ui/save_scope_sheet_test.dart` | — |
 | Download the next N even if the library doesn't know them | same, count > what is held | Free | `save/capture_journey.dart` | `test/save_v2/capture_journey_test.dart` | — |

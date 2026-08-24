@@ -55,7 +55,7 @@ of announcing it.
 |---|---|---|---|---|
 | Entry in the library | `RecognisedLocation` | any | Collection · Entry · Source context; **Download this entry**; **Download entries…** (count) | queue rows only |
 | Address on a known Source | `RecognisedSource` | entryPage / unknownPage | "Adds to *Collection*"; **Add & download this entry**; **Add & download…**; Follow | Entry + Location under that Collection, through `EntryReconciler` |
-| Unknown site | `Unrecognised` | entryPage | **Add to a Collection…** → existing (adds this site as another Source) or new; then the count | Collection?/Source/Entry/Location in one transaction |
+| Unknown site | `Unrecognised` | entryPage | **Add to a Collection…** → the picker: an existing Collection (this site becomes another Source of it) or **New collection**, which goes straight to the sheet that names it and asks the count | Collection?/Source/Entry/Location in one transaction |
 | Known Source's own listing | `RecognisedSource` | collectionIndex | "there is no entry here to add"; **Check *Collection* for new entries**; Follow | nothing — the check writes what it finds |
 | Unknown site, ordinary page | `Unrecognised` | unknownPage | **Save as a standalone entry**; **Add to a Collection…**; and, when the address could be a listing, **Add this site as a collection's source** | standalone Entry + Location (I7), or — for the third — Collection?/Source and **no Entry** |
 
@@ -67,16 +67,25 @@ Rules that bind every row:
   is not a unit of reading and no `Entry 0` is invented for it. Whether an
   address *is* a listing is the library's answer or the user's — never the
   URL's.
-- **Folder is organisation.** It is asked for when a new Collection or a
-  standalone Entry needs a home, and it never stands in for Collection
-  identity.
+- **Folder is organisation, and the save flow does not ask for it.** A new
+  Collection and a standalone Entry are created in the root Folder; moving one
+  is a Library action (`library_ui/folder_actions.dart`,
+  `library_ui/collection_actions.dart`). Folder never stands in for Collection
+  identity, and putting the question on the way in would be a third answer to
+  give before anything is saved.
 - **Library membership and downloading are separate acts.** Following a
   Collection downloads nothing; downloading one Entry follows nothing. The
   sheet may offer both in one tap, but they remain two operations
   (PRODUCT.md §2.4).
 - **A count that may open a page is authorised before it opens one.** The
-  count sheet asks *how much*; the start sheet asks *where you wait while it
-  is found*. See §4.
+  count sheet asks *how much* and, in the same rows, *where you wait while it
+  is found* (V2-D52). See §4.
+- **A Collection the user is starting is named on the sheet that queues it**
+  (V2-D57). The picker is still where *which Collection* is answered — the
+  ones the library already holds are visible before another is started — but
+  *New collection* returns the detected name unconfirmed and the next sheet
+  is where it is edited and confirmed. The exception is a listing, which has
+  no next sheet and so still names it in the picker.
 
 ## 4. How much, and how far
 
@@ -144,8 +153,8 @@ one?"** — so the inclusive count is stated where the number is typed rather
 than left to be inferred from it. Under the field, the sentence that tells the
 two counted ranges apart says it again in numbers. For *Entries from here*:
 
-> 5 means this entry and the next four. For any your library does not have,
-> Scrollary reads forward from this page — at most `kMaxWalkPages` pages,
+> 5 means this entry and the next four. Scrollary downloads this page, then
+> reads forward for the next one and downloads that — one page at a time,
 > nothing else downloaded, and you can stop it at any point.
 
 and for *Entries already in your library*:
@@ -157,6 +166,25 @@ The ceiling stays where it always was — stated in the range's own line and
 enforced by `SaveLimits.forScope` — and so does every part of the recovered
 numeric interaction: digits only, a blank and a zero refused where they were
 typed, and an OK bar for the number pad iOS gives no return key.
+
+### Naming a Collection that does not exist yet
+
+For *New collection*, the header of this same sheet is where the Collection is
+named (V2-D57). `showSaveScopeSheet` takes a `NewCollectionNaming`, and the
+line that would have read *From Quiet Harbour, starting at this page.* becomes:
+
+| | |
+|---|---|
+| title | **New collection** |
+| `collectionNameField` | the detected title, editable, **not** autofocused — the common answer is *yes*, and a keyboard over the ranges would make confirming it cost a dismissal |
+| `newCollectionSourceFact` | `First source · reading.example.com` — the site about to become the Collection's first Source, named rather than referred to |
+| then | the three ranges, the count, and the launch, unchanged |
+
+The trimmed name comes back on `SaveScopeChoice.collectionName` and is what
+`v2AddAndDownload` is given as `newCollectionName`. A blank one is refused
+where it was typed, and it is checked before the count. The count field keeps
+the OK bar to itself: an alphabetic keyboard has a return key, and a number
+pad does not.
 
 ### The launch, asked once
 
