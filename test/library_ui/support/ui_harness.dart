@@ -19,6 +19,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:web_reader/data/collection_repository.dart';
+import 'package:web_reader/features/check_state.dart';
 import 'package:web_reader/data/entry_repository.dart';
 import 'package:web_reader/data/folder_repository.dart';
 import 'package:web_reader/data/offline_copy_repository.dart';
@@ -68,6 +69,11 @@ class UiHarness {
   /// composition with nothing attached, where a Start authorises nothing.
   late SaveQueueStarter? starter = ({decided}) async => starts++;
 
+  /// What the last check of each Collection concluded. A real store: a test
+  /// that wants the new-entries bar on screen records an outcome on it,
+  /// exactly as the check controller does.
+  final CheckStateStore checkState = CheckStateStore();
+
   /// Every placement this UI submitted, in order.
   final placements = <PlacementRequest>[];
 
@@ -94,6 +100,11 @@ class UiHarness {
       placementSubmitProvider.overrideWithValue(
         (request) => placement(request),
       ),
+      // Overridden here rather than by a caller wrapping this: a second
+      // `ProviderScope` outside this one is a different container, and
+      // every provider neither scope overrides then resolves in the root,
+      // where the library services are not wired and the read throws.
+      checkStateProvider.overrideWithValue(checkState),
     ],
     child: MaterialApp(
       theme: appTheme(palette: AppPalette.light),
@@ -102,6 +113,7 @@ class UiHarness {
   );
 
   Future<void> close() async {
+    checkState.dispose();
     await db.close();
     if (storeRoot.existsSync()) storeRoot.deleteSync(recursive: true);
   }

@@ -95,7 +95,10 @@ in [docs/DECISIONS.md](docs/DECISIONS.md).
   anything is captured. Starting a Collection is the picker, then **one**
   sheet: the picker is always first, because the Collections already held must
   be visible before another begins, and the name is confirmed on the sheet
-  that asks the count rather than on a screen of its own (V2-D57).
+  that asks the count rather than on a screen of its own (V2-D57). What a
+  Collection is normally saved as is resolved at the **capture seam**
+  (`EntryCaptureService.capture`, V2-D58) so it applies wherever a capture
+  starts; never re-implement that fallback at a place a queue row is written.
 - **How an Entry reads** (`lib/library/entry_presentation.dart`) — inside a
   Collection a row leads with the Entry's **position**, because the work is
   already named above the list; across the library it names itself. The

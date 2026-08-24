@@ -54,6 +54,7 @@ expected to carry one.
 | Start a Collection for the page I'm on | same, **New collection** → one sheet: the detected name, its first Source, the count and the launch | Free | `library_ui/save_scope_sheet.dart` | `test/library_ui/save_panel_test.dart` | — |
 | Correct the name Scrollary detected for it | same sheet, `collectionNameField` — prefilled, editable, blank refused in place | Free | `library_ui/save_scope_sheet.dart` | `test/library_ui/save_scope_sheet_test.dart` | — |
 | Download this entry | save sheet → **Download this entry** | Free | `features/v2_add_flow.dart` | `test/save_v2/add_flow_test.dart` | — |
+| Have a collection keep saving as what I chose | anywhere a capture starts — save sheet, Library, after a check, a repair, another device | Free | `save/entry_capture.dart` | `test/save_v2/capture_preference_test.dart` | — |
 | Download a number of entries I type | save sheet → **Entries from here** → count | Free | `library_ui/save_scope_sheet.dart` | `test/library_ui/save_scope_sheet_test.dart` | — |
 | Download the next N even if the library doesn't know them | same, count > what is held | Free | `save/capture_journey.dart` | `test/save_v2/capture_journey_test.dart` | — |
 | Get N entries on this device from a count of N | same | Free | `features/v2_add_flow.dart` | `test/save_v2/capture_journey_test.dart` | — |

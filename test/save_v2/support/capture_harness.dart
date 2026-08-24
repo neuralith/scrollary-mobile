@@ -8,13 +8,17 @@ library;
 
 import 'dart:io';
 
+import 'package:drift/drift.dart' show QueryExecutor;
+
 import 'package:web_reader/data/schema.dart';
 import 'package:web_reader/save/entry_capture.dart';
 import 'package:web_reader/save/page_capture_source.dart';
 import 'package:web_reader/save/queue_repository.dart';
 import 'package:web_reader/reading_v2/offline_read.dart';
+import 'package:web_reader/data/local_settings.dart';
 import 'package:web_reader/save/capture_mode.dart';
 import 'package:web_reader/save/capture_policy.dart';
+import 'package:web_reader/save/capture_preference.dart';
 import 'package:web_reader/save/page_hint.dart';
 import 'package:web_reader/storage/document.dart';
 import 'package:web_reader/storage/file_store.dart';
@@ -35,19 +39,28 @@ String restrictedUrl([String path = '/entry/1']) {
 }
 
 class CaptureHarness {
-  CaptureHarness() {
-    repos = RepoHarness();
+  /// [executor] is for the one test that has to prove a preference survives
+  /// the database being closed and opened again: pointing two harnesses at the
+  /// same file is the only honest way to write it. Everything else gets the
+  /// in-memory default.
+  CaptureHarness({QueryExecutor? executor}) {
+    repos = RepoHarness(executor: executor);
     root = Directory.systemTemp.createTempSync('scrollary_v2_capture');
     fileStore = FileStore(root);
     Directory('${root.path}/${FileStore.libraryFolderName}').createSync();
     Directory('${root.path}/${FileStore.tmpFolderName}').createSync();
     queue = SaveQueueRepository(repos.db, now: repos.tick);
+    preferences = CapturePreferenceStore(LocalSettingsStore(repos.db));
   }
 
   late final RepoHarness repos;
   late final Directory root;
   late final FileStore fileStore;
   late final SaveQueueRepository queue;
+
+  /// What each Collection is normally captured as — the real store, over this
+  /// harness's own database.
+  late final CapturePreferenceStore preferences;
 
   LibraryDatabase get db => repos.db;
 
@@ -58,6 +71,7 @@ class CaptureHarness {
         offlineCopies: repos.offline,
         fileStore: fileStore,
         source: source,
+        capturePreferences: preferences,
         now: repos.tick,
       );
 

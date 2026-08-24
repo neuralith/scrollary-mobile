@@ -12,6 +12,7 @@ import 'package:web_reader/data/entry_repository.dart';
 import 'package:web_reader/data/reading_state_repository.dart';
 import 'package:web_reader/data/recognition_index.dart';
 import 'package:web_reader/data/schema.dart';
+import 'package:web_reader/data/local_settings.dart';
 import 'package:web_reader/features/check_controller.dart';
 import 'package:web_reader/features/v2_composition.dart';
 import 'package:web_reader/features/v2_save_flow.dart';
@@ -21,6 +22,7 @@ import 'package:web_reader/recognition/recognise.dart';
 import 'package:web_reader/save/entry_capture.dart';
 import 'package:web_reader/save/page_hint_repository.dart';
 import 'package:web_reader/save/queue_runner.dart';
+import 'package:web_reader/save/capture_preference.dart';
 import 'package:web_reader/storage/file_store.dart';
 
 /// One page of nothing: a stand-in observation source for tests that never
@@ -53,6 +55,7 @@ class V2Harness {
         collections: ui.collections,
         offlineCopies: ui.offline,
         fileStore: fileStore,
+        capturePreferences: CapturePreferenceStore(LocalSettingsStore(library)),
         source: throw UnimplementedError('no capture in this test'),
       ),
     );

@@ -36,6 +36,7 @@ import '../storage/file_store.dart';
 import '../storage/manifest.dart';
 import 'capture_mode.dart';
 import 'capture_policy.dart';
+import 'capture_preference.dart';
 import 'page_capture_source.dart';
 import 'page_hint.dart';
 import 'stop_conditions.dart';
@@ -200,6 +201,7 @@ class EntryCaptureService {
     required this.offlineCopies,
     required this.fileStore,
     required this.source,
+    required this.capturePreferences,
     Clock? now,
   }) : _now = now ?? utcNow;
 
@@ -208,12 +210,25 @@ class EntryCaptureService {
   final OfflineCopyRepository offlineCopies;
   final FileStore fileStore;
   final PageCaptureSource source;
+
+  /// What each Collection is normally captured as.
+  ///
+  /// **Required, not optional.** This is the one place every capture passes
+  /// through, whatever wrote the row — the Browser's save sheet, *Download for
+  /// offline*, the bar after a check, the reader's repair, a request from
+  /// another device — and a construction site that could leave it out would
+  /// silently lose the preference again on exactly the paths it was lost on
+  /// before (V2-D58).
+  final CapturePreferenceStore capturePreferences;
+
   final Clock _now;
 
   /// Capture [locationUrl] for [entryId].
   ///
   /// [captureMode] is **required and may be null**, deliberately: null means
-  /// "decide from the settled page", which is a decision made where the
+  /// *nobody asked for one on this save*. It is not the last word: the
+  /// Collection's own standing answer is consulted here, and only if there is
+  /// none does the settled page decide — which is a decision made where the
   /// measurement is, and there is no default about what to take off someone
   /// else's site.
   Future<EntryCaptureResult> capture({
@@ -253,6 +268,29 @@ class EntryCaptureService {
       );
     }
 
+    // What this save was asked for, then what the *work* is normally saved as.
+    //
+    // **Here, and not at the places rows are written.** V1 resolved this
+    // fallback inside its run — `requestedCaptureMode ?? collection's
+    // preference` — so it applied to every capture whatever started it. V2
+    // moved the read into the save sheet's own widget state, and every path
+    // that never opens that sheet lost it (V2-D58). This is the one seam they
+    // all pass through.
+    //
+    // Three properties it keeps. An explicit mode wins, because a person
+    // asking for *this* save outranks a standing answer about the work. A
+    // standalone Entry has no Collection and therefore no fallback — asking
+    // for one would be inventing an instruction from nowhere. And it is read
+    // **now**, not copied onto the row at enqueue time, so a preference
+    // changed while the row waited is the one that is honoured.
+    //
+    // What it is not is a user's choice: `captureModeIsUserSet` is untouched,
+    // so a remembered mode never becomes a per-save explicit answer, and
+    // `CaptureCapabilities.resolve` inside the engine is still what decides
+    // whether this page can honour it at all.
+    final requestedMode =
+        captureMode ?? await capturePreferences.of(entry.collectionId);
+
     final provenance = await resolveCaptureProvenance(
       entries: entries,
       collections: collections,
@@ -271,7 +309,7 @@ class EntryCaptureService {
       outcome = await source.capturePage(
         url: locationUrl,
         staging: staging,
-        requestedMode: captureMode,
+        requestedMode: requestedMode,
         shouldContinue: carryOn,
         // Straight through, unchanged. A rule exists only because a person
         // tapped an element, and nothing on this path may invent one.

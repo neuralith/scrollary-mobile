@@ -54,12 +54,14 @@ import 'package:web_reader/browser/browser_controller.dart';
 import 'package:web_reader/core/config.dart';
 import 'package:web_reader/core/url_utils.dart';
 import 'package:web_reader/data/schema.dart';
+import 'package:web_reader/data/local_settings.dart';
 import 'package:web_reader/library_ui/providers.dart' as libui;
 import 'package:web_reader/save/asset_fetcher.dart';
 import 'package:web_reader/save/entry_capture.dart';
 import 'package:web_reader/save/page_capture_source.dart';
 import 'package:web_reader/save/save_engine.dart';
 import 'package:web_reader/save/save_state.dart';
+import 'package:web_reader/save/capture_preference.dart';
 import 'package:web_reader/storage/file_store.dart';
 
 import 'support/v2_harness.dart';
@@ -211,6 +213,7 @@ void main() {
       collections: services.collections,
       offlineCopies: services.offline,
       fileStore: fileStore,
+      capturePreferences: CapturePreferenceStore(LocalSettingsStore(library)),
       source: SaveEnginePageCaptureSource(
         browser: browser,
         engineFor: (sink) => SaveEngine(
