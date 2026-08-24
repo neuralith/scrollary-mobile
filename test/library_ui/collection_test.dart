@@ -14,7 +14,10 @@ import 'package:web_reader/domain/collection.dart';
 import 'package:web_reader/domain/entry.dart';
 import 'package:web_reader/domain/reading_state.dart';
 import 'package:web_reader/library_ui/collection_screen.dart';
+import 'package:web_reader/data/local_settings.dart';
 import 'package:web_reader/library_ui/library_widgets.dart';
+import 'package:web_reader/save/capture_mode.dart';
+import 'package:web_reader/save/capture_preference.dart';
 import 'package:web_reader/save/queue_task.dart';
 
 import 'support/ui_harness.dart';
@@ -379,6 +382,48 @@ void main() {
     // bytes it names. Removing a library row is never a way to delete a file.
     expect(await h.offlineCopyRows(s.held.id), 1);
     expect(h.bytesOnDisk(s.held.id), isTrue);
+  });
+
+  screenTest('removing the collection forgets what it was saved as', (
+    tester,
+  ) async {
+    // The rows go by cascade; a setting keyed by the collection's id has no
+    // foreign key to take it along, so the removal drops it (V2-D60).
+    final s = await seed();
+    final preferences = CapturePreferenceStore(LocalSettingsStore(h.db));
+    await preferences.remember(s.collection.id, CaptureMode.imageSequence);
+
+    await tester.pumpWidget(
+      h.app(CollectionScreen(collectionId: s.collection.id)),
+    );
+    await pumpUntil(tester, find.text('The first one'));
+    await tapAndPump(tester, find.byTooltip('Collection actions'));
+    await tapAndPump(tester, find.text('Remove from library'));
+    await tapAndPump(
+      tester,
+      find.byKey(const ValueKey('confirmCollectionRemove')),
+    );
+    await pumpUntil(tester, find.textContaining('Removed from your library'));
+
+    expect(await preferences.of(s.collection.id), isNull);
+  });
+
+  screenTest('archiving keeps what it was saved as', (tester) async {
+    // Archiving is "stop keeping this current", not "forget what it is":
+    // following it again must not start asking the question over.
+    final s = await seed();
+    final preferences = CapturePreferenceStore(LocalSettingsStore(h.db));
+    await preferences.remember(s.collection.id, CaptureMode.imageSequence);
+
+    await tester.pumpWidget(
+      h.app(CollectionScreen(collectionId: s.collection.id)),
+    );
+    await pumpUntil(tester, find.text('The first one'));
+    await tapAndPump(tester, find.byTooltip('Collection actions'));
+    await tapAndPump(tester, find.text('Archive'));
+    await pumpUntil(tester, find.textContaining('Archived'));
+
+    expect(await preferences.of(s.collection.id), CaptureMode.imageSequence);
   });
 
   screenTest('cancelling the removal changes nothing', (tester) async {

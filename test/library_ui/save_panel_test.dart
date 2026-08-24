@@ -55,12 +55,19 @@ class _AddCall {
     required this.limits,
     this.isListing = false,
     this.discoverMissing = false,
+    this.captureMode,
+    this.captureModeIsUserSet = false,
   });
 
   final String url;
   final String? collectionId;
   final String? newCollectionName;
   final SaveLimits? limits;
+
+  /// What the sheet asked the save to produce, and whether a person picked it
+  /// rather than it being detection's or the collection's answer.
+  final CaptureMode? captureMode;
+  final bool captureModeIsUserSet;
 
   /// Whether the sheet told the domain this address is a Source's own page.
   final bool isListing;
@@ -119,6 +126,8 @@ void main() {
         limits: limits,
         isListing: isListing,
         discoverMissing: discoverMissing,
+        captureMode: captureMode,
+        captureModeIsUserSet: captureModeIsUserSet,
       ),
     );
     return AddToLibraryReport(
@@ -734,12 +743,85 @@ void main() {
         findsNothing,
         reason: 'the question has an answer, so it is not asked again',
       );
+      // One line: the word, the answer, and the way in — no detection
+      // sentence, no three descriptions, no reasons for modes nobody is
+      // choosing between right now (V2-D60).
+      expect(find.text('Capture'), findsOneWidget);
       expect(find.text('Images only'), findsOneWidget);
+      expect(find.text(CaptureMode.imageSequence.description), findsNothing);
+      expect(key('captureDetectionSummary'), findsNothing);
+      expect(key('captureMode_textOnly'), findsNothing);
 
-      // And everything the block says is one tap away.
-      await tapAndPump(tester, key('captureModeChange'));
+      // And everything the block says is one tap away — on the row itself,
+      // not on a button beside it, and not behind a second sheet.
+      await tapAndPump(tester, key('captureModeRemembered'));
       expect(find.text('What to save'), findsOneWidget);
+      expect(key('captureMode_textOnly'), findsOneWidget);
       expect(key('captureModeRemembered'), findsNothing);
+    });
+
+    screenTest('the remembered answer is what the save is asked for', (
+      tester,
+    ) async {
+      final collectionId = await seedKnownEntry();
+      await CapturePreferenceStore(
+        LocalSettingsStore(h.db),
+      ).remember(collectionId, CaptureMode.imageSequence);
+
+      await openPanel(tester, _entryUrl, _entryTitle);
+      await pumpUntil(tester, key('captureModeRemembered'));
+      await tapAndPump(tester, key('v2DownloadEntry'));
+
+      expect(adds.single.captureMode, CaptureMode.imageSequence);
+      expect(
+        adds.single.captureModeIsUserSet,
+        isFalse,
+        reason:
+            'preselected from the work\'s standing answer, which is not the '
+            'same fact as a person having chosen it on this page',
+      );
+    });
+
+    screenTest('changing it through the line rewrites the collection\'s '
+        'answer', (tester) async {
+      final collectionId = await seedKnownEntry();
+      final preferences = CapturePreferenceStore(LocalSettingsStore(h.db));
+      await preferences.remember(collectionId, CaptureMode.imageSequence);
+
+      await openPanel(tester, _entryUrl, _entryTitle);
+      await pumpUntil(tester, key('captureModeRemembered'));
+      await tapAndPump(tester, key('captureModeRemembered'));
+      await tapAndPump(tester, key('captureMode_imageSequence'));
+      await tapAndPump(tester, key('v2DownloadEntry'));
+
+      expect(adds.single.captureMode, CaptureMode.imageSequence);
+      expect(
+        adds.single.captureModeIsUserSet,
+        isTrue,
+        reason: 'this time a person did choose it, on this page',
+      );
+      expect(await preferences.of(collectionId), CaptureMode.imageSequence);
+    });
+
+    screenTest('a default nobody touched is not an answer about the work', (
+      tester,
+    ) async {
+      // The preselection is detection's answer about *this page*. Continuing
+      // past it is not a decision about the whole collection, and writing one
+      // would put words in the user's mouth.
+      final collectionId = await seedKnownEntry();
+      await openPanel(tester, _entryUrl, _entryTitle);
+      await pumpUntil(tester, key('v2DownloadEntry'));
+
+      expect(find.text('What to save'), findsOneWidget);
+      await tapAndPump(tester, key('v2DownloadEntry'));
+
+      expect(adds, hasLength(1), reason: 'the save happened');
+      expect(
+        await CapturePreferenceStore(LocalSettingsStore(h.db)).of(collectionId),
+        isNull,
+        reason: 'nothing was chosen, so nothing is remembered',
+      );
     });
 
     screenTest('a page that cannot honour it asks again', (tester) async {

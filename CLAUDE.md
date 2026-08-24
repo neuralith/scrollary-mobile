@@ -99,6 +99,12 @@ in [docs/DECISIONS.md](docs/DECISIONS.md).
   Collection is normally saved as is resolved at the **capture seam**
   (`EntryCaptureService.capture`, V2-D58) so it applies wherever a capture
   starts; never re-implement that fallback at a place a queue row is written.
+  Once a Collection has that answer the sheet shows **one line**
+  (`Capture · Images only ⌄`, V2-D60) whose row opens the full block inline —
+  never a second modal — and the Collection menu states the answer rather than
+  the question. Only an explicit tap writes a preference; a preselection is
+  detection's answer about that page. Removing a Collection forgets it,
+  archiving keeps it.
 - **Reading on to the next Entry** (`lib/reading_v2/forward_transition.dart`,
   V2-D59) — finishing an Entry and moving forward inside a Collection is what
   frees its downloaded copy, by a rule the user is asked for **once per
