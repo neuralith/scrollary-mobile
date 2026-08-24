@@ -126,15 +126,25 @@ class CaptureModeSection extends StatelessWidget {
   }
 }
 
-/// *What to save*, for a Collection that has already answered.
+/// *What to save*, for a Collection that has already answered — one line.
 ///
-/// The whole block, collapsed to a line. Deliberately **not** a variant of
-/// [CaptureModeSection]: that widget is fixed store copy (STORE_PACKAGE.md
-/// §6.3 and §6.6, transcribed word for word and pinned by
-/// `test/capture_mode_section_test.dart`) and it stays exactly as it is. This
-/// is what stands in its place once the question has been answered for this
-/// work, and *Change* is one tap away from the full block with every reason
-/// and every blocked mode still in it.
+/// ```text
+/// Capture                              Images only  ⌄
+/// ```
+///
+/// Deliberately **not** a variant of [CaptureModeSection]: that widget is
+/// fixed store copy (STORE_PACKAGE.md §6.3 and §6.6, transcribed word for word
+/// and pinned by `test/capture_mode_section_test.dart`) and it stays exactly as
+/// it is. This is what stands in its place once the question has been answered
+/// for this work, and the whole row is the way back to the full block — every
+/// reason and every blocked mode still in it, inline, never behind a second
+/// modal (V2-D60).
+///
+/// It is a *line* rather than a card because of what the sheet is for. Someone
+/// downloading the four-hundredth entry of a work they have always kept as
+/// images came to answer *how many* and *start it*; the mode is settled, and a
+/// bordered two-line panel restating that every time is the block it replaced
+/// wearing a smaller coat.
 ///
 /// Only ever drawn for a mode the page can actually honour — a preference
 /// proposes and the page disposes, so a Collection normally kept as images
@@ -148,53 +158,58 @@ class RememberedCaptureLine extends StatelessWidget {
   });
 
   final CaptureMode mode;
+
+  /// Open the full block. The row *is* this control: a compact answer whose
+  /// only affordance is a small button beside it reads as decoration.
   final VoidCallback onChange;
 
   @override
   Widget build(BuildContext context) {
     final palette = AppPalette.of(context);
-    return Container(
-      key: const ValueKey('captureModeRemembered'),
-      padding: const EdgeInsets.fromLTRB(12, 8, 4, 8),
-      decoration: BoxDecoration(
-        color: palette.surfaceMuted,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: palette.border),
-      ),
-      child: Row(
-        children: [
-          Icon(
-            CaptureModeSection.iconFor(mode),
-            size: 18,
-            color: palette.inkMuted,
+    return Material(
+      color: palette.surfaceMuted,
+      borderRadius: BorderRadius.circular(12),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        key: const ValueKey('captureModeChange'),
+        onTap: onChange,
+        child: Container(
+          key: const ValueKey('captureModeRemembered'),
+          padding: const EdgeInsets.fromLTRB(12, 10, 10, 10),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: palette.border),
           ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
+          child: Row(
+            children: [
+              Icon(
+                CaptureModeSection.iconFor(mode),
+                size: 18,
+                color: palette.inkMuted,
+              ),
+              const SizedBox(width: 10),
+              Text(
+                'Capture',
+                style: TextStyle(fontSize: 12.5, color: palette.inkMuted),
+              ),
+              const Spacer(),
+              Flexible(
+                child: Text(
                   mode.label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                   style: TextStyle(
                     fontSize: 13.5,
                     fontWeight: FontWeight.w600,
                     color: palette.ink,
                   ),
                 ),
-                const SizedBox(height: 1),
-                Text(
-                  'What this collection is usually saved as.',
-                  style: TextStyle(fontSize: 11.5, color: palette.inkMuted),
-                ),
-              ],
-            ),
+              ),
+              const SizedBox(width: 2),
+              Icon(Icons.expand_more, size: 18, color: palette.inkMuted),
+            ],
           ),
-          TextButton(
-            key: const ValueKey('captureModeChange'),
-            onPressed: onChange,
-            child: const Text('Change'),
-          ),
-        ],
+        ),
       ),
     );
   }

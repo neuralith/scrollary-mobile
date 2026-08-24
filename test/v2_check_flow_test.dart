@@ -506,6 +506,44 @@ void main() {
       );
     });
 
+    screenTest('the menu says what this collection is saved as, before it is '
+        'opened', (tester) async {
+      // A setting whose value is only visible once you open it is a setting
+      // nobody checks (V2-D60). Both states are real answers and both are
+      // stated.
+      await seed();
+      final preferences = CapturePreferenceStore(
+        LocalSettingsStore(v2.library),
+      );
+
+      await tester.pumpWidget(app(checkerAttached: true));
+      await tester.tap(find.text('menu'));
+      await _settle(tester);
+      expect(
+        find.textContaining('Ask each time'),
+        findsOneWidget,
+        reason: 'no standing answer is itself the answer, and it is said',
+      );
+      await tester.tap(find.byKey(const ValueKey('collectionCaptureMode')));
+      await _settle(tester);
+      await tester.tap(
+        find.byKey(const ValueKey('collectionCaptureMode_textOnly')),
+      );
+      await _settle(tester);
+      expect(await preferences.of(collection.id), CaptureMode.textOnly);
+
+      await tester.tap(find.text('menu'));
+      await _settle(tester);
+      expect(
+        find.text(
+          'Text only. Used for entries of this collection, where the page '
+          'can be saved that way.',
+        ),
+        findsOneWidget,
+        reason: 'the row carries the answer the sheet below it would show',
+      );
+    });
+
     screenTest('what this collection is usually saved as is changeable from '
         'here', (tester) async {
       // The save sheet is where a preference is set, in the flow that had the

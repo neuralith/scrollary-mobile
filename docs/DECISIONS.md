@@ -1061,3 +1061,59 @@ enumerate, *Remove finished offline entries* over whatever happened to be
 finished — skips the Entry being read, and keeps it rather than failing. The
 release is conditional, because replacing a route builds the arriving reader
 before the departing one is disposed.
+
+### V2-D60 · A settled capture mode is one line, and the menu says what it is
+
+V2-D58 made a Collection's capture preference apply wherever a capture starts.
+Two things about *reading and changing* it were still wrong.
+
+**The sheet.** A Collection with a standing answer still drew a bordered
+two-line panel — the mode, a sentence explaining that it is what this
+collection is usually saved as, and a *Change* button — above the count and the
+launch. Someone downloading the four-hundredth entry of a work they have always
+kept as images came to answer *how many* and *start it*; the mode is settled,
+and a panel restating it every time is the block it replaced wearing a smaller
+coat. It becomes one line:
+
+```text
+Capture                              Images only  ⌄
+```
+
+The **row** is the control, not a button beside it: a compact answer whose only
+affordance is a small link reads as decoration. Tapping it opens the full
+`CaptureModeSection` **inline** — every reason, every blocked mode, the
+detection sentence — because the way back to the whole question must not be a
+second modal on a sheet whose whole point is that it asks everything at once
+(V2-D52, V2-D57).
+
+**The menu.** *What to save* described the question and not the answer, so the
+only way to find out what a Collection was set to was to open the sheet that
+changes it. The row now carries the standing answer — *Images only. Used for
+entries of this collection, where the page can be saved that way.* — or, when
+there is none, *Ask each time.* Both are real states and both are stated. The
+preference is read before the menu is built rather than watched: this sheet is
+opened, read and dismissed, and a stream for a value that cannot change while
+it is on screen is machinery with no reader.
+
+**What is unchanged, deliberately.** Only an explicit tap writes a preference:
+a preselection is detection's answer about *this page*, and continuing past it
+is not a decision about the whole work. Precedence is still explicit per-save >
+the Collection's standing answer > detection, resolved at the capture seam.
+`captureModeIsUserSet` is still only set by a person choosing on the page, so a
+remembered mode never becomes a per-save explicit choice in the manifest. And
+`CaptureCapabilities.resolve` still disposes: a Collection kept as text asks
+again on an entry that has none, and the preference is left alone, because it
+was an answer about the work.
+
+**Removing a Collection forgets it; archiving keeps it.** The Collection's rows
+go by cascade, but a setting keyed by its id has no foreign key to take it
+along, so the deliberate removal drops it through
+`CapturePreferenceStore.forget` — after the removal actually succeeded, and
+nowhere else. Archiving is *stop
+keeping this current*, not *forget what this is*: following an archived
+Collection again must not start asking a question it had already answered.
+
+`CaptureModeSection` itself is untouched. It is fixed store copy
+(STORE_PACKAGE.md §6.3 and §6.6, pinned by
+`test/capture_mode_section_test.dart`), and the compact line is a separate
+widget for exactly that reason.

@@ -59,6 +59,14 @@ Future<void> showCollectionMenu(
   WidgetRef ref,
   CollectionView view,
 ) async {
+  // Read before the sheet is built so the row can *say* the current answer
+  // rather than describing the question. A setting whose value is only visible
+  // after opening it is a setting nobody checks.
+  final capture = await ref
+      .read(capturePreferenceProvider)
+      .of(view.collection.id);
+  if (!context.mounted) return;
+
   final action = await showModalBottomSheet<_CollectionAction>(
     context: context,
     builder: (sheetContext) => SafeArea(
@@ -91,16 +99,20 @@ Future<void> showCollectionMenu(
                   Navigator.of(sheetContext).pop(_CollectionAction.check),
             ),
           // What this collection is normally saved as, changeable after the
-          // fact. The save sheet is where it is *set*; this is where someone
-          // who changed their mind goes, without having to find a page of it
-          // and open the save sheet to get at the question.
+          // fact and **without starting a capture**. The save sheet is where
+          // it is first set; this is where someone who changed their mind
+          // goes, and the row carries the standing answer so that reading it
+          // costs nothing (V2-D60).
           ListTile(
             key: const ValueKey('collectionCaptureMode'),
             leading: const Icon(Icons.tune),
             title: const Text('What to save'),
-            subtitle: const Text(
-              'Used for entries of this collection, where the page can be '
-              'saved that way.',
+            subtitle: Text(
+              capture == null
+                  ? 'Ask each time. Scrollary proposes what the page itself '
+                        'can offer.'
+                  : '${capture.label}. Used for entries of this collection, '
+                        'where the page can be saved that way.',
             ),
             onTap: () =>
                 Navigator.of(sheetContext).pop(_CollectionAction.captureMode),
@@ -288,6 +300,15 @@ Future<void> _removeCollectionFromLibrary(
   final violation = await ref
       .read(collectionRepoProvider)
       .removeCollection(view.collection.id);
+  // The Collection's rows go by cascade; its capture preference is a setting
+  // keyed by its id and has no foreign key to take it along, so it is dropped
+  // here — only on the deliberate removal, and only once that removal actually
+  // happened. **Archiving keeps it**: archiving is "stop keeping this
+  // current", not "forget what it is", and restoring one that had lost its
+  // answer would silently start asking again.
+  if (violation == null) {
+    await ref.read(capturePreferenceProvider).forget(view.collection.id);
+  }
   if (!context.mounted) return;
   showLibraryMessage(
     context,
