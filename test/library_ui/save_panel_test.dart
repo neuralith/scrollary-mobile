@@ -539,6 +539,107 @@ void main() {
       expect(standalones, isEmpty);
     });
 
+    screenTest('starting a collection is one sheet: the name, the count and '
+        'the launch together', (tester) async {
+      // The regression this pins: *New collection* used to take over the
+      // picker with a screen holding one text field, and the sheet that
+      // followed printed the same name in its header (V2-D57).
+      await h.root();
+      await openPanel(tester, _entryUrl, _entryTitle);
+      await pumpUntil(tester, key('v2AddToCollection'));
+
+      await tapAndPump(tester, key('v2AddToCollection'));
+      await pumpUntil(tester, key('collectionPickerNew'));
+      await tapAndPump(tester, key('collectionPickerNew'));
+
+      // Straight to the one sheet. No naming surface on the way, and no
+      // second chance to answer the same question.
+      await pumpUntil(tester, key('saveScopeFromHere'));
+      expect(
+        key('collectionCreateConfirm'),
+        findsNothing,
+        reason:
+            'the picker no longer confirms a name it is not the last '
+            'surface for',
+      );
+      expect(key('collectionNameField'), findsOneWidget);
+      expect(
+        tester.widget<TextField>(key('collectionNameField')).controller!.text,
+        _entryTitle,
+        reason: 'what the page called the work, offered as a suggestion',
+      );
+      expect(
+        find.text('First source · reading.example.com'),
+        findsOneWidget,
+        reason: 'the site that becomes its first source is named here',
+      );
+
+      await tester.enterText(key('collectionNameField'), 'Alpha');
+      await tapAndPump(tester, key('saveScopeFromHere'));
+      await tester.enterText(key('saveCountField'), '4');
+      await tapAndPump(tester, key('saveScopeAddToQueue'));
+
+      expect(adds, hasLength(1));
+      expect(
+        adds.single.newCollectionName,
+        'Alpha',
+        reason:
+            'the edited name is what the domain is asked to create, not '
+            'the suggestion it replaced',
+      );
+      expect(adds.single.collectionId, isNull);
+      expect(adds.single.limits!.maxEntries, 4);
+      expect(adds.single.discoverMissing, isTrue);
+      expect(standalones, isEmpty);
+    });
+
+    screenTest('a blank name on that sheet starts nothing at all', (
+      tester,
+    ) async {
+      await h.root();
+      await openPanel(tester, _entryUrl, _entryTitle);
+      await pumpUntil(tester, key('v2AddToCollection'));
+      await tapAndPump(tester, key('v2AddToCollection'));
+      await pumpUntil(tester, key('collectionPickerNew'));
+      await tapAndPump(tester, key('collectionPickerNew'));
+      await pumpUntil(tester, key('collectionNameField'));
+
+      await tester.enterText(key('collectionNameField'), '   ');
+      await tapAndPump(tester, key('saveScopeAddToQueue'));
+
+      expect(find.text('Give this collection a name.'), findsOneWidget);
+      expect(adds, isEmpty, reason: 'nothing was asked of the domain');
+      expect(key('saveScopeFromHere'), findsOneWidget);
+    });
+
+    screenTest('an existing collection is chosen and not renamed', (
+      tester,
+    ) async {
+      final root = await h.root();
+      final collection = await h.collection('Alpha', folderId: root.id);
+      await openPanel(tester, _entryUrl, _entryTitle);
+      await pumpUntil(tester, key('v2AddToCollection'));
+
+      await tapAndPump(tester, key('v2AddToCollection'));
+      // The page's title suggests a filter that matches none of them, and the
+      // way back to the whole list is one visible tap.
+      await pumpUntil(tester, key('collectionPickerClearFilter'));
+      await tapAndPump(tester, key('collectionPickerClearFilter'));
+      await pumpUntil(tester, key('collectionOption-${collection.id}'));
+      await tapAndPump(tester, key('collectionOption-${collection.id}'));
+      await pumpUntil(tester, key('saveScopeAddToQueue'));
+
+      expect(
+        key('collectionNameField'),
+        findsNothing,
+        reason: 'a collection that exists is not renamed on the way past',
+      );
+      await tapAndPump(tester, key('saveScopeAddToQueue'));
+
+      expect(adds.single.collectionId, collection.id);
+      expect(adds.single.newCollectionName, isNull);
+    });
+
     screenTest('a page that could be a listing offers the site itself, and '
         'adding it writes no entry', (tester) async {
       await h.root();
@@ -768,6 +869,35 @@ void main() {
         findsNothing,
         reason: 'the gate was answered here; nothing asks again',
       );
+    });
+
+    screenTest('a collection being created answers it in the same sheet, and '
+        'is not asked twice', (tester) async {
+      await h.root();
+      await openPanel(tester, _entryUrl, _entryTitle);
+      await pumpUntil(tester, key('v2AddToCollection'));
+      await tapAndPump(tester, key('v2AddToCollection'));
+      await pumpUntil(tester, key('collectionPickerNew'));
+      await tapAndPump(tester, key('collectionPickerNew'));
+      await pumpUntil(tester, key('collectionNameField'));
+
+      await tester.enterText(key('collectionNameField'), 'Quiet Harbour');
+      await tapAndPump(tester, key('saveScopeFromHere'));
+      await tester.enterText(key('saveCountField'), '3');
+      await tester.pump();
+      await tapAndPump(tester, key('startInBrowser'));
+
+      expect(adds, hasLength(1));
+      expect(adds.single.newCollectionName, 'Quiet Harbour');
+      expect(adds.single.limits!.maxEntries, 3);
+      expect(
+        key('startOptionsCancel'),
+        findsNothing,
+        reason:
+            'naming a collection did not put the launch back on a second '
+            'surface',
+      );
+      expect(key('collectionCreateConfirm'), findsNothing);
     });
   });
 

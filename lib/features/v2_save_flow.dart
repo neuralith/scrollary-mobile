@@ -863,14 +863,24 @@ class _V2SavePanelState extends ConsumerState<V2SavePanel> {
   /// [indexOnly] is the listing case: a Source is established and **no Entry
   /// is created for the index page itself**, so there is nothing to download
   /// and no count to ask for.
+  ///
+  /// **Which Collection is asked once, and where a new one is named follows
+  /// from that** (V2-D57). The picker is always first: the Collections the
+  /// user already has must be visible before another is started, or a work
+  /// held from a second site quietly becomes a duplicate. What changes is what
+  /// *New collection* costs after it. Where a sheet follows — every case with
+  /// an Entry on the page — the name is confirmed on that sheet, which was
+  /// already printing it, and the picker returns the suggestion untouched.
+  /// A listing has no such sheet, so it still names it in the picker.
   Future<void> _addToCollection({required bool indexOnly}) async {
     final choice = await showCollectionPicker(
       context,
       ref,
       suggestedTitle: _suggestedTitle,
+      confirmNameHere: indexOnly,
     );
     if (choice == null || !mounted) return;
-    final name = switch (choice) {
+    var name = switch (choice) {
       ExistingCollectionChoice(:final name) => name,
       NewCollectionChoice(:final name) => name,
     };
@@ -887,8 +897,18 @@ class _V2SavePanelState extends ConsumerState<V2SavePanel> {
         collectionName: name,
         alreadyDownloadedBytes: costs,
         launchActions: _launchActions,
+        naming: switch (choice) {
+          ExistingCollectionChoice() => null,
+          NewCollectionChoice(:final name) => NewCollectionNaming(
+            suggestedName: name,
+            host: Uri.tryParse(widget.url)?.host ?? '',
+          ),
+        },
       );
       if (scope == null || !mounted) return;
+      // The name the user confirmed, which is the one everything downstream
+      // uses — the sentence, the preference, and the row the domain writes.
+      name = scope.collectionName ?? name;
       _prepareLaunch(scope);
     }
     final discoverMissing = scope?.discoverMissing ?? false;
@@ -904,7 +924,7 @@ class _V2SavePanelState extends ConsumerState<V2SavePanel> {
         },
         newCollectionName: switch (choice) {
           ExistingCollectionChoice() => null,
-          NewCollectionChoice(:final name) => name,
+          NewCollectionChoice() => name,
         },
         // Null is not "no limit" — it is *queue nothing*, which is what a
         // listing asks for.

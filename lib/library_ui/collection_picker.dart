@@ -69,6 +69,16 @@ final pickableCollectionsProvider = StreamProvider<List<CollectionRow>>((ref) {
 /// [allowCreate] is false where creating one would be wrong: adopting a
 /// standalone Entry moves it into a Collection that already exists, and
 /// wrapping one Entry in a Collection of its own is exactly what I3 forbids.
+///
+/// [confirmNameHere] is whether *New collection* stops on a name field of its
+/// own. It does when this picker is the last surface the user will see, which
+/// is the listing case — a listing is not an Entry, so no sheet follows it and
+/// the name has nowhere else to be confirmed. It does **not** when a sheet
+/// does follow: the Entry save flow's next surface already prints the
+/// Collection's name in its header, and a whole screen for one field whose
+/// value is echoed on the next one is the step this removes (V2-D57). The row
+/// then hands [suggestedTitle] back as it stands, unconfirmed, and the caller
+/// is the one that asks.
 Future<CollectionChoice?> showCollectionPicker(
   BuildContext context,
   // The caller already holds a ref; taking it keeps this signature honest
@@ -77,6 +87,7 @@ Future<CollectionChoice?> showCollectionPicker(
   WidgetRef ref, {
   String? suggestedTitle,
   bool allowCreate = true,
+  bool confirmNameHere = true,
 }) {
   return showModalBottomSheet<CollectionChoice>(
     context: context,
@@ -84,6 +95,7 @@ Future<CollectionChoice?> showCollectionPicker(
     builder: (sheetContext) => _CollectionPicker(
       suggestedTitle: suggestedTitle?.trim() ?? '',
       allowCreate: allowCreate,
+      confirmNameHere: confirmNameHere,
     ),
   );
 }
@@ -92,10 +104,14 @@ class _CollectionPicker extends ConsumerStatefulWidget {
   const _CollectionPicker({
     required this.suggestedTitle,
     required this.allowCreate,
+    required this.confirmNameHere,
   });
 
   final String suggestedTitle;
   final bool allowCreate;
+
+  /// Whether *New collection* names it here. See [showCollectionPicker].
+  final bool confirmNameHere;
 
   @override
   ConsumerState<_CollectionPicker> createState() => _CollectionPickerState();
@@ -233,7 +249,13 @@ class _CollectionPickerState extends ConsumerState<_CollectionPicker> {
           subtitle: const Text(
             'Starts a collection with this site as its first source.',
           ),
-          onTap: () => setState(() => _naming = true),
+          // Which of its two answers this row gives is the caller's: name it
+          // here, or hand the suggestion straight to the surface that will.
+          onTap: () => widget.confirmNameHere
+              ? setState(() => _naming = true)
+              : Navigator.of(
+                  context,
+                ).pop(CollectionChoice.create(widget.suggestedTitle)),
         ),
       const Divider(height: 1),
       Flexible(

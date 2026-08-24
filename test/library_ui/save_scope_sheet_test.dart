@@ -35,7 +35,10 @@ void main() {
   SaveScopeChoice? chosen;
   var closed = false;
 
-  Future<void> openSheet(WidgetTester tester) async {
+  Future<void> openSheet(
+    WidgetTester tester, {
+    NewCollectionNaming? naming,
+  }) async {
     chosen = null;
     closed = false;
     await tester.pumpWidget(
@@ -47,7 +50,8 @@ void main() {
                 onPressed: () async {
                   chosen = await showSaveScopeSheet(
                     context,
-                    collectionName: 'Alpha notes',
+                    collectionName: naming?.suggestedName ?? 'Alpha notes',
+                    naming: naming,
                   );
                   closed = true;
                 },
@@ -60,6 +64,18 @@ void main() {
     );
     await tapAndPump(tester, find.text('open the sheet'));
   }
+
+  /// The sheet as the Entry save flow opens it for a Collection that does not
+  /// exist yet.
+  Future<void> openNamingSheet(WidgetTester tester) => openSheet(
+    tester,
+    naming: const NewCollectionNaming(
+      suggestedName: 'Quiet Harbour',
+      host: 'reading.example.com',
+    ),
+  );
+
+  Finder nameField() => find.byKey(const ValueKey('collectionNameField'));
 
   Finder countField() => find.byKey(const ValueKey('saveCountField'));
 
@@ -305,5 +321,151 @@ void main() {
 
     expect(closed, isTrue);
     expect(chosen, isNull);
+  });
+
+  // ─── naming the Collection that does not exist yet (V2-D57) ──────────
+
+  group('a collection about to be created', () {
+    screenTest('is named here, on the sheet that already printed its name', (
+      tester,
+    ) async {
+      await openNamingSheet(tester);
+
+      expect(find.text('New collection'), findsOneWidget);
+      expect(
+        tester.widget<TextField>(nameField()).controller!.text,
+        'Quiet Harbour',
+        reason: 'the detected title is a suggestion the user may correct',
+      );
+      expect(
+        find.text('First source · reading.example.com'),
+        findsOneWidget,
+        reason:
+            'the site about to become its first source is named, not '
+            'referred to as "this site"',
+      );
+      expect(
+        tester.widget<TextField>(nameField()).autofocus,
+        isFalse,
+        reason: 'confirming the suggestion must not cost a keyboard dismissal',
+      );
+    });
+
+    screenTest('returns the edited name with the range and the launch', (
+      tester,
+    ) async {
+      await openNamingSheet(tester);
+      await tester.enterText(nameField(), 'Quiet Harbour, corrected');
+      await chooseTypedRange(tester);
+      await tester.enterText(countField(), '7');
+      await tapAndPump(
+        tester,
+        find.byKey(const ValueKey('saveScopeAddToQueue')),
+      );
+
+      expect(chosen!.collectionName, 'Quiet Harbour, corrected');
+      expect(chosen!.limits.maxEntries, 7);
+      expect(chosen!.discoverMissing, isTrue);
+      expect(chosen!.start, SaveStartMode.queueOnly);
+    });
+
+    screenTest('trims what was typed, and keeps the untouched suggestion', (
+      tester,
+    ) async {
+      await openNamingSheet(tester);
+      await tester.enterText(nameField(), '  Quiet Harbour  ');
+      await tapAndPump(tester, find.byKey(const ValueKey('saveScopeStartNow')));
+
+      expect(chosen!.collectionName, 'Quiet Harbour');
+      expect(chosen!.start, SaveStartMode.startNow);
+    });
+
+    screenTest('refuses a blank name where it was typed, and starts nothing', (
+      tester,
+    ) async {
+      await openNamingSheet(tester);
+      await tester.enterText(nameField(), '   ');
+      await tapAndPump(
+        tester,
+        find.byKey(const ValueKey('saveScopeAddToQueue')),
+      );
+
+      expect(find.text('Give this collection a name.'), findsOneWidget);
+      expect(
+        closed,
+        isFalse,
+        reason: 'a collection with no name is not something to create',
+      );
+      expect(chosen, isNull);
+
+      // The count is not complained about underneath it: identity is the
+      // first question, and it is the only one answered wrongly here.
+      expect(find.text('Enter a whole number of 1 or more.'), findsNothing);
+
+      await tester.enterText(nameField(), 'Quiet Harbour');
+      await tapAndPump(
+        tester,
+        find.byKey(const ValueKey('saveScopeAddToQueue')),
+      );
+      expect(chosen!.collectionName, 'Quiet Harbour');
+    });
+
+    screenTest('still refuses the number, and keeps the typed name while it '
+        'does', (tester) async {
+      await openNamingSheet(tester);
+      await tester.enterText(nameField(), 'Quiet Harbour, corrected');
+      await chooseTypedRange(tester);
+      await tester.enterText(countField(), '0');
+      await tapAndPump(
+        tester,
+        find.byKey(const ValueKey('saveScopeAddToQueue')),
+      );
+
+      expect(find.text('Enter a whole number of 1 or more.'), findsOneWidget);
+      expect(closed, isFalse);
+      expect(
+        tester.widget<TextField>(nameField()).controller!.text,
+        'Quiet Harbour, corrected',
+        reason: 'a refused number does not lose the name that was typed',
+      );
+    });
+
+    screenTest('the number pad still has its own way out', (tester) async {
+      await openNamingSheet(tester);
+      await chooseTypedRange(tester);
+      await tester.enterText(countField(), '004');
+      await tester.pump();
+
+      expect(
+        find.byKey(const ValueKey('saveCountOk')),
+        findsOneWidget,
+        reason:
+            'the count field owns the OK bar; the name field has a return '
+            'key of its own and does not',
+      );
+      await tapAndPump(tester, find.byKey(const ValueKey('saveCountOk')));
+      expect(tester.widget<TextField>(countField()).controller!.text, '4');
+      expect(closed, isFalse);
+    });
+
+    screenTest('an existing collection is not renamed on the way past', (
+      tester,
+    ) async {
+      await openSheet(tester);
+
+      expect(nameField(), findsNothing);
+      expect(
+        find.byKey(const ValueKey('newCollectionSourceFact')),
+        findsNothing,
+      );
+      expect(find.text('How many entries'), findsOneWidget);
+      expect(find.textContaining('From Alpha notes'), findsOneWidget);
+
+      await tapAndPump(
+        tester,
+        find.byKey(const ValueKey('saveScopeAddToQueue')),
+      );
+      expect(chosen!.collectionName, isNull);
+    });
   });
 }

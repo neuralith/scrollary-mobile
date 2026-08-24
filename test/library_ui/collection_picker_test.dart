@@ -28,6 +28,7 @@ void main() {
     WidgetTester tester, {
     String? suggestedTitle,
     bool allowCreate = true,
+    bool confirmNameHere = true,
   }) async {
     choice = null;
     closed = false;
@@ -43,6 +44,7 @@ void main() {
                     ref,
                     suggestedTitle: suggestedTitle,
                     allowCreate: allowCreate,
+                    confirmNameHere: confirmNameHere,
                   );
                   closed = true;
                 },
@@ -157,6 +159,51 @@ void main() {
       hasLength(2),
       reason: 'the picker chooses; it does not write',
     );
+  });
+
+  screenTest('hands the suggestion straight back when a sheet follows', (
+    tester,
+  ) async {
+    await seedTwo();
+    await openPicker(
+      tester,
+      suggestedTitle: 'Gamma tales',
+      confirmNameHere: false,
+    );
+    await pumpUntil(tester, find.byKey(const ValueKey('collectionPickerNew')));
+
+    await tapAndPump(tester, find.byKey(const ValueKey('collectionPickerNew')));
+
+    // No screen of its own for one field: the sheet that follows already
+    // prints this name in its header and is where it is confirmed (V2-D57).
+    expect(find.byKey(const ValueKey('collectionNameField')), findsNothing);
+    expect(closed, isTrue);
+    expect(choice, isA<NewCollectionChoice>());
+    expect((choice! as NewCollectionChoice).name, 'Gamma tales');
+    expect(
+      await h.collections.inFolder((await h.root()).id),
+      hasLength(2),
+      reason: 'the picker chooses; it does not write',
+    );
+  });
+
+  screenTest('the list is still where a new one is started from', (
+    tester,
+  ) async {
+    final (alphaId, _) = await seedTwo();
+    await openPicker(
+      tester,
+      suggestedTitle: 'Alpha notes',
+      confirmNameHere: false,
+    );
+    await pumpUntil(tester, find.text('Alpha notes'));
+
+    // The collections the user already holds are visible before another is
+    // started, whichever way the create row answers: skipping the list is how
+    // a work held from a second site quietly becomes a duplicate.
+    expect(find.byKey(ValueKey('collectionOption-$alphaId')), findsOneWidget);
+    expect(find.byKey(const ValueKey('collectionPickerNew')), findsOneWidget);
+    expect(closed, isFalse);
   });
 
   screenTest('cannot create one where creating one would be wrong', (
