@@ -29,6 +29,7 @@ import 'library_ui/providers.dart' as libui;
 import 'library_ui/sync_status_section.dart' show syncStatusSourceProvider;
 import 'recognition/recognise.dart';
 import 'save/asset_fetcher.dart';
+import 'save/capture_preference.dart';
 import 'save/entry_capture.dart';
 import 'save/page_capture_source.dart';
 import 'save/page_hint_repository.dart';
@@ -337,6 +338,9 @@ class AppStartup {
         collections: ui.collections,
         offlineCopies: ui.offline,
         fileStore: fileStore,
+        // What each Collection is normally saved as, asked at capture time
+        // whatever wrote the row (V2-D58).
+        capturePreferences: CapturePreferenceStore(LocalSettingsStore(library)),
         source: SaveEnginePageCaptureSource(
           browser: browser,
           engineFor: (sink) {

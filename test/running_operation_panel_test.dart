@@ -29,6 +29,7 @@ import 'package:web_reader/data/entry_repository.dart';
 import 'package:web_reader/data/reading_state_repository.dart';
 import 'package:web_reader/data/recognition_index.dart';
 import 'package:web_reader/data/schema.dart';
+import 'package:web_reader/data/local_settings.dart';
 import 'package:web_reader/domain/collection.dart';
 import 'package:web_reader/domain/entry.dart';
 import 'package:web_reader/domain/reading_state.dart';
@@ -48,6 +49,7 @@ import 'package:web_reader/save/page_hint_repository.dart';
 import 'package:web_reader/save/queue_runner.dart';
 import 'package:web_reader/save/queue_task.dart';
 import 'package:web_reader/save/stop_conditions.dart';
+import 'package:web_reader/save/capture_preference.dart';
 import 'package:web_reader/storage/file_store.dart';
 import 'package:web_reader/ui/palette.dart';
 import 'package:web_reader/ui/theme.dart';
@@ -445,6 +447,7 @@ class _Harness {
       collections: ui.collections,
       offlineCopies: ui.offline,
       fileStore: fileStore,
+      capturePreferences: CapturePreferenceStore(LocalSettingsStore(library)),
       source: const _UnusedCaptureSource(),
     ),
   );
@@ -602,6 +605,7 @@ class _HeldCapture extends EntryCaptureService {
     required super.offlineCopies,
     required super.fileStore,
     required super.source,
+    required super.capturePreferences,
   });
 
   final Completer<void> gate;

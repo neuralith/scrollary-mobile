@@ -18,6 +18,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:web_reader/core/config.dart';
 import 'package:web_reader/data/schema.dart';
+import 'package:web_reader/data/local_settings.dart';
 import 'package:web_reader/domain/collection.dart';
 import 'package:web_reader/features/v2_add_flow.dart';
 import 'package:web_reader/features/v2_adoption_providers.dart';
@@ -27,6 +28,7 @@ import 'package:web_reader/recognition/recognise.dart';
 import 'package:web_reader/recognition/walk.dart';
 import 'package:web_reader/save/entry_capture.dart';
 import 'package:web_reader/save/queue_runner.dart';
+import 'package:web_reader/save/capture_preference.dart';
 import 'package:web_reader/storage/file_store.dart';
 
 import '../recognition/support/forward_pages_fake.dart';
@@ -83,6 +85,7 @@ void main() {
         collections: services.collections,
         offlineCopies: services.offline,
         fileStore: fileStore,
+        capturePreferences: CapturePreferenceStore(LocalSettingsStore(db)),
         source: FakePageCaptureSource.images(),
       ),
     );

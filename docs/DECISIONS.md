@@ -897,3 +897,56 @@ The picker's list and its name field are still never on screen together:
 same question, and offering both at once is how a tap lands on the wrong one."
 Moving the field to the next surface honours that; putting it beside the list
 would not.
+
+### V2-D58 · A Collection's capture preference is resolved at the capture seam
+
+V2-D53 gave a Collection a standing answer to *what to save*, and the only
+thing that ever read it was the Browser's save sheet. The read lived in
+`_V2SavePanelState`, so it applied to exactly one surface: a Collection kept as
+*Images only* was captured as images when the save started on the page, and
+detected afresh when it started anywhere else — *Download for offline* from the
+Library, the bar after a check, the reader's repair of a partial copy, a
+download requested by another device.
+
+V1 did not have this problem, and the reason is where it put the fallback. Its
+run resolved `requestedCaptureMode ?? the collection's preferred mode` per
+entry, inside the loop that captured them, so every capture went through it
+whatever had started the save. V2 moved that decision up into a widget.
+
+It moves back down. `EntryCaptureService.capture` — the one seam every capture
+passes through, whatever wrote the row — resolves:
+
+```dart
+final requestedMode =
+    captureMode ?? await capturePreferences.of(entry.collectionId);
+```
+
+and `CapturePreferenceStore` is a **required** collaborator, so a construction
+site cannot quietly omit it and lose the behaviour again on the paths it was
+lost on before.
+
+Four properties make this safe rather than merely convenient:
+
+* **An explicit mode wins.** A person answering on the page outranks a standing
+  answer about the work, so a row that names a mode is untouched.
+* **A standalone Entry inherits nothing.** No Collection, no fallback —
+  inventing one would be an instruction from nowhere (I3).
+* **It is not a person's choice.** `captureModeIsUserSet` is not set by this,
+  so the manifest still distinguishes "somebody chose this" from "this is what
+  the work is normally saved as".
+* **The page still decides.** The preference arrives as `requestedMode`, the
+  same input an explicit choice arrives as, and `CaptureCapabilities.resolve`
+  inside the engine is what says whether this page can honour it. A Collection
+  kept as text still falls back, with an explanation, on an entry that has none.
+
+**Resolved at capture, never copied onto the row.** The alternative — reading
+the preference at each `enqueue` — would need every call site to remember to do
+it, would miss the next one added, and would freeze the answer that happened to
+be in force when the row was written. Rows wait for an explicit Start, so the
+answer that counts is the one in force when the capture actually runs.
+
+Two questions this deliberately does not answer: whether accepting an
+already-preselected mode should count as choosing it (today only an explicit
+tap remembers), and whether deleting a Collection should delete its
+`capture_mode.<id>` setting (today the key is orphaned, harmless, and never
+reused).

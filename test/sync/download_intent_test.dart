@@ -157,6 +157,11 @@ void main() {
     // intent is not one.
     expect(queue.saveStartAuthorised, isFalse);
     expect(await queue.eligible(), isEmpty);
+    // And no capture mode of its own. A request from another device says
+    // *download this*, never *download it as this*: what the Collection is
+    // normally saved as is this device's answer, asked at capture (V2-D58).
+    expect(task.captureMode, isNull);
+    expect(task.captureModeIsUserSet, isFalse);
 
     final row = await h.downloadRequests.byId('request-1');
     expect(row!.state, 'claimed');

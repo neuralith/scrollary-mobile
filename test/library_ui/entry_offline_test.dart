@@ -82,6 +82,13 @@ void main() {
     expect(task.locationUrl, 'https://reading.example.com/serial/2');
     expect(task.locationId, isNotNull);
 
+    // No mode of its own, which is what lets the capture seam ask the
+    // Collection what it is normally saved as (V2-D58). A row that arrived
+    // with one baked in would freeze whichever answer was in force when the
+    // menu was tapped.
+    expect(task.captureMode, isNull);
+    expect(task.captureModeIsUserSet, isFalse);
+
     // The whole point: a row exists and **nothing may run it**. Save is the
     // one kind of work that waits for an explicit Start.
     expect(await h.queue.eligible(), isEmpty);
