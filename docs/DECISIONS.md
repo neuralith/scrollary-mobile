@@ -950,3 +950,114 @@ already-preselected mode should count as choosing it (today only an explicit
 tap remembers), and whether deleting a Collection should delete its
 `capture_mode.<id>` setting (today the key is orphaned, harmless, and never
 reused).
+
+---
+
+### V2-D59 · Finishing an Entry and reading on is what frees its copy, by a rule the Collection holds on this device
+
+**The capability, in the user's words.** You read an Entry you have downloaded,
+you reach the end, you move to the next one — and Scrollary asks, once per
+Collection, whether it should free the finished Entry's files on this device.
+Answer *Remove after finishing* and it does so from then on without asking
+again; answer *Keep downloaded* and it never does. The rule is changeable, and
+clearable, from **Collection menu → Finished entries**.
+
+Restored, not invented. V1 had exactly this (its D37) and it was removed in
+`b1be16d` with the reader's V1 route, on the reasoning that "a reader opened
+over an OfflineCopy has no neighbour list to move through". That is true of the
+*screen* and false of the **Collection**, which is where neighbours live —
+`3840b48` said so when it restored the navigation, and restored only the
+navigation. Nothing decided to retire the capability: there was no decision
+record, no parity row, and `CompletionPolicy.nearThreshold` — which exists for
+no other purpose than this question — sat in `lib/reading/reading_position.dart`
+with no caller in `lib/` from that commit until this one.
+
+**Three decisions, kept apart.** Has the reader finished this Entry; where are
+they going; what happens to the finished Entry's bytes. Collapsing them is how
+*Next* becomes a delete button.
+
+| Where the reader is | What happens |
+|---|---|
+| The Entry is already finished | The Collection's rule applies, asked once if unset |
+| Unfinished, at or past `CompletionPolicy.nearThreshold` (0.90) | Asked: *Mark finished and continue* · *Continue without finishing* · *Cancel* |
+| Unfinished, below it | Move, and change nothing — no question, no completion, no removal |
+
+*Mark finished and continue* joins the first row. *Continue without finishing*
+moves on and leaves the Entry as it was — the Collection's `remove` rule is
+deliberately **not** consulted, because it is a rule about finished Entries and
+this one is not finished. *Cancel* writes nothing and does not move.
+
+**It applies to forward moves inside one Collection, and to nothing else.**
+`ForwardTransitionService` asks the Collection for its own order
+(`EntryRepository.entriesOf`, ordinal-placed) and requires the destination to
+come after the origin in it. A backward move, a move between Collections, a
+standalone Entry, and an Entry this device holds no copy of are all ordinary
+navigation: no question, no plan. The last of those matters — a question whose
+only honest answer changes nothing is a modal for its own sake (V2-D52).
+
+**The rule is device-local and per Collection.** `finished_cleanup.<collectionId>`
+in `local_settings`, through `FinishedCleanupPreferenceStore`
+(`lib/reading_v2/finished_cleanup.dart`) — the same table, key shape and
+tri-state as the capture preference beside it (V2-D53), and no column: the
+schema is frozen at version 1. **This is the one intentional change from V1**,
+which kept the answer on the Collection row. What is being configured is *these
+bytes on this device*, and a phone deciding to remove would otherwise have been
+deciding for a tablet with room to keep — offline copies are device state and
+never sync (I14, V2_SYNC.md §5), so the rule about them should not either.
+
+Null is a question, not a default. There is no app-wide answer, nothing is
+inherited from another Collection, and a stored value this build cannot read
+resolves to null rather than to the answer that deletes something. *Ask again
+next time* writes null back and removes nothing.
+
+**Nothing is freed until the destination has genuinely opened.** The order is:
+work out whether the move means anything → ask, while the reader is still on the
+Entry the questions are about → move → and only once the destination resolves to
+something readable, mark the outgoing Entry read and free its copy.
+"Readable" is the real predicate — `openOfflineRead` not returning
+`OfflineReadUnavailable` — so a package whose files vanished between the tap and
+the read, an Entry this device never downloaded, and a manifest a newer build
+wrote all apply **nothing**: the Entry just left is then the only readable thing
+there is, and it keeps its reading state and its bytes. A cancelled move, and a
+move that never arrives, write nothing at all.
+
+**Where the plan lives, and why it is not in the reader.** V1 held it in the
+reader screen's `State`, which worked because that screen loaded the next Entry
+into itself. V2's reader is handed a package and `V2ReaderRoute` *replaces*
+itself to move, so the widget that asked the questions is disposed before the
+answer is owed. The plan is therefore held by `ForwardTransitionService`, one
+instance for the app; the route asks it what a move means on the way out
+(`begin`) and reports its own arrival on the way in (`arrived`). One plan
+exists at a time, it is due exactly once, and an arrival at any other Entry
+discards it rather than letting it fall due later on an Entry it was never
+about. `begin` refuses a second call while a question is on screen, so a burst
+of taps cannot stack dialogs, finish twice or delete twice.
+
+**Freeing a copy is never removing an Entry.** `removeOfflineCopies` names the
+package and the copy rows and nothing else. The Entry, its Collection, its
+Locations, its ordinal, its title and its whole reading history survive, on this
+device and on every other — the Entry simply reads as *not downloaded here*,
+which is an ordinary state of a first-class library item (PRODUCT.md §2.3). The
+reading **anchor** does go with the bytes, because it is an index into them and
+means nothing without them; that never costs anything, because this only ever
+applies to an Entry that is finished, and a finished Entry is 100% read.
+
+**There is deliberately no Undo.** V1 backed its notice with a soft delete —
+the package renamed into `tmp/undo-<id>` for six seconds. V2 deletes packages
+outright and has already decided not to offer a button that cannot do what it
+says (V2-D33, and the parity contract's own row for storage cleanup). The
+honest reversibility here is the decision *before* the deletion: the rule is
+asked once, in its own words, with *Remove after finishing* preselected but not
+taken until *Save choice*; and where a Collection already removes, the
+completion question names the consequence before the tap rather than reporting
+it afterwards. Rebuilding staging to recreate the Undo would be a change to the
+deletion architecture made for a notice, which is the wrong reason.
+
+**One thing this also restored.** V1's `CleanupService` refused to remove the
+copy of the Entry open in the reader; V2 lost that lock with the same commit.
+`CleanupService.openInReader`, set by `V2ReaderRoute`, is it back at its
+smallest: `removeCopiesOf` — the one call that takes a set the user did not
+enumerate, *Remove finished offline entries* over whatever happened to be
+finished — skips the Entry being read, and keeps it rather than failing. The
+release is conditional, because replacing a route builds the arriving reader
+before the departing one is disposed.

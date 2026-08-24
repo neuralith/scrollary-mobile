@@ -525,6 +525,15 @@ collection rather than joining a ghost.
 
 ### 8.3 Moving forward in the reader: completion, then cleanup
 
+> **V1's implementation; the behaviour is V2's again.** The symbols below
+> (`_goTo`, `_planForForward`, `_applyOnArrival`, `collections.cleanup_preference`)
+> went with the reader's V1 route in `b1be16d`. The same three-decision model,
+> the same 0.90 threshold and the same "nothing is freed until the destination
+> has opened" ordering now live in `lib/reading_v2/forward_transition.dart`,
+> over `OfflineCopy` and with the rule kept device-local in `local_settings`.
+> Read this section for the reasoning; read
+> [DECISIONS.md](./DECISIONS.md) V2-D59 for what the app does today.
+
 Three decisions that look like one and are not: **has the reader finished this
 entry**, **where are they going**, and **what happens to the finished entry's
 downloaded files**. Collapsing them is how "next entry" turns into a delete
@@ -621,7 +630,8 @@ fails the build if that changes.
   route to `completed` is `CompletionPolicy.threshold` plus its dwell. Forward
   movement out of a nearly-finished entry *asks*; below `nearThreshold` it does
   not even ask, and an unfinished entry is always still resumable afterwards.
-  Backward movement asks nothing and changes nothing. See §8.3.
+  Backward movement asks nothing and changes nothing. See §8.3 — and V2-D59 for
+  the V2 implementation of the same rule.
 - **An entry's `source_url` is durable.** Every writer names its columns, so it
   survives removal, archive, restore, re-save and reading updates. It is what
   "Open original page" stands on.

@@ -172,6 +172,20 @@ Device-local bytes. **Never synced, in either direction.**
   on a device, and the copy can still say where it came from.
 - Holds the reading anchor, the artifact format, the manifest reference, the
   stored path, byte size and integrity state.
+- **Freed here only, and never by anything that syncs.** Removing a copy takes
+  the package and the copy rows; the Entry, its Collection, its Locations and
+  its whole reading history are untouched, here and everywhere else. There are
+  four ways a copy is freed and all of them are this device's: the entry menu's
+  *Remove offline copy*, the Storage screen's sweep, an Entry's own removal from
+  this device — and **reading on past a finished Entry**, when the Collection has
+  been told to (V2-D59, `lib/reading_v2/forward_transition.dart`). That last one
+  is a rule the user set once per Collection, stored in `local_settings` rather
+  than on the Collection row precisely because it is a decision about *these*
+  bytes: a phone with no room must not be able to decide for a tablet that has
+  some.
+- The reading **anchor** goes with the bytes it indexes, which is why nothing
+  frees a copy of an Entry that is not finished: a finished Entry is 100% read,
+  so there is no position to lose.
 
 ### 2.8 History
 

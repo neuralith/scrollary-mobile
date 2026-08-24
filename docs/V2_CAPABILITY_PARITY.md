@@ -74,6 +74,10 @@ expected to carry one.
 | Be told when a Source stops listing something | check result | Free | `features/v2_check_flow.dart` | `test/v2_check_flow_test.dart` | — |
 | Download the new entries a check found | Collection → **Download new** | Free | `library_ui/collection_screen.dart` | `test/library_ui/collection_test.dart` | — |
 | Read the next entry from the reader | reader → **Next** | Free | `reading_v2/` | `test/library_ui/reader_navigation_test.dart` | — |
+| Have a finished entry's download freed when I read on | reader → **Next**, after answering once per Collection | Free | `reading_v2/forward_transition.dart` | `test/reading_v2/forward_transition_test.dart`, `test/reading_v2/reader_cleanup_route_test.dart` | Asked once per Collection, on the first forward move where it has a consequence (V2-D59) |
+| Be asked before a nearly-finished entry is called finished | reader → **Next** at or past 0.90 | Free | `reading_v2/forward_transition.dart` | `test/reading_v2/forward_transition_test.dart` | *Mark finished and continue* · *Continue without finishing* · *Cancel*; below 0.90 nothing is asked |
+| Change or clear what happens to finished entries here | Collection menu → **Finished entries** | Free | `library_ui/collection_actions.dart` | `test/v2_check_flow_test.dart` | *Remove after finishing* · *Keep downloaded* · *Ask again next time* |
+| Keep an entry I am reading out of a storage sweep | Storage → **Remove finished offline entries** | Free | `storage/cleanup.dart` | `test/reading_v2/reader_cleanup_route_test.dart` | The Entry open in the reader is skipped and kept, never failed |
 | Open an entry at its source and land on it | entry menu → **Open at source** | Free | `features/open_in_browser.dart` | `test/open_in_browser_test.dart` | — |
 | Keep how far through I am, on a page I have not downloaded | Browser, reading a known entry | Free | `reading_v2/source_reading.dart` | `test/library_ui/reading_progress_test.dart` | — |
 | See how far through an entry I am | Library → collection rows | Free | `library_ui/collection_models.dart` | `test/library_ui/reading_progress_test.dart` | — |
@@ -116,4 +120,5 @@ anything.
 | Boot recovery rebuilding rows from disk | V2-D22 / I14 — the storage survey reports instead |
 | A separate Archived screen | V2-D48 — archived Collections are a filter on the one Library page |
 | V1's eleven-choice save preflight | V2-D49 — only states V2 can actually distinguish are offered |
+| Undo on the finished-entry cleanup | V2-D59 — the same reasoning: V1 backed its notice with a six-second soft delete, V2 deletes outright, and the reversibility is the rule being asked once before anything is freed |
 | Undo on a storage cleanup | V2-D33's reasoning — cleanup deletes packages outright, so the confirmation with real counts *is* the reversibility; a button that cannot restore would be a lie |

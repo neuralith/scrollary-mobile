@@ -25,7 +25,10 @@ import '../domain/reading_state.dart';
 // Collection after all*.
 // STUB IMPORT — switch to '../features/v2_add_flow.dart' at merge.
 import '../features/v2_add_flow.dart';
-import '../providers.dart' show capturePreferenceProvider;
+import '../features/cleanup_dialogs.dart' show finishedCleanupRuleCopy;
+import '../providers.dart'
+    show capturePreferenceProvider, finishedCleanupPreferenceProvider;
+import '../reading_v2/finished_cleanup.dart';
 import '../save/capture_mode.dart';
 import 'entry_details.dart';
 import '../save/queue_task.dart';
@@ -41,7 +44,15 @@ import 'providers.dart';
 
 // ─── collection ─────────────────────────────────────────────────────────────
 
-enum _CollectionAction { check, captureMode, archive, follow, move, remove }
+enum _CollectionAction {
+  check,
+  captureMode,
+  finishedCleanup,
+  archive,
+  follow,
+  move,
+  remove,
+}
 
 Future<void> showCollectionMenu(
   BuildContext context,
@@ -93,6 +104,22 @@ Future<void> showCollectionMenu(
             ),
             onTap: () =>
                 Navigator.of(sheetContext).pop(_CollectionAction.captureMode),
+          ),
+          // What happens to a finished entry's downloaded files when the
+          // reader moves on. Set the first time it has a consequence, in the
+          // reader; this is where somebody who changed their mind goes, and
+          // the only place the answer can be cleared.
+          ListTile(
+            key: const ValueKey('collectionFinishedCleanup'),
+            leading: const Icon(Icons.auto_delete_outlined),
+            title: const Text('Finished entries'),
+            subtitle: const Text(
+              'What happens to their downloaded files on this device when you '
+              'read on.',
+            ),
+            onTap: () => Navigator.of(
+              sheetContext,
+            ).pop(_CollectionAction.finishedCleanup),
           ),
           if (view.archived)
             ListTile(
@@ -148,6 +175,8 @@ Future<void> showCollectionMenu(
       if (checker != null) await checker(view.collection.id, view.name);
     case _CollectionAction.captureMode:
       await showCaptureModePreference(context, ref, view);
+    case _CollectionAction.finishedCleanup:
+      await showFinishedCleanupPreference(context, ref, view);
     case _CollectionAction.archive:
       final violation = await repository.archive(view.collection.id);
       if (violation != null) {
@@ -628,6 +657,99 @@ Future<void> showCaptureModePreference(
   await preferences.remember(view.collection.id, mode);
   if (!context.mounted) return;
   showLibraryMessage(context, 'Entries of ${view.name} save as ${mode.label}.');
+}
+
+/// Choose what happens to a finished Entry's downloaded files in this
+/// Collection when the reader moves on (V2-D59).
+///
+/// Three answers, and the third is a real one: **Ask again next time** clears
+/// the rule, and the question comes back the next time it has a consequence.
+/// There is no device-wide answer to fall back to, deliberately — one tap while
+/// reading one Collection must never become silent deletion across the library,
+/// which is the mistake V1 made once and corrected.
+///
+/// Changing this removes nothing and restores nothing. It is a rule about what
+/// happens *next*; what is already on this device stays until the reader passes
+/// it, or until somebody frees it from the entry menu or from Storage.
+Future<void> showFinishedCleanupPreference(
+  BuildContext context,
+  WidgetRef ref,
+  CollectionView view,
+) async {
+  final preferences = ref.read(finishedCleanupPreferenceProvider);
+  final current = await preferences.of(view.collection.id);
+  if (!context.mounted) return;
+
+  final chosen = await showModalBottomSheet<_CleanupChoice>(
+    context: context,
+    builder: (sheetContext) => SafeArea(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 14, 20, 8),
+            child: Text('Finished entries', style: serifStyle(size: 20)),
+          ),
+          for (final rule in FinishedCleanupRule.values)
+            ListTile(
+              key: ValueKey('collectionFinishedCleanup_${rule.name}'),
+              leading: Icon(
+                current == rule
+                    ? Icons.radio_button_checked
+                    : Icons.radio_button_unchecked,
+              ),
+              title: Text(finishedCleanupRuleCopy(rule).$1),
+              subtitle: Text(finishedCleanupRuleCopy(rule).$2),
+              onTap: () =>
+                  Navigator.of(sheetContext).pop(_CleanupChoice.remember(rule)),
+            ),
+          ListTile(
+            key: const ValueKey('collectionFinishedCleanupAsk'),
+            leading: Icon(
+              current == null
+                  ? Icons.radio_button_checked
+                  : Icons.radio_button_unchecked,
+            ),
+            title: const Text('Ask again next time'),
+            subtitle: const Text(
+              'Clears this choice. Nothing on this device is removed, and the '
+              'question comes back the next time you read on from a finished '
+              'entry here.',
+            ),
+            onTap: () =>
+                Navigator.of(sheetContext).pop(const _CleanupChoice.ask()),
+          ),
+          const SizedBox(height: 8),
+        ],
+      ),
+    ),
+  );
+  if (chosen == null || !context.mounted) return;
+
+  final rule = chosen.rule;
+  if (rule == null) {
+    await preferences.forget(view.collection.id);
+    if (!context.mounted) return;
+    showLibraryMessage(context, 'Scrollary will ask again next time.');
+    return;
+  }
+  await preferences.remember(view.collection.id, rule);
+  if (!context.mounted) return;
+  showLibraryMessage(
+    context,
+    rule == FinishedCleanupRule.remove
+        ? 'Finished entries of ${view.name} are freed on this device when you '
+              'read on.'
+        : 'Finished entries of ${view.name} stay downloaded on this device.',
+  );
+}
+
+/// A rule, or the deliberate absence of one.
+class _CleanupChoice {
+  const _CleanupChoice.remember(FinishedCleanupRule this.rule);
+  const _CleanupChoice.ask() : rule = null;
+
+  final FinishedCleanupRule? rule;
 }
 
 /// A mode, or the deliberate absence of one.

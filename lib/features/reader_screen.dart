@@ -85,8 +85,16 @@ class ReaderScreen extends ConsumerStatefulWidget {
   final String? previousEntryId;
   final String? nextEntryId;
 
-  /// Open another Entry. Null leaves the controls out entirely.
-  final void Function(String entryId)? onOpenEntry;
+  /// Open another Entry, told how far through *this* one the reader is.
+  ///
+  /// Null leaves the controls out entirely.
+  ///
+  /// The fraction travels with the request because only this screen knows it:
+  /// an offline read stores an anchor on the copy, not a fraction, so "how far
+  /// through" is a fact about the rendering currently on screen and about
+  /// nothing else. What the caller does with it — asking whether a nearly
+  /// finished Entry is finished — is the route's business, not this screen's.
+  final void Function(String entryId, double fraction)? onOpenEntry;
 
   /// The Entry's package, resolved by the caller, and the session its reading
   /// goes back through (`lib/reading_v2/offline_read.dart`).
@@ -939,11 +947,18 @@ class _ReaderChrome extends StatelessWidget {
   /// Where the two ends of the bottom bar go. Resolved by the route.
   final String? previousEntryId;
   final String? nextEntryId;
-  final void Function(String entryId)? onOpenEntry;
+  final void Function(String entryId, double fraction)? onOpenEntry;
 
   @override
   Widget build(BuildContext context) {
     final insets = MediaQuery.paddingOf(context);
+    // The bottom bar is where both the neighbours and the live position are,
+    // so it is where the two are put together. Read at the tap rather than
+    // captured on build: the reader may have scrolled since this frame.
+    final open = onOpenEntry;
+    final openEntry = open == null
+        ? null
+        : (String id) => open(id, position.value.fraction);
 
     return IgnorePointer(
       ignoring: !visible,
@@ -1066,7 +1081,7 @@ class _ReaderChrome extends StatelessWidget {
                           icon: Icons.chevron_left,
                           tooltip: 'Previous entry',
                           entryId: previousEntryId,
-                          onOpen: onOpenEntry,
+                          onOpen: openEntry,
                         ),
                         Expanded(
                           child: _ReadingPercent(
@@ -1079,7 +1094,7 @@ class _ReaderChrome extends StatelessWidget {
                           icon: Icons.chevron_right,
                           tooltip: 'Next entry',
                           entryId: nextEntryId,
-                          onOpen: onOpenEntry,
+                          onOpen: openEntry,
                         ),
                       ],
                     ),

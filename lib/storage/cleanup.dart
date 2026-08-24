@@ -172,6 +172,32 @@ class CleanupService {
   /// it.
   final ValueNotifier<int> removals = ValueNotifier(0);
 
+  /// The Entry whose copy is open in the reader, or null when none is.
+  ///
+  /// **A sweep must not delete the bytes under the reader's thumb.** Everything
+  /// else this file frees is either unreferenced or named one Entry at a time
+  /// by a person looking at it; [removeCopiesOf] is the one call that takes a
+  /// *set* the user did not enumerate — *Remove finished offline entries* over
+  /// whatever happened to be finished — and the Entry someone is reading right
+  /// now can easily be in it. V1 held the same lock and V2 lost it with the
+  /// reader's V1 route; this is it back, at its smallest.
+  ///
+  /// Set by `V2ReaderRoute`, which is the one thing that knows an Entry is
+  /// open. A locked Entry is *kept*, never an error: the sweep skips it and
+  /// frees everything else.
+  final ValueNotifier<String?> openInReader = ValueNotifier(null);
+
+  /// This Entry is now open in the reader.
+  void enterReader(String entryId) => openInReader.value = entryId;
+
+  /// This Entry is no longer open — **if it is still the one holding the
+  /// lock**. A replaced route builds the arriving reader before the departing
+  /// one is disposed, so an unconditional clear would drop the new reader's
+  /// lock on the way out of the old one.
+  void leaveReader(String entryId) {
+    if (openInReader.value == entryId) openInReader.value = null;
+  }
+
   /// Read the rows and the disk, and report where they disagree.
   Future<StorageSurvey> survey() async {
     final copies = await offlineCopies.allCopies();
@@ -226,9 +252,13 @@ class CleanupService {
   /// The order is the capture lane's and is not this surface's to change —
   /// rows first would leave a package under `library/` that the next survey
   /// would report as an orphan. Returns how many entries were freed.
+  ///
+  /// The Entry named by [openInReader] is skipped: it is being read from the
+  /// bytes this would delete.
   Future<int> removeCopiesOf(List<String> entryIds) async {
     var freed = 0;
     for (final id in entryIds) {
+      if (id == openInReader.value) continue;
       final removed = await removeOfflineCopies(
         entryId: id,
         offlineCopies: offlineCopies,

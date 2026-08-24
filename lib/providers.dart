@@ -14,6 +14,8 @@ import 'features/check_controller.dart';
 import 'features/v2_composition.dart';
 import 'library_ui/providers.dart'
     show libraryDatabaseProvider, libraryUiServicesProvider;
+import 'reading_v2/finished_cleanup.dart';
+import 'reading_v2/forward_transition.dart';
 import 'save/capture_preference.dart';
 import 'save/queue_runner.dart';
 import 'storage/cleanup.dart';
@@ -93,6 +95,32 @@ final localSettingsProvider = Provider<LocalSettingsStore>(
 final capturePreferenceProvider = Provider<CapturePreferenceStore>(
   (ref) => CapturePreferenceStore(ref.watch(localSettingsProvider)),
 );
+
+/// What a Collection does with a finished Entry's downloaded copy.
+///
+/// The same table and the same reasoning as the capture preference beside it:
+/// per Collection, device-local, and unset until somebody says.
+final finishedCleanupPreferenceProvider =
+    Provider<FinishedCleanupPreferenceStore>(
+      (ref) => FinishedCleanupPreferenceStore(ref.watch(localSettingsProvider)),
+    );
+
+/// Reading on to the next Entry, and what that owes the one left behind.
+///
+/// One instance for the app, because it holds the plan **across** a route
+/// replacement: the reader that asks the questions is gone before the answer
+/// falls due, so the thing holding it cannot be either of those routes.
+final forwardTransitionProvider = Provider<ForwardTransitionService>((ref) {
+  final services = ref.watch(libraryUiServicesProvider);
+  return ForwardTransitionService(
+    entries: services.entries,
+    collections: services.collections,
+    reading: services.reading,
+    offlineCopies: services.offline,
+    fileStore: services.fileStore,
+    preferences: ref.watch(finishedCleanupPreferenceProvider),
+  );
+});
 
 /// What this device is holding, from the copy rows alone.
 ///

@@ -28,6 +28,7 @@ import 'package:web_reader/library_ui/collection_models.dart';
 import 'package:web_reader/library_ui/providers.dart' as libui;
 import 'package:web_reader/providers.dart';
 import 'package:web_reader/recognition/check.dart';
+import 'package:web_reader/reading_v2/finished_cleanup.dart';
 import 'package:web_reader/save/capture_mode.dart';
 import 'package:web_reader/save/capture_preference.dart';
 import 'package:web_reader/recognition/discovery.dart';
@@ -550,6 +551,56 @@ void main() {
         await preferences.of(collection.id),
         isNull,
         reason: 'there is no safest mode, so no answer stays expressible',
+      );
+    });
+
+    screenTest('what happens to finished entries here is changeable from '
+        'here too', (tester) async {
+      // The rule is *set* in the reader, the first time reading on from a
+      // finished entry has a consequence. This is where somebody who changed
+      // their mind goes — and the only place the answer can be cleared.
+      await seed();
+      final preferences = FinishedCleanupPreferenceStore(
+        LocalSettingsStore(v2.library),
+      );
+      await tester.pumpWidget(app(checkerAttached: true));
+      await tester.tap(find.text('menu'));
+      await _settle(tester);
+
+      await tester.tap(find.byKey(const ValueKey('collectionFinishedCleanup')));
+      await _settle(tester);
+      await tester.tap(
+        find.byKey(const ValueKey('collectionFinishedCleanup_keep')),
+      );
+      await _settle(tester);
+
+      expect(await preferences.of(collection.id), FinishedCleanupRule.keep);
+    });
+
+    screenTest('and *Ask again next time* clears it without removing '
+        'anything', (tester) async {
+      await seed();
+      final preferences = FinishedCleanupPreferenceStore(
+        LocalSettingsStore(v2.library),
+      );
+      await preferences.remember(collection.id, FinishedCleanupRule.remove);
+
+      await tester.pumpWidget(app(checkerAttached: true));
+      await tester.tap(find.text('menu'));
+      await _settle(tester);
+      await tester.tap(find.byKey(const ValueKey('collectionFinishedCleanup')));
+      await _settle(tester);
+      await tester.tap(
+        find.byKey(const ValueKey('collectionFinishedCleanupAsk')),
+      );
+      await _settle(tester);
+
+      expect(
+        await preferences.of(collection.id),
+        isNull,
+        reason:
+            'no answer has to stay expressible — it is a question, not a '
+            'default',
       );
     });
 

@@ -99,6 +99,20 @@ in [docs/DECISIONS.md](docs/DECISIONS.md).
   Collection is normally saved as is resolved at the **capture seam**
   (`EntryCaptureService.capture`, V2-D58) so it applies wherever a capture
   starts; never re-implement that fallback at a place a queue row is written.
+- **Reading on to the next Entry** (`lib/reading_v2/forward_transition.dart`,
+  V2-D59) — finishing an Entry and moving forward inside a Collection is what
+  frees its downloaded copy, by a rule the user is asked for **once per
+  Collection** (*Remove after finishing* · *Keep downloaded*, changeable and
+  clearable from the Collection menu) and which is **device-local**, in
+  `local_settings`, because it is a decision about these bytes on this device.
+  Three decisions stay apart — did you finish it, where are you going, what
+  happens to its files — and **nothing is freed until the destination has
+  genuinely opened**: a package whose files are gone applies nothing, because
+  the Entry just left is then the only readable thing there is. Forward, inside
+  one Collection, by the Collection's own order, and never anything else. There
+  is no Undo, for the reason V2-D33 gives. The plan is held by the service
+  rather than by the reader, because `V2ReaderRoute` replaces itself to move and
+  the widget that asked the questions is gone before the answer is owed.
 - **How an Entry reads** (`lib/library/entry_presentation.dart`) — inside a
   Collection a row leads with the Entry's **position**, because the work is
   already named above the list; across the library it names itself. The
@@ -325,7 +339,9 @@ and refused. Do not add video URL extraction, HLS/DASH, interception or playback
   no other code may reach a reading column.
 - A completed entry is 100% read, enforced on write and again on display.
 - Removing offline files is never deleting an entry: the copy's own row is
-  marked inactive and nothing on the Entry is touched. Archiving is never deleting
+  marked inactive and nothing on the Entry is touched. The Entry whose copy is
+  open in the reader is never eligible for a bulk sweep
+  (`CleanupService.openInReader`) — it is skipped and kept, never failed. Archiving is never deleting
   a collection either: it writes `lifecycle` and `archived_at` and nothing else.
   Neither may be offered as a way to delete.
 - **Permanent deletion goes through the V2 repositories, whole** (V2-D42).
