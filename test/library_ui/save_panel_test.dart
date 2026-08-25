@@ -166,10 +166,38 @@ void main() {
     atBottom: false,
   );
 
-  Future<void> openPanel(WidgetTester tester, String url, String title) async {
+  /// A page as the save sheet actually meets one: **not scrolled**.
+  ///
+  /// Its prose is in the DOM from the first byte, so text-only measures true
+  /// straight away. Its images are lazy, so before any scrolling the sheet
+  /// sees almost none of them — which is exactly the state the engine refuses
+  /// to decide from ("Measured on the SETTLED probe, after scrolling",
+  /// `save_engine.dart`). Anything the sheet concludes about *images* here is
+  /// a measurement of how far the page has got, not of what it holds.
+  PageProbe lazyImagePageProbe(String url, String title) => PageProbe(
+    url: url,
+    title: title,
+    readyState: 'complete',
+    documentHeight: 12000,
+    viewportHeight: 800,
+    viewportWidth: 400,
+    atBottom: false,
+    content: const PageContentSignals(
+      textLength: 1400,
+      paragraphCount: 6,
+      contentRegionImageCount: 1,
+    ),
+  );
+
+  Future<void> openPanel(
+    WidgetTester tester,
+    String url,
+    String title, {
+    PageProbe? probe,
+  }) async {
     browser
       ..setUrl(url)
-      ..addPage(url, probeOf(url, title));
+      ..addPage(url, probe ?? probeOf(url, title));
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
@@ -268,8 +296,13 @@ void main() {
       // One sheet: the three ranges and the launch, with nothing to press
       // first (V2-D62).
       expect(key('saveScopeFromHere'), findsOneWidget);
-      expect(key('saveScopeKnownOnly'), findsOneWidget);
       expect(key('saveScopeAddToQueue'), findsOneWidget);
+      expect(
+        key('saveScopeKnownOnly'),
+        findsNothing,
+        reason: 'the save flow offers two ranges, not three (V2-D65)',
+      );
+      expect(find.textContaining('already in your library'), findsNothing);
       expect(key('v2DownloadEntry'), findsNothing);
       expect(key('v2DownloadEntries'), findsNothing);
 
@@ -390,28 +423,6 @@ void main() {
 
       expect(adds, isEmpty);
       expect(h.starts, 0);
-    });
-
-    screenTest('the quieter range opens nothing, so it is never gated', (
-      tester,
-    ) async {
-      await seed();
-      await openPanel(tester, _entryUrl, _entryTitle);
-      await pumpUntil(tester, key('saveScopeFromHere'));
-
-      await tapAndPump(tester, key('saveScopeKnownOnly'));
-      await tester.enterText(key('saveCountField'), '5');
-      await launch(tester, key('saveScopeAddToQueue'));
-
-      expect(adds, hasLength(1));
-      expect(adds.single.limits!.maxEntries, 5);
-      expect(adds.single.discoverMissing, isFalse);
-      expect(
-        h.starts,
-        0,
-        reason: '*Queue only* queues and starts nothing, so nothing was gated',
-      );
-      expect(key('startOptionsCancel'), findsNothing);
     });
 
     screenTest('this entry alone is never gated and discovers nothing', (
@@ -868,6 +879,42 @@ void main() {
         await CapturePreferenceStore(LocalSettingsStore(h.db)).of(collectionId),
         isNull,
       );
+    });
+
+    screenTest('a lazy page does not un-remember what the collection is kept '
+        'as', (tester) async {
+      // The bug this pins. The sheet measures the page **before** it has been
+      // scrolled, so on a lazy reader almost no images have loaded yet and
+      // *Images only* looks impossible. Vetoing the remembered answer on that
+      // measurement put the full three-row block back on every save of a work
+      // the user had already settled — while the engine, which measures the
+      // settled page, would have saved it as images all along (V2-D65).
+      final collectionId = await seedKnownEntry();
+      await CapturePreferenceStore(
+        LocalSettingsStore(h.db),
+      ).remember(collectionId, CaptureMode.imageSequence);
+
+      await openPanel(
+        tester,
+        _entryUrl,
+        _entryTitle,
+        probe: lazyImagePageProbe(_entryUrl, _entryTitle),
+      );
+      await pumpUntil(tester, key('saveScopeThisEntry'));
+
+      expect(
+        key('captureModeRemembered'),
+        findsOneWidget,
+        reason: 'an unscrolled page cannot rule out an image save',
+      );
+      expect(find.text('What to save'), findsNothing);
+      expect(key('captureMode_textOnly'), findsNothing);
+
+      // And what the save is asked for is the remembered mode itself: the
+      // engine re-resolves it on the settled page and falls back there, with
+      // an explanation, if it truly cannot be honoured.
+      await launch(tester, key('saveScopeAddToQueue'));
+      expect(adds.single.captureMode, CaptureMode.imageSequence);
     });
 
     screenTest('*Ask each time* keeps asking, save after save', (tester) async {

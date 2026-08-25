@@ -539,12 +539,22 @@ class _V2SavePanelState extends ConsumerState<V2SavePanel> {
   bool _modesExpanded = false;
 
   /// Whether the collapsed line stands in for the block.
+  ///
+  /// **What this deliberately does not do is trust an unscrolled page about
+  /// images** (V2-D65). This sheet probes before anything has been scrolled,
+  /// so on a lazy reader almost none of the page's images have loaded and
+  /// *Images only* measures as impossible. Vetoing the Collection's settled
+  /// answer on that put the full block back on every save of a work the user
+  /// had already answered for — while the engine, which measures the settled
+  /// page, would have honoured it. So only a block the unscrolled page can
+  /// actually vouch for counts: no readable text is a fact, not enough images
+  /// *yet* is not.
   bool get _modeIsRemembered {
     final remembered = _remembered;
-    return remembered != null &&
-        !_modesExpanded &&
-        !_modeIsUserSet &&
-        _capabilities.allows(remembered);
+    if (remembered == null || _modesExpanded || _modeIsUserSet) return false;
+    if (_capabilities.allows(remembered)) return true;
+    return !(_capabilities.blocked[remembered]?.survivesAnUnscrolledPage ??
+        false);
   }
 
   @override
@@ -630,7 +640,15 @@ class _V2SavePanelState extends ConsumerState<V2SavePanel> {
   /// first. A choice the **user** made outranks both and is never recomputed.
   void _settleMode() {
     if (_modeIsUserSet) return;
-    _mode = _capabilities.resolve(_remembered).mode;
+    // A remembered answer the sheet is still standing behind is passed on as
+    // it is: `CaptureCapabilities.resolve` runs again inside the engine, on
+    // the settled page, and falls back there with an explanation if the mode
+    // genuinely cannot be honoured (V2-D65). Resolving it here as well would
+    // substitute a fallback chosen from a measurement the engine itself
+    // refuses to decide from.
+    _mode = _modeIsRemembered
+        ? _remembered
+        : _capabilities.resolve(_remembered).mode;
   }
 
   Future<void> _refresh() async {
@@ -852,10 +870,34 @@ class _V2SavePanelState extends ConsumerState<V2SavePanel> {
     if (scope == null) return const [];
     return [
       SaveScopeSection(controller: scope),
-      const SizedBox(height: 14),
+      const SizedBox(height: 10),
+      ..._captureBlock(),
+      const SizedBox(height: 12),
       _launchActions(context, _submitScope),
     ];
   }
+
+  /// *What to save*: one line once the Collection has answered, the full block
+  /// until it has.
+  ///
+  /// Everything the block says stays one tap away, and the line is only drawn
+  /// for an answer this page has not reliably ruled out (V2-D65).
+  List<Widget> _captureBlock() => [
+    if (_modeIsRemembered)
+      RememberedCaptureLine(
+        mode: _remembered!,
+        onChange: () => setState(() => _modesExpanded = true),
+      )
+    else
+      CaptureModeSection(
+        capabilities: _capabilities,
+        selected: _mode,
+        onSelect: (mode) => setState(() {
+          _mode = mode;
+          _modeIsUserSet = true;
+        }),
+      ),
+  ];
 
   /// One launch, validated where it was typed and routed by what the page is.
   ///
@@ -916,6 +958,11 @@ class _V2SavePanelState extends ConsumerState<V2SavePanel> {
           action: ForegroundGateAction.startEntrySave,
           inBrowserLabel: 'Start now',
           keepUsingAppLabel: 'Start and keep using Scrollary',
+          // The rows are the tallest thing on a sheet that now asks three
+          // questions above them, and each one's sentence was a variation on
+          // the same rule. Said once, below (V2-D65), and still spoken in
+          // full by every row.
+          dense: true,
           onChoice: (choice) async {
             if (choice == StartChoice.enableAndKeepUsingApp) {
               await setKeepWorkingPreference(ref, true);
@@ -927,7 +974,7 @@ class _V2SavePanelState extends ConsumerState<V2SavePanel> {
             });
           },
         ),
-        const SizedBox(height: 8),
+        const SizedBox(height: 7),
         OutlinedButton(
           key: const ValueKey('saveScopeAddToQueue'),
           onPressed: () => submit(SaveStartMode.queueOnly),
@@ -935,6 +982,20 @@ class _V2SavePanelState extends ConsumerState<V2SavePanel> {
             'Queue only',
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
+          ),
+        ),
+        const SizedBox(height: 8),
+        // The rule the rows above no longer each repeat, stated once where it
+        // still has to be visible: nothing runs on its own, and nothing runs
+        // at all once the app is not in front of the user.
+        Text(
+          'Nothing downloads on its own, and nothing runs while the app is '
+          'not in front of you.',
+          key: const ValueKey('saveLaunchNote'),
+          style: TextStyle(
+            fontSize: 11.5,
+            height: 1.4,
+            color: AppPalette.of(sheetContext).inkFaint,
           ),
         ),
       ],
@@ -1242,25 +1303,15 @@ class _V2SavePanelState extends ConsumerState<V2SavePanel> {
       const SizedBox(height: 12),
       // A listing writes no queue row, so what to take off a page is not a
       // question it has. Everywhere else it is.
-      if (!(result is Unrecognised && shape == PageKind.collectionIndex)) ...[
-        // Answered once, for this work: the block collapses to the answer and
-        // a way back to it. Everything the block says is still one tap away,
-        // and a page that cannot honour the remembered mode never gets here.
-        if (_modeIsRemembered)
-          RememberedCaptureLine(
-            mode: _remembered!,
-            onChange: () => setState(() => _modesExpanded = true),
-          )
-        else
-          CaptureModeSection(
-            capabilities: _capabilities,
-            selected: _mode,
-            onSelect: (mode) => setState(() {
-              _mode = mode;
-              _modeIsUserSet = true;
-            }),
-          ),
-        const SizedBox(height: 8),
+      // Where there is a range, *what to save* is drawn under it, because the
+      // range is the decision the user came to make and the mode is usually
+      // already settled (V2-D65). Where there is not — a standalone Entry, a
+      // page whose Collection nobody has chosen yet — it is drawn here, above
+      // whatever single action there is.
+      if (_scope == null &&
+          !(result is Unrecognised && shape == PageKind.collectionIndex)) ...[
+        ..._captureBlock(),
+        const SizedBox(height: 10),
       ],
       ...switch (result) {
         RecognisedLocation() => _knownEntryActions(

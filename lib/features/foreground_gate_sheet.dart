@@ -153,6 +153,7 @@ class ForegroundStartActions extends StatelessWidget {
     required this.onChoice,
     this.inBrowserLabel = 'Start in Browser',
     this.keepUsingAppLabel = 'Start and keep using Scrollary',
+    this.dense = false,
   });
 
   final StartGate gate;
@@ -160,6 +161,15 @@ class ForegroundStartActions extends StatelessWidget {
   final ValueChanged<StartChoice> onChoice;
   final String inBrowserLabel;
   final String keepUsingAppLabel;
+
+  /// Drop the printed sentence under each label, for a surface that has
+  /// already asked several questions above these rows (V2-D65).
+  ///
+  /// **Only the printing goes.** Every sentence is still in the row's spoken
+  /// label, so a screen reader hears exactly what it heard before, and the one
+  /// rule that has to be visible — nothing runs once the app is not in
+  /// front — is stated once beneath the group rather than three times in it.
+  final bool dense;
 
   @override
   Widget build(BuildContext context) {
@@ -180,6 +190,7 @@ class ForegroundStartActions extends StatelessWidget {
                 'It runs while you read or use your Library. '
                 '$kForegroundOnlyNote',
             primary: true,
+            dense: dense,
             onTap: () => onChoice(StartChoice.keepUsingApp),
           ),
           const SizedBox(height: 8),
@@ -192,6 +203,7 @@ class ForegroundStartActions extends StatelessWidget {
               'The Browser opens and stays on screen while the work is done. '
               'You can watch it, and stop it at any point.',
           primary: !ready,
+          dense: dense,
           onTap: () => onChoice(StartChoice.inBrowser),
         ),
         if (gate == StartGate.multitaskingAvailableButOff) ...[
@@ -203,6 +215,7 @@ class ForegroundStartActions extends StatelessWidget {
             sub:
                 'Saves the setting, then starts and leaves you where you are. '
                 '$kForegroundOnlyNote',
+            dense: dense,
             onTap: () => onChoice(StartChoice.enableAndKeepUsingApp),
           ),
         ],
@@ -214,6 +227,7 @@ class ForegroundStartActions extends StatelessWidget {
             label: keepUsingAppLabel,
             sub: 'A Pro capability. Tap to see what it does.',
             lockedForPro: true,
+            dense: dense,
             onTap: () => showProInfoSheet(context: context, action: action),
           ),
         ],
@@ -582,6 +596,7 @@ class _GateAction extends StatelessWidget {
     required this.onTap,
     this.primary = false,
     this.lockedForPro = false,
+    this.dense = false,
   });
 
   final String optionKey;
@@ -590,6 +605,10 @@ class _GateAction extends StatelessWidget {
   final String sub;
   final VoidCallback? onTap;
   final bool primary;
+
+  /// Drop the printed sentence, keeping it in the spoken label. See
+  /// [ForegroundStartActions.dense].
+  final bool dense;
   final bool lockedForPro;
 
   @override
@@ -614,7 +633,9 @@ class _GateAction extends StatelessWidget {
           key: ValueKey(optionKey),
           onTap: onTap,
           child: Container(
-            padding: const EdgeInsets.all(13),
+            padding: dense
+                ? const EdgeInsets.fromLTRB(13, 11, 13, 11)
+                : const EdgeInsets.all(13),
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(14),
               border: Border.all(
@@ -622,7 +643,9 @@ class _GateAction extends StatelessWidget {
               ),
             ),
             child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
+              crossAxisAlignment: dense
+                  ? CrossAxisAlignment.center
+                  : CrossAxisAlignment.start,
               children: [
                 Icon(
                   icon,
@@ -653,15 +676,17 @@ class _GateAction extends StatelessWidget {
                           ],
                         ],
                       ),
-                      const SizedBox(height: 3),
-                      Text(
-                        sub,
-                        style: TextStyle(
-                          fontSize: 11.5,
-                          height: 1.45,
-                          color: palette.inkMuted,
+                      if (!dense) ...[
+                        const SizedBox(height: 3),
+                        Text(
+                          sub,
+                          style: TextStyle(
+                            fontSize: 11.5,
+                            height: 1.45,
+                            color: palette.inkMuted,
+                          ),
                         ),
-                      ),
+                      ],
                     ],
                   ),
                 ),

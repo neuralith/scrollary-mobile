@@ -144,31 +144,30 @@ and cancellable, exactly like the update check.
 
 ### What the sheet asks, in its own words
 
-Three ranges, of which two take a count. The typed number means the same thing
-in both, and the sheet says so instead of leaving it to be inferred:
+**Two rows, one of which takes a count** (V2-D65). Each is one line, and the
+count sits on the row it belongs to:
 
-| Range | Returns | The sentence under it |
-|---|---|---|
-| **This entry** | `currentPageOnly`, `discoverMissing: false` | "Only the page you are on." |
-| **Entries from here** | `fixedCount`, `discoverMissing: true` | "Type how many to download from this page onward — up to *N*." |
-| **Entries already in your library** | `fixedCount`, `discoverMissing: false` | "The same count, but only the ones your library already knows." |
+| Range | Returns |
+|---|---|
+| **This entry** | `currentPageOnly`, `discoverMissing: false` |
+| **Entries from here** `[ N ]` | `fixedCount`, `discoverMissing: true` |
 
-The field asks it in its own label — **"How many entries, counting this
-one?"** — so the inclusive count is stated where the number is typed rather
-than left to be inferred from it. Under the field, the sentence that tells the
-two counted ranges apart says it again in numbers. For *Entries from here*:
+*Entries already in your library* is **not offered while saving**. It answers a
+different question — queue what is already known, open nothing — and nobody
+reaches for it on the page in front of them. `SaveScopePlanner` still
+implements it (§6) for the paths that use it.
 
-> 5 means this entry and the next four. Scrollary downloads this page, then
-> reads forward for the next one and downloads that — one page at a time,
-> nothing else downloaded, and you can stop it at any point.
+One sentence under the counted row carries everything the three descriptions
+used to carry between them:
 
-and for *Entries already in your library*:
+> Counts this entry as the first, so 5 means this one and the next four — up
+> to *N*. One page at a time, nothing else downloaded, and you can stop at any
+> point.
 
-> 5 means this entry and the next four. Only entries your library already
-> knows, and this site is not opened — if it knows fewer, Scrollary says so.
-
-The ceiling stays where it always was — stated in the range's own line and
-enforced by `SaveLimits.forScope` — and so does every part of the recovered
+That is the inclusive count stated where the number is typed, the ceiling as a
+number the user can see, and what the operation does and does not do. The
+ceiling is still enforced by `SaveLimits.forScope`, and so is every part of the
+recovered
 numeric interaction: digits only, a blank and a zero refused where they were
 typed, and an OK bar for the number pad iOS gives no return key.
 
@@ -266,11 +265,11 @@ pairs to queue, walking the Collection's own order upward from the Entry the
 user was on. It reads the library and nothing else: it opens no page. When the
 library knows fewer Entries than were asked for, the plan is short and says so.
 
-That is one of the two operations in §4 — *Entries already in your library* —
-and it is not what a typed count means by default. The default is *Entries
-from here*, where the count is a claim about the Source and what the library
-is missing is found by reading that Source forward. A short plan is the
-quieter range's honest answer, never the intended semantics of a count.
+That is one of the two operations in §4 — *the ones the library already has* —
+and it is not what a typed count means on the save sheet, which offers only
+*Entries from here*: the count is a claim about the Source, and what the
+library is missing is found by reading that Source forward. The planner's
+answer is still what a count of one and every non-Browser path resolve to.
 
 Capture itself is unchanged: each save is one `save_queue` row against
 `(Entry, Location)`, run by the V2 `QueueRunner` into an `OfflineCopy` —
