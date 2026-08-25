@@ -12,7 +12,7 @@ import '../library/collection_identity.dart' show PageHints;
 import '../library_ui/collection_picker.dart';
 import '../library_ui/entry_offline.dart';
 import '../library_ui/providers.dart';
-import '../library_ui/save_scope_sheet.dart';
+import '../library_ui/save_scope_section.dart';
 import '../providers.dart';
 import '../recognition/history.dart';
 import '../recognition/page_kind.dart';
@@ -490,6 +490,17 @@ class _V2SavePanelState extends ConsumerState<V2SavePanel> {
   /// finding what is on it is a separate, visible act.
   ({String id, String name})? _added;
 
+  /// *How much*, held here rather than returned by a sheet after this one
+  /// (V2-D62). Built when the sheet learns there is something to download —
+  /// which is as soon as recognition settles for a page already in a
+  /// Collection, and when the picker answers for one that is not.
+  SaveScopeController? _scope;
+
+  /// The Collection this save is going to, once the user has said. Null while
+  /// the answer is the page's own — a known Entry or a known Source needs no
+  /// picker — and null again for a page nobody has chosen a Collection for.
+  CollectionChoice? _chosen;
+
   /// What this page can honestly be saved as. Measured once, when the sheet
   /// opens, so it offers what is actually possible rather than failing after
   /// the choice. A probe that fails degrades to "not analysed", which offers
@@ -534,6 +545,48 @@ class _V2SavePanelState extends ConsumerState<V2SavePanel> {
         !_modesExpanded &&
         !_modeIsUserSet &&
         _capabilities.allows(remembered);
+  }
+
+  @override
+  void dispose() {
+    _scope?.dispose();
+    super.dispose();
+  }
+
+  /// Build (or rebuild) the *how much* state for what this save is going to.
+  ///
+  /// Rebuilt rather than mutated when the target changes, because a Collection
+  /// about to be created is named inside it and that is fixed at construction.
+  /// Null where there is no range to ask about: a listing is not an Entry, a
+  /// standalone Entry has no order to count along, and a page whose Collection
+  /// nobody has chosen yet has nothing to count *of*.
+  void _settleScope({NewCollectionNaming? naming, required bool wanted}) {
+    if (!wanted) {
+      if (_scope == null) return;
+      _scope!.dispose();
+      setState(() => _scope = null);
+      return;
+    }
+    if (_scope != null &&
+        _scope!.naming?.suggestedName == naming?.suggestedName &&
+        (_scope!.naming == null) == (naming == null)) {
+      return;
+    }
+    final replaced = _scope;
+    setState(() => _scope = SaveScopeController(naming: naming));
+    replaced?.dispose();
+  }
+
+  /// What this Collection's entries have already cost, fetched **after** the
+  /// sheet is usable (V2-D62). It walks every Entry of the Collection, and no
+  /// save should wait on that to be able to choose a range; the estimate line
+  /// appears when the answer arrives.
+  Future<void> _loadEstimate(String? collectionId) async {
+    final scope = _scope;
+    if (scope == null || collectionId == null) return;
+    final costs = await _downloadedBytesOf(collectionId);
+    if (!mounted || _scope != scope) return;
+    scope.alreadyDownloadedBytes = costs;
   }
 
   @override
@@ -599,11 +652,43 @@ class _V2SavePanelState extends ConsumerState<V2SavePanel> {
             : null,
       );
     });
-    await _loadPreference(switch (status.result) {
+    final collectionId = switch (status.result) {
       RecognisedLocation(:final collection) => collection?.id,
       RecognisedSource(:final collection) => collection.id,
       Unrecognised() => null,
-    });
+    };
+    _settleScopeFor(status);
+    unawaited(_loadEstimate(collectionId));
+    await _loadPreference(collectionId);
+  }
+
+  /// Whether this page has a range to ask about at all, and under what name.
+  void _settleScopeFor(V2PageStatus status) {
+    final shape = _shape?.kind ?? PageKind.unknownPage;
+    final listing = shape == PageKind.collectionIndex;
+    switch (status.result) {
+      // A Collection's own order is what "the ones after this" counts along.
+      // A standalone Entry has none, so it is offered its one page and no
+      // range — asking anyway would be a control that quietly means "just
+      // this one".
+      case RecognisedLocation(:final collection):
+        _settleScope(wanted: collection != null);
+      case RecognisedSource():
+        _settleScope(wanted: !listing);
+      case Unrecognised():
+        // Nothing to count of until the user has said which Collection this
+        // belongs to. The picker is still first (V2-D45, V2-D57).
+        _settleScope(
+          wanted: !listing && _chosen != null,
+          naming: switch (_chosen) {
+            NewCollectionChoice(:final name) => NewCollectionNaming(
+              suggestedName: name,
+              host: Uri.tryParse(widget.url)?.host ?? '',
+            ),
+            _ => null,
+          },
+        );
+    }
   }
 
   /// What this Collection is normally captured as — asked once the library has
@@ -756,30 +841,46 @@ class _V2SavePanelState extends ConsumerState<V2SavePanel> {
     );
   }
 
-  /// *Download entries…* — the count, then the rows.
-  Future<void> _downloadRange(String collectionName) async {
-    final result = _status?.result;
-    final costs = await _downloadedBytesOf(
-      result is RecognisedLocation ? result.collection?.id : null,
-    );
-    if (!mounted) return;
-    final scope = await showSaveScopeSheet(
-      context,
-      collectionName: collectionName,
-      // The control said *entries*, so the sheet opens on entries. Landing on
-      // *This entry* made the two controls contradict each other: the one the
-      // user did not press is the one that arrived preselected (V2-D61).
-      initialScope: SaveScope.fixedCount,
-      alreadyDownloadedBytes: costs,
-      launchActions: _launchActions,
-    );
-    if (scope == null || !mounted) return;
-    _prepareLaunch(scope);
-    await _download(
-      limits: scope.limits,
-      start: scope.start,
-      discoverMissing: scope.discoverMissing,
-    );
+  /// The range, and the launch under it — the whole of what this sheet asks
+  /// once the target is known (V2-D62).
+  ///
+  /// It replaces *Download this entry* and *Download entries…*, which were two
+  /// buttons for one question: the first said what the range block's first row
+  /// says, and the second opened a second sheet to ask the rest of it.
+  List<Widget> _scopeAndLaunch() {
+    final scope = _scope;
+    if (scope == null) return const [];
+    return [
+      SaveScopeSection(controller: scope),
+      const SizedBox(height: 14),
+      _launchActions(context, _submitScope),
+    ];
+  }
+
+  /// One launch, validated where it was typed and routed by what the page is.
+  ///
+  /// Null from [SaveScopeController.choiceFor] means a refusal is on screen
+  /// with the keyboard back under the thumb — nothing is queued and nothing
+  /// closes.
+  Future<void> _submitScope(SaveStartMode start) async {
+    final scope = _scope;
+    final status = _status;
+    if (scope == null || status == null || _busy) return;
+    final choice = scope.choiceFor(start);
+    if (choice == null) return;
+    _prepareLaunch(choice);
+    switch (status.result) {
+      case RecognisedLocation():
+        await _download(
+          limits: choice.limits,
+          start: choice.start,
+          discoverMissing: choice.discoverMissing,
+        );
+      case RecognisedSource(:final collection):
+        await _addToKnownCollection(collection.id, choice: choice);
+      case Unrecognised():
+        await _addToChosenCollection(choice);
+    }
   }
 
   /// The launch row the scope sheet draws — **the whole of the start
@@ -856,57 +957,36 @@ class _V2SavePanelState extends ConsumerState<V2SavePanel> {
   /// Add this page to a Collection that already holds it as a Source.
   Future<void> _addToKnownCollection(
     String collectionId, {
-    required String collectionName,
-    required bool askHowMany,
+    required SaveScopeChoice choice,
   }) async {
-    SaveScopeChoice? scope;
-    if (askHowMany) {
-      final costs = await _downloadedBytesOf(collectionId);
-      if (!mounted) return;
-      scope = await showSaveScopeSheet(
-        context,
-        collectionName: collectionName,
-        // *Add & download…* is the plural control on this branch, and opens
-        // on the plural answer for the same reason (V2-D61).
-        initialScope: SaveScope.fixedCount,
-        alreadyDownloadedBytes: costs,
-        launchActions: _launchActions,
-      );
-      if (scope == null || !mounted) return;
-      _prepareLaunch(scope);
-    }
-    final discoverMissing = scope?.discoverMissing ?? false;
     await _run(
       () => ref.read(v2AddAndDownloadProvider)(
         ref,
         url: widget.url,
         pageTitle: widget.pageTitle,
         collectionId: collectionId,
-        limits: scope?.limits ?? SaveLimits.forScope(SaveScope.currentPageOnly),
-        discoverMissing: discoverMissing,
+        limits: choice.limits,
+        discoverMissing: choice.discoverMissing,
         captureMode: _mode,
         captureModeIsUserSet: _modeIsUserSet,
       ),
-      start: scope?.start ?? SaveStartMode.queueOnly,
+      start: choice.start,
     );
   }
 
-  /// *Add to a Collection…* — the picker, then (unless this page is a
-  /// listing) the count.
+  /// *Add to a Collection…* — the picker, and then **this same sheet**.
   ///
   /// [indexOnly] is the listing case: a Source is established and **no Entry
-  /// is created for the index page itself**, so there is nothing to download
-  /// and no count to ask for.
+  /// is created for the index page itself**, so there is nothing to download,
+  /// no range to ask about, and the whole thing is done in one call.
   ///
-  /// **Which Collection is asked once, and where a new one is named follows
-  /// from that** (V2-D57). The picker is always first: the Collections the
-  /// user already has must be visible before another is started, or a work
-  /// held from a second site quietly becomes a duplicate. What changes is what
-  /// *New collection* costs after it. Where a sheet follows — every case with
-  /// an Entry on the page — the name is confirmed on that sheet, which was
-  /// already printing it, and the picker returns the suggestion untouched.
-  /// A listing has no such sheet, so it still names it in the picker.
-  Future<void> _addToCollection({required bool indexOnly}) async {
+  /// **The picker is always first** (V2-D45, V2-D57): the Collections the user
+  /// already has must be visible before another is started, or a work held
+  /// from a second site quietly becomes a duplicate. What it answers does not
+  /// open anything — it turns the sheet the user is already looking at into
+  /// the one that saves, with the range block and, for a Collection about to
+  /// exist, its name (V2-D62).
+  Future<void> _chooseCollection({required bool indexOnly}) async {
     final choice = await showCollectionPicker(
       context,
       ref,
@@ -914,39 +994,25 @@ class _V2SavePanelState extends ConsumerState<V2SavePanel> {
       confirmNameHere: indexOnly,
     );
     if (choice == null || !mounted) return;
-    var name = switch (choice) {
+
+    if (!indexOnly) {
+      setState(() => _chosen = choice);
+      final status = _status;
+      if (status != null) _settleScopeFor(status);
+      unawaited(
+        _loadEstimate(switch (choice) {
+          ExistingCollectionChoice(:final id) => id,
+          NewCollectionChoice() => null,
+        }),
+      );
+      return;
+    }
+
+    // A listing: no Entry, no range, nothing queued. Answered and done.
+    final name = switch (choice) {
       ExistingCollectionChoice(:final name) => name,
       NewCollectionChoice(:final name) => name,
     };
-
-    SaveScopeChoice? scope;
-    if (!indexOnly) {
-      final costs = await _downloadedBytesOf(switch (choice) {
-        ExistingCollectionChoice(:final id) => id,
-        NewCollectionChoice() => null,
-      });
-      if (!mounted) return;
-      scope = await showSaveScopeSheet(
-        context,
-        collectionName: name,
-        alreadyDownloadedBytes: costs,
-        launchActions: _launchActions,
-        naming: switch (choice) {
-          ExistingCollectionChoice() => null,
-          NewCollectionChoice(:final name) => NewCollectionNaming(
-            suggestedName: name,
-            host: Uri.tryParse(widget.url)?.host ?? '',
-          ),
-        },
-      );
-      if (scope == null || !mounted) return;
-      // The name the user confirmed, which is the one everything downstream
-      // uses — the sentence, the preference, and the row the domain writes.
-      name = scope.collectionName ?? name;
-      _prepareLaunch(scope);
-    }
-    final discoverMissing = scope?.discoverMissing ?? false;
-
     final report = await _run(
       () => ref.read(v2AddAndDownloadProvider)(
         ref,
@@ -962,22 +1028,49 @@ class _V2SavePanelState extends ConsumerState<V2SavePanel> {
         },
         // Null is not "no limit" — it is *queue nothing*, which is what a
         // listing asks for.
-        limits: scope?.limits,
-        discoverMissing: discoverMissing,
-        // The sheet already asked the library whether this address is a
-        // Source's own page; the orchestration is told rather than guessing
-        // it a second time from the URL.
-        isListing: indexOnly,
+        isListing: true,
         captureMode: _mode,
         captureModeIsUserSet: _modeIsUserSet,
       ),
-      start: scope?.start ?? SaveStartMode.queueOnly,
     );
-
     final collectionId = report?.collectionId;
-    if (indexOnly && collectionId != null && mounted) {
+    if (collectionId != null && mounted) {
       setState(() => _added = (id: collectionId, name: name));
     }
+  }
+
+  /// The Collection the picker answered, with the range this sheet then asked
+  /// for. A new one is created by the same atomic call it always was; the name
+  /// is whatever the field on this sheet ended up holding.
+  Future<void> _addToChosenCollection(SaveScopeChoice choice) async {
+    final chosen = _chosen;
+    if (chosen == null) return;
+    final name =
+        choice.collectionName ??
+        switch (chosen) {
+          ExistingCollectionChoice(:final name) => name,
+          NewCollectionChoice(:final name) => name,
+        };
+    await _run(
+      () => ref.read(v2AddAndDownloadProvider)(
+        ref,
+        url: widget.url,
+        pageTitle: widget.pageTitle,
+        collectionId: switch (chosen) {
+          ExistingCollectionChoice(:final id) => id,
+          NewCollectionChoice() => null,
+        },
+        newCollectionName: switch (chosen) {
+          ExistingCollectionChoice() => null,
+          NewCollectionChoice() => name,
+        },
+        limits: choice.limits,
+        discoverMissing: choice.discoverMissing,
+        captureMode: _mode,
+        captureModeIsUserSet: _modeIsUserSet,
+      ),
+      start: choice.start,
+    );
   }
 
   Future<void> _saveStandalone() {
@@ -1041,28 +1134,57 @@ class _V2SavePanelState extends ConsumerState<V2SavePanel> {
   Widget _sheet(BuildContext context) {
     final palette = AppPalette.of(context);
     final status = _status;
+    final scope = _scope;
 
     return SafeArea(
-      child: SingleChildScrollView(
-        padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
+      child: Padding(
+        padding: EdgeInsets.only(
+          left: 20,
+          right: 20,
+          bottom: MediaQuery.viewInsetsOf(context).bottom + 12,
+        ),
+        // The keyboard inset pads the sheet, so anything below the scrolling
+        // body sits on the line directly above the keyboard. That is where the
+        // number pad's OK belongs, and pinning it there is why this is a
+        // column rather than a bare scroll view (V2-D62).
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Text(
-              widget.pageTitle.isEmpty ? widget.url : widget.pageTitle,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(fontWeight: FontWeight.w600),
+            Flexible(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.only(top: 16, bottom: 8),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Text(
+                      widget.pageTitle.isEmpty ? widget.url : widget.pageTitle,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(fontWeight: FontWeight.w600),
+                    ),
+                    const SizedBox(height: 10),
+                    if (status == null)
+                      const Padding(
+                        padding: EdgeInsets.all(16),
+                        child: Center(child: CircularProgressIndicator()),
+                      )
+                    else
+                      ..._body(context, palette, status),
+                  ],
+                ),
+              ),
             ),
-            const SizedBox(height: 10),
-            if (status == null)
-              const Padding(
-                padding: EdgeInsets.all(16),
-                child: Center(child: CircularProgressIndicator()),
-              )
-            else
-              ..._body(context, palette, status),
+            // Offered only while the number pad is up, and reachable whatever
+            // the sheet above it is scrolled to.
+            if (scope != null)
+              AnimatedBuilder(
+                animation: scope,
+                builder: (context, _) => scope.showsOkBar
+                    ? SaveCountOkBar(onPressed: scope.confirmCount)
+                    : const SizedBox.shrink(),
+              ),
           ],
         ),
       ),
@@ -1169,28 +1291,30 @@ class _V2SavePanelState extends ConsumerState<V2SavePanel> {
   /// What the library knows about this page, in the product's own nouns.
   List<Widget> _context(AppPalette palette, V2PageStatus status) {
     switch (status.result) {
-      case RecognisedLocation(:final entry, :final collection, :final location):
+      case RecognisedLocation(:final entry, :final collection):
         final ordinal = entry.ordinal;
-        // Where this is and what it is, and nothing said twice. The standing
-        // "In your library." line went because the Collection's name is
-        // already the answer to it, and a Collection's name on this sheet is
-        // only ever there because the Entry is in the library.
+        // **One line, not three** (V2-D62). Where this is and what it is are
+        // one fact — *Alpha · Entry 12* — and the site was three lines above
+        // it in the address bar of the Browser the sheet is sitting on.
+        final position = ordinal != null
+            ? 'Entry ${_ordinalLabel(ordinal)}'
+            : entry.placement == Placement.unplaced.name
+            ? 'position not known'
+            : null;
+        if (collection == null) {
+          return [_note(palette, 'In your library, on its own.')];
+        }
         return [
-          if (collection != null)
-            _fact(palette, 'Collection', collection.name)
-          else
-            _note(palette, 'In your library, on its own.'),
-          if (ordinal != null)
-            _fact(palette, 'Entry', _ordinalLabel(ordinal))
-          else if (entry.placement == Placement.unplaced.name)
-            _fact(palette, 'Entry', 'position not known'),
-          ?_hostFact(palette, location.url),
+          _fact(
+            palette,
+            null,
+            position == null
+                ? collection.name
+                : '${collection.name} · $position',
+          ),
         ];
-      case RecognisedSource(:final collection, :final source):
-        return [
-          _note(palette, 'Adds to ${collection.name}.'),
-          _fact(palette, 'Source', source.host),
-        ];
+      case RecognisedSource(:final collection):
+        return [_note(palette, 'Adds to ${collection.name}.')];
       case Unrecognised():
         return [
           _note(palette, 'Not in your library yet.'),
@@ -1208,30 +1332,26 @@ class _V2SavePanelState extends ConsumerState<V2SavePanel> {
 
   // ─── the matrix ───────────────────────────────────────────────────────────
 
-  /// An Entry the library already holds: queue rows, and nothing else.
+  /// An Entry the library already holds: the range and the launch, here.
   List<Widget> _knownEntryActions(
     RecognisedLocation result, {
     required bool canDownload,
   }) {
-    final collection = result.collection;
-    return [
-      if (canDownload)
+    if (!canDownload) return const [];
+    // A standalone Entry has no Collection order to count along, so it is
+    // offered its one page and nothing else — the range block would be a
+    // control that quietly meant "just this one".
+    if (result.collection == null) {
+      return [
         FilledButton(
           key: const ValueKey('v2DownloadEntry'),
           onPressed: () =>
               _download(limits: SaveLimits.forScope(SaveScope.currentPageOnly)),
           child: const Text('Download this entry'),
         ),
-      // "The ones after this" is a question only a Collection's own order can
-      // answer; a standalone Entry has none, and asking anyway would be a
-      // control that quietly means "just this one".
-      if (canDownload && collection != null)
-        TextButton(
-          key: const ValueKey('v2DownloadEntries'),
-          onPressed: () => _downloadRange(collection.name),
-          child: const Text('Download entries…'),
-        ),
-    ];
+      ];
+    }
+    return _scopeAndLaunch();
   }
 
   /// A page on a Source the library holds: the Entry joins that Collection.
@@ -1258,29 +1378,7 @@ class _V2SavePanelState extends ConsumerState<V2SavePanel> {
         ..._followAction(result),
       ];
     }
-    return [
-      if (canDownload)
-        FilledButton(
-          key: const ValueKey('v2AddAndDownloadEntry'),
-          onPressed: () => _addToKnownCollection(
-            collection.id,
-            collectionName: collection.name,
-            askHowMany: false,
-          ),
-          child: const Text('Add & download this entry'),
-        ),
-      if (canDownload)
-        TextButton(
-          key: const ValueKey('v2AddAndDownloadEntries'),
-          onPressed: () => _addToKnownCollection(
-            collection.id,
-            collectionName: collection.name,
-            askHowMany: true,
-          ),
-          child: const Text('Add & download…'),
-        ),
-      ..._followAction(result),
-    ];
+    return [if (canDownload) ..._scopeAndLaunch(), ..._followAction(result)];
   }
 
   /// Following is library membership and downloads nothing — the two verbs
@@ -1311,14 +1409,18 @@ class _V2SavePanelState extends ConsumerState<V2SavePanel> {
       // An entry of something. Collection first, standalone demoted to the
       // deliberate choice it is.
       PageKind.entryPage => [
-        if (canDownload)
+        // The picker is still first — the Collections already held must be
+        // visible before another is started (V2-D45, V2-D57) — and what it
+        // answers turns this same sheet into the one that saves (V2-D62).
+        if (canDownload && _scope == null)
           FilledButton(
             key: const ValueKey('v2AddToCollection'),
-            onPressed: () => _addToCollection(indexOnly: false),
+            onPressed: () => _chooseCollection(indexOnly: false),
             child: const Text('Add to a Collection…'),
           ),
-        _adoptionNote(palette),
-        if (canDownload)
+        if (_scope == null) _adoptionNote(palette),
+        if (canDownload && _scope != null) ..._scopeAndLaunch(),
+        if (canDownload && _scope == null)
           TextButton(
             key: const ValueKey('v2SaveStandalone'),
             onPressed: _saveStandalone,
@@ -1330,7 +1432,7 @@ class _V2SavePanelState extends ConsumerState<V2SavePanel> {
         if (added == null)
           FilledButton(
             key: const ValueKey('v2AddCollection'),
-            onPressed: _busy ? null : () => _addToCollection(indexOnly: true),
+            onPressed: _busy ? null : () => _chooseCollection(indexOnly: true),
             child: const Text('Add this collection to your library'),
           ),
         _adoptionNote(palette),
@@ -1348,19 +1450,20 @@ class _V2SavePanelState extends ConsumerState<V2SavePanel> {
       // other answer is offered rather than assumed — including the one the
       // app cannot tell from an about page on a site it knows nothing about.
       PageKind.unknownPage => [
-        if (canDownload)
+        if (canDownload && _scope == null)
           FilledButton(
             key: const ValueKey('v2SaveStandalone'),
             onPressed: _saveStandalone,
             child: const Text('Save as a standalone entry'),
           ),
-        if (canDownload)
+        if (canDownload && _scope == null)
           TextButton(
             key: const ValueKey('v2AddToCollection'),
-            onPressed: () => _addToCollection(indexOnly: false),
+            onPressed: () => _chooseCollection(indexOnly: false),
             child: const Text('Add to a Collection…'),
           ),
-        if (_shape?.couldBeListing ?? false) ...[
+        if (canDownload && _scope != null) ..._scopeAndLaunch(),
+        if (_scope == null && (_shape?.couldBeListing ?? false)) ...[
           _note(
             palette,
             'If this page lists a collection\'s entries rather than being '
@@ -1370,7 +1473,7 @@ class _V2SavePanelState extends ConsumerState<V2SavePanel> {
           ),
           TextButton(
             key: const ValueKey('v2AddCollection'),
-            onPressed: _busy ? null : () => _addToCollection(indexOnly: true),
+            onPressed: _busy ? null : () => _chooseCollection(indexOnly: true),
             child: const Text('Add this site as a collection\'s source'),
           ),
         ],
@@ -1404,21 +1507,15 @@ class _V2SavePanelState extends ConsumerState<V2SavePanel> {
     ),
   );
 
-  Widget _fact(AppPalette palette, String label, String value) => Padding(
+  Widget _fact(AppPalette palette, String? label, String value) => Padding(
     padding: const EdgeInsets.only(bottom: 4),
     child: Text(
-      '$label · $value',
+      label == null ? value : '$label · $value',
       maxLines: 2,
       overflow: TextOverflow.ellipsis,
       style: monoStyle(size: 12, color: palette.inkFaint),
     ),
   );
-
-  /// The site this address sits on, when the address has one.
-  Widget? _hostFact(AppPalette palette, String url) {
-    final host = Uri.tryParse(url)?.host ?? '';
-    return host.isEmpty ? null : _fact(palette, 'Source', host);
-  }
 
   /// `12`, not `12.0`; `99.5` stays `99.5`, because 100 and 99.5 are two
   /// Entries and printing them the same would say otherwise.

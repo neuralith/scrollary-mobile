@@ -192,6 +192,18 @@ void main() {
 
   Finder key(String value) => find.byKey(ValueKey(value));
 
+  /// Press a launch, scrolling to it first.
+  ///
+  /// One sheet now carries the identity line, the range block, the count and
+  /// the launches, so on a short viewport the launches start below the fold —
+  /// which is what the scroll view is for (V2-D62). A real sheet is
+  /// `isScrollControlled` and gets the whole screen; a test viewport is 800px.
+  Future<void> launch(WidgetTester tester, Finder finder) async {
+    await tester.ensureVisible(finder);
+    await tester.pump();
+    await tapAndPump(tester, finder);
+  }
+
   // ─── row 1: an Entry the library already holds ──────────────────────────
 
   group('an entry in the library', () {
@@ -246,17 +258,26 @@ void main() {
       );
     });
 
-    screenTest('offers the two downloads, and names what the library knows', (
+    screenTest('asks how much on the sheet itself, under one identity line', (
       tester,
     ) async {
       await seed();
       await openPanel(tester, _entryUrl, _entryTitle);
 
-      await pumpUntil(tester, key('v2DownloadEntry'));
-      expect(key('v2DownloadEntries'), findsOneWidget);
-      expect(find.text('Collection · Alpha'), findsOneWidget);
-      expect(find.text('Entry · 12'), findsOneWidget);
-      expect(find.text('Source · reading.example.com'), findsOneWidget);
+      await pumpUntil(tester, key('saveScopeThisEntry'));
+      // One sheet: the three ranges and the launch, with nothing to press
+      // first (V2-D62).
+      expect(key('saveScopeFromHere'), findsOneWidget);
+      expect(key('saveScopeKnownOnly'), findsOneWidget);
+      expect(key('saveScopeAddToQueue'), findsOneWidget);
+      expect(key('v2DownloadEntry'), findsNothing);
+      expect(key('v2DownloadEntries'), findsNothing);
+
+      // One identity line, not three. The site is in the address bar of the
+      // Browser this sheet is sitting on.
+      expect(find.text('Alpha · Entry 12'), findsOneWidget);
+      expect(find.text('Collection · Alpha'), findsNothing);
+      expect(find.text('Source · reading.example.com'), findsNothing);
       expect(
         key('v2AddToCollection'),
         findsNothing,
@@ -267,9 +288,9 @@ void main() {
     screenTest('downloading this entry asks for exactly one', (tester) async {
       await seed();
       await openPanel(tester, _entryUrl, _entryTitle);
-      await pumpUntil(tester, key('v2DownloadEntry'));
+      await pumpUntil(tester, key('saveScopeThisEntry'));
 
-      await tapAndPump(tester, key('v2DownloadEntry'));
+      await launch(tester, key('saveScopeAddToQueue'));
 
       expect(adds, hasLength(1));
       expect(adds.single.limits!.maxEntries, 1);
@@ -291,15 +312,14 @@ void main() {
         'nothing else', (tester) async {
       await seed();
       await openPanel(tester, _entryUrl, _entryTitle);
-      await pumpUntil(tester, key('v2DownloadEntries'));
+      await pumpUntil(tester, key('saveScopeFromHere'));
 
-      await tapAndPump(tester, key('v2DownloadEntries'));
       await tapAndPump(tester, key('saveScopeFromHere'));
       await tester.enterText(key('saveCountField'), '5');
       // The launch rows are in this sheet: the foreground boundary's own,
       // beside a *Queue only* that needs no capability at all.
       expect(key('startInBrowser'), findsOneWidget);
-      await tapAndPump(tester, key('saveScopeAddToQueue'));
+      await launch(tester, key('saveScopeAddToQueue'));
 
       expect(adds, hasLength(1));
       expect(adds.single.limits!.maxEntries, 5);
@@ -340,12 +360,11 @@ void main() {
       );
 
       await openPanel(tester, _entryUrl, _entryTitle);
-      await pumpUntil(tester, key('v2DownloadEntries'));
+      await pumpUntil(tester, key('saveScopeFromHere'));
 
-      await tapAndPump(tester, key('v2DownloadEntries'));
       await tapAndPump(tester, key('saveScopeFromHere'));
       await tester.enterText(key('saveCountField'), '3');
-      await tapAndPump(tester, key('startInBrowser'));
+      await launch(tester, key('startInBrowser'));
 
       expect(adds, hasLength(1));
       expect(
@@ -356,17 +375,18 @@ void main() {
       expect(h.starts, 1, reason: 'Start now means it started');
     });
 
-    screenTest('backing out of the sheet starts nothing at all', (
+    screenTest('choosing a range and a count starts nothing on its own', (
       tester,
     ) async {
+      // There is no *Cancel* to press any more: the sheet the user dismisses
+      // is the sheet they were answering, and answering it is not launching.
       await seed();
       await openPanel(tester, _entryUrl, _entryTitle);
-      await pumpUntil(tester, key('v2DownloadEntries'));
+      await pumpUntil(tester, key('saveScopeFromHere'));
 
-      await tapAndPump(tester, key('v2DownloadEntries'));
       await tapAndPump(tester, key('saveScopeFromHere'));
       await tester.enterText(key('saveCountField'), '4');
-      await tapAndPump(tester, key('saveScopeCancel'));
+      await tester.pump();
 
       expect(adds, isEmpty);
       expect(h.starts, 0);
@@ -377,17 +397,21 @@ void main() {
     ) async {
       await seed();
       await openPanel(tester, _entryUrl, _entryTitle);
-      await pumpUntil(tester, key('v2DownloadEntries'));
+      await pumpUntil(tester, key('saveScopeFromHere'));
 
-      await tapAndPump(tester, key('v2DownloadEntries'));
       await tapAndPump(tester, key('saveScopeKnownOnly'));
       await tester.enterText(key('saveCountField'), '5');
-      await tapAndPump(tester, key('saveScopeAddToQueue'));
+      await launch(tester, key('saveScopeAddToQueue'));
 
-      expect(key('startInBrowser'), findsNothing);
       expect(adds, hasLength(1));
       expect(adds.single.limits!.maxEntries, 5);
       expect(adds.single.discoverMissing, isFalse);
+      expect(
+        h.starts,
+        0,
+        reason: '*Queue only* queues and starts nothing, so nothing was gated',
+      );
+      expect(key('startOptionsCancel'), findsNothing);
     });
 
     screenTest('this entry alone is never gated and discovers nothing', (
@@ -395,16 +419,17 @@ void main() {
     ) async {
       await seed();
       await openPanel(tester, _entryUrl, _entryTitle);
-      await pumpUntil(tester, key('v2DownloadEntry'));
+      await pumpUntil(tester, key('saveScopeThisEntry'));
 
-      await tapAndPump(tester, key('v2DownloadEntry'));
+      await launch(tester, key('saveScopeAddToQueue'));
 
       expect(
-        key('startInBrowser'),
-        findsNothing,
+        adds.single.discoverMissing,
+        isFalse,
         reason: 'the page is already in front of the user; nothing is opened',
       );
-      expect(adds.single.discoverMissing, isFalse);
+      expect(h.starts, 0);
+      expect(key('startOptionsCancel'), findsNothing);
     });
 
     screenTest('a row already waiting offers the Start and no second '
@@ -443,8 +468,8 @@ void main() {
       await seed();
       await openPanel(tester, _entryUrl, _entryTitle);
 
-      await pumpUntil(tester, key('v2AddAndDownloadEntry'));
-      expect(key('v2AddAndDownloadEntries'), findsOneWidget);
+      await pumpUntil(tester, key('saveScopeThisEntry'));
+      expect(key('saveScopeFromHere'), findsOneWidget);
       expect(find.text('Adds to Alpha.'), findsOneWidget);
       expect(
         key('v2SaveStandalone'),
@@ -452,7 +477,7 @@ void main() {
         reason: 'the library knows where this belongs',
       );
 
-      await tapAndPump(tester, key('v2AddAndDownloadEntry'));
+      await launch(tester, key('saveScopeAddToQueue'));
 
       expect(adds, hasLength(1));
       expect(adds.single.collectionId, isNotNull);
@@ -465,7 +490,7 @@ void main() {
       await seed();
       await openPanel(tester, _entryUrl, _entryTitle);
 
-      await pumpUntil(tester, key('v2AddAndDownloadEntry'));
+      await pumpUntil(tester, key('saveScopeThisEntry'));
       expect(key('v2FollowCollection'), findsNothing);
     });
 
@@ -477,7 +502,7 @@ void main() {
 
       await pumpUntil(tester, key('v2FollowCollection'));
       expect(
-        key('v2AddAndDownloadEntry'),
+        key('saveScopeThisEntry'),
         findsOneWidget,
         reason:
             'following and downloading are separate acts, offered side by '
@@ -538,7 +563,7 @@ void main() {
       await pumpUntil(tester, key('collectionOption-${collection.id}'));
       await tapAndPump(tester, key('collectionOption-${collection.id}'));
       await pumpUntil(tester, key('saveScopeAddToQueue'));
-      await tapAndPump(tester, key('saveScopeAddToQueue'));
+      await launch(tester, key('saveScopeAddToQueue'));
 
       expect(adds, hasLength(1));
       expect(adds.single.collectionId, collection.id);
@@ -586,7 +611,7 @@ void main() {
       await tester.enterText(key('collectionNameField'), 'Alpha');
       await tapAndPump(tester, key('saveScopeFromHere'));
       await tester.enterText(key('saveCountField'), '4');
-      await tapAndPump(tester, key('saveScopeAddToQueue'));
+      await launch(tester, key('saveScopeAddToQueue'));
 
       expect(adds, hasLength(1));
       expect(
@@ -614,7 +639,7 @@ void main() {
       await pumpUntil(tester, key('collectionNameField'));
 
       await tester.enterText(key('collectionNameField'), '   ');
-      await tapAndPump(tester, key('saveScopeAddToQueue'));
+      await launch(tester, key('saveScopeAddToQueue'));
 
       expect(find.text('Give this collection a name.'), findsOneWidget);
       expect(adds, isEmpty, reason: 'nothing was asked of the domain');
@@ -643,7 +668,7 @@ void main() {
         findsNothing,
         reason: 'a collection that exists is not renamed on the way past',
       );
-      await tapAndPump(tester, key('saveScopeAddToQueue'));
+      await launch(tester, key('saveScopeAddToQueue'));
 
       expect(adds.single.collectionId, collection.id);
       expect(adds.single.newCollectionName, isNull);
@@ -723,7 +748,7 @@ void main() {
     ) async {
       await seedKnownEntry();
       await openPanel(tester, _entryUrl, _entryTitle);
-      await pumpUntil(tester, key('v2DownloadEntry'));
+      await pumpUntil(tester, key('saveScopeThisEntry'));
 
       expect(find.text('What to save'), findsOneWidget);
       expect(key('captureModeRemembered'), findsNothing);
@@ -770,7 +795,7 @@ void main() {
 
       await openPanel(tester, _entryUrl, _entryTitle);
       await pumpUntil(tester, key('captureModeRemembered'));
-      await tapAndPump(tester, key('v2DownloadEntry'));
+      await launch(tester, key('saveScopeAddToQueue'));
 
       expect(adds.single.captureMode, CaptureMode.imageSequence);
       expect(
@@ -792,7 +817,7 @@ void main() {
       await pumpUntil(tester, key('captureModeRemembered'));
       await tapAndPump(tester, key('captureModeRemembered'));
       await tapAndPump(tester, key('captureMode_imageSequence'));
-      await tapAndPump(tester, key('v2DownloadEntry'));
+      await launch(tester, key('saveScopeAddToQueue'));
 
       expect(adds.single.captureMode, CaptureMode.imageSequence);
       expect(
@@ -812,10 +837,10 @@ void main() {
       // asked on the fifty-first (V2-D61).
       final collectionId = await seedKnownEntry();
       await openPanel(tester, _entryUrl, _entryTitle);
-      await pumpUntil(tester, key('v2DownloadEntry'));
+      await pumpUntil(tester, key('saveScopeThisEntry'));
 
       expect(find.text('What to save'), findsOneWidget);
-      await tapAndPump(tester, key('v2DownloadEntry'));
+      await launch(tester, key('saveScopeAddToQueue'));
 
       expect(adds, hasLength(1), reason: 'the save happened');
       expect(
@@ -835,7 +860,7 @@ void main() {
       // Acceptance is *starting a save*, not *seeing a proposal*.
       final collectionId = await seedKnownEntry();
       await openPanel(tester, _entryUrl, _entryTitle);
-      await pumpUntil(tester, key('v2DownloadEntry'));
+      await pumpUntil(tester, key('saveScopeThisEntry'));
 
       expect(find.text('What to save'), findsOneWidget);
       expect(adds, isEmpty);
@@ -854,9 +879,9 @@ void main() {
       await preferences.askEachTime(collectionId);
 
       await openPanel(tester, _entryUrl, _entryTitle);
-      await pumpUntil(tester, key('v2DownloadEntry'));
+      await pumpUntil(tester, key('saveScopeThisEntry'));
       expect(find.text('What to save'), findsOneWidget);
-      await tapAndPump(tester, key('v2DownloadEntry'));
+      await launch(tester, key('saveScopeAddToQueue'));
 
       expect(adds, hasLength(1));
       expect(
@@ -878,11 +903,11 @@ void main() {
       await preferences.remember(collectionId, CaptureMode.textOnly);
 
       await openPanel(tester, _entryUrl, _entryTitle);
-      await pumpUntil(tester, key('v2DownloadEntry'));
+      await pumpUntil(tester, key('saveScopeThisEntry'));
       // The probe carries no prose, so text-only is blocked and the block is
       // asked again with the image fallback selected.
       expect(find.text('What to save'), findsOneWidget);
-      await tapAndPump(tester, key('v2DownloadEntry'));
+      await launch(tester, key('saveScopeAddToQueue'));
 
       expect(adds, hasLength(1));
       expect(adds.single.captureMode, CaptureMode.imageSequence);
@@ -900,7 +925,7 @@ void main() {
       ).remember(collectionId, CaptureMode.textOnly);
 
       await openPanel(tester, _entryUrl, _entryTitle);
-      await pumpUntil(tester, key('v2DownloadEntry'));
+      await pumpUntil(tester, key('saveScopeThisEntry'));
 
       // The probe carries no readable prose, so text-only is blocked here.
       // The preference proposes; the page disposes — and the preference is
@@ -919,10 +944,10 @@ void main() {
     ) async {
       final collectionId = await seedKnownEntry();
       await openPanel(tester, _entryUrl, _entryTitle);
-      await pumpUntil(tester, key('v2DownloadEntry'));
+      await pumpUntil(tester, key('saveScopeThisEntry'));
 
       await tapAndPump(tester, key('captureMode_imageSequence'));
-      await tapAndPump(tester, key('v2DownloadEntry'));
+      await launch(tester, key('saveScopeAddToQueue'));
 
       expect(
         await CapturePreferenceStore(LocalSettingsStore(h.db)).of(collectionId),
@@ -972,8 +997,7 @@ void main() {
 
     Future<void> openScope(WidgetTester tester) async {
       await openPanel(tester, _entryUrl, _entryTitle);
-      await pumpUntil(tester, key('v2DownloadEntries'));
-      await tapAndPump(tester, key('v2DownloadEntries'));
+      await pumpUntil(tester, key('saveScopeFromHere'));
       await tapAndPump(tester, key('saveScopeFromHere'));
       await tester.enterText(key('saveCountField'), '3');
       await tester.pump();
@@ -999,7 +1023,7 @@ void main() {
             'nothing',
       );
 
-      await tapAndPump(tester, key('startInBrowser'));
+      await launch(tester, key('startInBrowser'));
       expect(adds, hasLength(1));
       expect(adds.single.limits!.maxEntries, 3);
     });
@@ -1012,7 +1036,7 @@ void main() {
       await openScope(tester);
 
       expect(key('startKeepUsingApp'), findsOneWidget);
-      await tapAndPump(tester, key('startKeepUsingApp'));
+      await launch(tester, key('startKeepUsingApp'));
 
       expect(adds, hasLength(1));
       expect(
@@ -1036,7 +1060,7 @@ void main() {
       await tapAndPump(tester, key('saveScopeFromHere'));
       await tester.enterText(key('saveCountField'), '3');
       await tester.pump();
-      await tapAndPump(tester, key('startInBrowser'));
+      await launch(tester, key('startInBrowser'));
 
       expect(adds, hasLength(1));
       expect(adds.single.newCollectionName, 'Quiet Harbour');
@@ -1081,32 +1105,37 @@ void main() {
       reportedCollectionId = collection.id;
       final preferences = CapturePreferenceStore(LocalSettingsStore(h.db));
 
-      // ── first save: nothing is remembered, so the whole block is asked
+      // ── first save: nothing is remembered, so the whole block is asked,
+      // on the same sheet as the range and the launch (V2-D62).
       expect(await preferences.of(collection.id), isNull);
       await openPanel(tester, _entryUrl, _entryTitle);
-      await pumpUntil(tester, key('v2DownloadEntries'));
+      await pumpUntil(tester, key('saveScopeThisEntry'));
 
       expect(find.text('What to save'), findsOneWidget);
       expect(key('captureMode_imageSequence'), findsOneWidget);
       expect(key('captureModeRemembered'), findsNothing);
-
-      // …and the proposal is *not* tapped. The user goes for the count.
-      await tapAndPump(tester, key('v2DownloadEntries'));
-
-      // The plural control opens on the plural answer, before anything is
-      // tapped: the count field belongs to the counted range and does not
-      // exist under *This entry*, and the note beside it is the one *Entries
-      // from here* carries.
-      await pumpUntil(tester, key('saveCountField'));
       expect(
-        key('saveScopeReadsForwardNote'),
-        findsOneWidget,
-        reason: '*Download entries…* must not arrive on *This entry*',
+        key('v2DownloadEntries'),
+        findsNothing,
+        reason: 'there is no second sheet to open',
       );
-      expect(key('saveScopeLibraryOnlyNote'), findsNothing);
 
+      // The range is on the smallest answer and the count field belongs to
+      // the counted one, so it is not there until it is asked for.
+      expect(key('saveCountField'), findsNothing);
+      await tapAndPump(tester, key('saveScopeFromHere'));
+      expect(key('saveScopeReadsForwardNote'), findsOneWidget);
+      expect(
+        tester.widget<TextField>(key('saveCountField')).autofocus,
+        isFalse,
+        reason:
+            'choosing a range is not asking for a keyboard over the '
+            'launches below it',
+      );
+
+      // …and the proposal is never tapped. Proceeding is the acceptance.
       await tester.enterText(key('saveCountField'), '4');
-      await tapAndPump(tester, key('saveScopeAddToQueue'));
+      await launch(tester, key('saveScopeAddToQueue'));
 
       expect(adds, hasLength(1));
       expect(adds.single.limits!.maxEntries, 4);
@@ -1136,6 +1165,11 @@ void main() {
       );
       expect(key('captureMode_imageSequence'), findsNothing);
       expect(key('captureMode_textOnly'), findsNothing);
+      expect(
+        key('saveScopeThisEntry'),
+        findsOneWidget,
+        reason: 'and the range is still right here, on the same sheet',
+      );
       expect(key('captureDetectionSummary'), findsNothing);
     });
   });
@@ -1171,9 +1205,8 @@ void main() {
       await openPanel(tester, _entryUrl, _entryTitle);
       await pumpUntil(tester, key('captureModeRemembered'));
 
-      // Context: where it is and what it is, each said once.
-      expect(find.text('Collection · Alpha'), findsOneWidget);
-      expect(find.text('Entry · 12'), findsOneWidget);
+      // Context: where it is and what it is, on one line.
+      expect(find.text('Alpha · Entry 12'), findsOneWidget);
       expect(
         find.text('In your library.'),
         findsNothing,
@@ -1183,12 +1216,13 @@ void main() {
       expect(find.text('What to save'), findsNothing);
       expect(find.text('Images only'), findsOneWidget);
 
-      // And the download is the next tap, with nothing in between.
-      await tapAndPump(tester, key('v2DownloadEntry'));
+      // And the download is the next tap, with nothing in between: the range
+      // is already on this sheet, on its smallest answer.
+      expect(key('saveCountField'), findsNothing);
+      await launch(tester, key('saveScopeAddToQueue'));
       expect(adds, hasLength(1));
       expect(adds.single.limits!.maxEntries, 1);
       expect(key('startOptionsCancel'), findsNothing);
-      expect(key('saveCountField'), findsNothing);
     });
   });
 }

@@ -78,14 +78,19 @@ Rules that bind every row:
   sheet may offer both in one tap, but they remain two operations
   (PRODUCT.md §2.4).
 - **A count that may open a page is authorised before it opens one.** The
-  count sheet asks *how much* and, in the same rows, *where you wait while it
-  is found* (V2-D52). See §4.
-- **A Collection the user is starting is named on the sheet that queues it**
-  (V2-D57). The picker is still where *which Collection* is answered — the
-  ones the library already holds are visible before another is started — but
-  *New collection* returns the detected name unconfirmed and the next sheet
-  is where it is edited and confirmed. The exception is a listing, which has
-  no next sheet and so still names it in the picker.
+  save sheet asks *how much* and, in the rows directly under it, *where you
+  wait while it is found* (V2-D52). See §4.
+- **It is one sheet** (V2-D62): an identity line, the range block, the capture
+  line and the launch, in that order. There is no *Download this entry* /
+  *Download entries…* pair, and nothing opens after it. A listing has no range
+  at all, and a standalone Entry keeps its single download because it has no
+  Collection order to count along.
+- **A Collection the user is starting is named on that same sheet** (V2-D57).
+  The picker is still where *which Collection* is answered — the ones the
+  library already holds are visible before another is started — and it is the
+  only modal on that path: what it answers hands the save sheet back with the
+  name field, the range and the launch on it. The exception is a listing,
+  which queues nothing and so still names it in the picker.
 
 ## 4. How much, and how far
 
@@ -169,16 +174,15 @@ typed, and an OK bar for the number pad iOS gives no return key.
 
 ### Naming a Collection that does not exist yet
 
-For *New collection*, the header of this same sheet is where the Collection is
-named (V2-D57). `showSaveScopeSheet` takes a `NewCollectionNaming`, and the
-line that would have read *From Quiet Harbour, starting at this page.* becomes:
+For *New collection*, the top of the range block on the save sheet is where the
+Collection is named (V2-D57, V2-D62). `SaveScopeController` carries a
+`NewCollectionNaming`, and the block gains two rows above *How much*:
 
 | | |
 |---|---|
-| title | **New collection** |
 | `collectionNameField` | the detected title, editable, **not** autofocused — the common answer is *yes*, and a keyboard over the ranges would make confirming it cost a dismissal |
 | `newCollectionSourceFact` | `First source · reading.example.com` — the site about to become the Collection's first Source, named rather than referred to |
-| then | the three ranges, the count, and the launch, unchanged |
+| then | the three ranges, the count, the capture line and the launch, unchanged |
 
 The trimmed name comes back on `SaveScopeChoice.collectionName` and is what
 `v2AddAndDownload` is given as `newCollectionName`. A blank one is refused
@@ -188,7 +192,8 @@ pad does not.
 
 ### The launch, asked once
 
-**How much** and **what happens next** are one sheet and one answer.
+**How much** and **what happens next** are one sheet and one answer, and since
+V2-D62 so is **what to save**.
 `SaveScopeChoice` carries a `SaveStartMode`, and it has exactly three values:
 
 | Launch | What happens |
@@ -205,9 +210,10 @@ Start as `StartWhere`, so `startQueuedDownloads` and the shell's
 `_startQueuedDownloads` are *told* rather than asking again.
 
 **What this replaced, and why.** The path used to ask four questions about one
-intention: the save sheet, the scope sheet's *Add to queue* / *Start now*, a
-gate sheet before the run asking where the user would wait, and the queue's own
-gate sheet asking it a second time. One route through them was broken outright
+intention across three surfaces: the save sheet, a *scope sheet* after it with
+*Add to queue* / *Start now*, a gate sheet before the run asking where the user
+would wait, and the queue's own gate sheet asking it a second time. The scope
+sheet went too (V2-D62); what is left is one surface. One route through them was broken outright
 — *Add to queue* followed by *Start in Browser* brought the Browser forward and
 started nothing, because the second sheet's answer only flipped the shell tab
 while whether anything ran had already been settled by the first.

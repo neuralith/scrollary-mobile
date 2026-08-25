@@ -1170,6 +1170,72 @@ much of this* and the smallest answer is the one that opens no page, and the
 two plural controls pass `fixedCount`. Every test in the suite had been tapping
 *Entries from here* as its first action, which is why nothing caught it.
 
+### V2-D62 · One save sheet: what to take, how much, and go
+
+Saving was two modals for one save. The panel asked *what to save* and then
+offered **Download this entry** and **Download entries…**; the first quietly
+meant the range block's first row, and the second opened a second sheet to ask
+the rest of the same question. A control that said *entries* landing on a sheet
+whose selected answer was *This entry* is what that split looked like from the
+outside (V2-D61 fixed the selection; this removes the second sheet).
+
+The panel now asks everything, in the order the decisions rank:
+
+```text
+Alpha · Entry 12
+
+How much
+● This entry
+○ Entries from here          [ 20 ]
+○ Already in your library
+
+Capture                        Images only ⌄
+
+[ Start and keep using Scrollary ] [ Start in Browser ] [ Queue only ]
+```
+
+**Scope is primary and sits above capture**, because the mode is usually
+settled (V2-D61) and the range is what the user came to answer. The compact
+line stays where it was in the hierarchy — secondary, one tap from the full
+block, which still opens inline.
+
+**One identity line.** `Collection · Alpha` / `Entry · 12` / `Source · host`
+became `Alpha · Entry 12`. The host was three lines of sheet restating the
+address bar of the Browser the sheet is sitting on.
+
+**What moved, and what did not.** `showSaveScopeSheet` is gone;
+`save_scope_section.dart` holds the same widgets over a `SaveScopeController`,
+so the state — the typed count, its focus, the chosen range, the two refusals —
+outlives any rebuild and the **OK bar can be pinned below the scrolling body**
+by the surface. That pinning is not cosmetic: iOS draws `TextInputType.number`
+with no return key, so a bar that scrolls away is not a way out of the
+keyboard. Every rule of the numeric interaction is carried over unchanged and
+still tested: digits only, a blank and a zero refused where they were typed,
+the ceiling stated and enforced, `004` normalised on confirmation.
+
+Two deliberate behaviour changes fall out of the merge:
+
+* **The count field no longer autofocuses.** It could when it was the top of a
+  sheet of its own; on one sheet it would raise the number pad over the
+  launches directly below it. Tapping the field is how the keyboard arrives —
+  the same rule the Collection-name field already follows (V2-D57).
+* **The size estimate loads late.** Working it out walks every Entry of the
+  Collection and asks for each one's copy; that was affordable behind a button
+  and is not on every save-sheet open. The sheet paints, and the line appears
+  when the answer arrives (`SaveScopeController.alreadyDownloadedBytes`).
+
+**Where a range still is not offered.** A listing is not an Entry, so it has no
+range and the branch is untouched. A **standalone** Entry has no Collection
+order to count along, so it keeps a single *Download this entry* — a range
+block there would be a control that quietly meant "just this one". And a page
+on an unknown site has nothing to count *of* until the picker has answered,
+which is why the picker is still first and still the only modal on that path.
+
+Nothing about the domain moved: the same `v2AddAndDownload` call with the same
+arguments, the same atomic creation, the same preference write on acceptance,
+the same streaming journey for *Entries from here*, and the same single launch
+carried to the Start.
+
 ### V2-D63 · An Entry's steady state is drawn on its row, not written
 
 The Entry row spent a whole line on the sentence `Unread · On this device` —

@@ -136,9 +136,9 @@ void main() {
     await tester.tap(key('v2AddToCollection'), warnIfMissed: false);
     await pumpFor(tester, const Duration(seconds: 2));
 
-    // *New collection* lands on the sheet that asks how many: the name it
-    // detected is the field at the top of it, and there is no screen in
-    // between holding that field on its own (V2-D57).
+    // *New collection* answers the picker and hands the save sheet back with
+    // the name, the range and the launch on it — no screen in between, and no
+    // sheet after it (V2-D57, V2-D62).
     await tester.tap(key('collectionPickerNew'), warnIfMissed: false);
     await pumpFor(tester, const Duration(seconds: 2));
 
@@ -151,9 +151,13 @@ void main() {
     expect(
       key('saveScopeFromHere'),
       findsOneWidget,
-      reason: 'the count is the second question the sheet asks',
+      reason: 'the range is on the same sheet, not behind a second one',
     );
     await tester.tap(key('saveScopeFromHere'), warnIfMissed: false);
+    await pumpFor(tester, const Duration(seconds: 1));
+    // The field does not autofocus — choosing a range is not asking for a
+    // keyboard over the launches — so this is the tap that raises it.
+    await tester.tap(key('saveCountField'), warnIfMissed: false);
     await pumpFor(tester, const Duration(seconds: 1));
     await tester.enterText(key('saveCountField'), '$count');
     await pumpFor(tester, const Duration(seconds: 1));

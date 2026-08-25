@@ -51,13 +51,13 @@ expected to carry one.
 | Save the page I'm reading | Browser → save action → **Save** | Free | `features/v2_save_flow.dart` | `test/v2_save_flow_test.dart` | — |
 | Say which Collection a page belongs to | Browser → save → **Add to a Collection…** | Free | `recognition/adopt.dart` | `test/recognition/adopt_test.dart` | — |
 | Add this site as another Source of a Collection | same, choose an existing Collection | Free | `recognition/adopt.dart` | `test/recognition/adopt_test.dart` | — |
-| Start a Collection for the page I'm on | same, **New collection** → one sheet: the detected name, its first Source, the count and the launch | Free | `library_ui/save_scope_sheet.dart` | `test/library_ui/save_panel_test.dart` | — |
-| Correct the name Scrollary detected for it | same sheet, `collectionNameField` — prefilled, editable, blank refused in place | Free | `library_ui/save_scope_sheet.dart` | `test/library_ui/save_scope_sheet_test.dart` | — |
+| Start a Collection for the page I'm on | same, **New collection** → the save sheet itself: the detected name, its first Source, the range and the launch | Free | `features/v2_save_flow.dart` | `test/library_ui/save_panel_test.dart` | — |
+| Correct the name Scrollary detected for it | same sheet, `collectionNameField` — prefilled, editable, blank refused in place | Free | `library_ui/save_scope_section.dart` | `test/library_ui/save_scope_section_test.dart` | — |
 | See and change what a collection is saved as, without saving anything | Collection → menu → **What to save** (the row states the current answer) | Free | `library_ui/collection_actions.dart` | `test/v2_check_flow_test.dart` | — |
 | Have the first save settle what a collection is saved as | save sheet → pick or accept the proposed mode → Start/Queue | Free | `features/v2_save_flow.dart` | `test/library_ui/save_panel_test.dart` | — |
 | Download this entry | save sheet → **Download this entry** | Free | `features/v2_add_flow.dart` | `test/save_v2/add_flow_test.dart` | — |
 | Have a collection keep saving as what I chose | anywhere a capture starts — save sheet, Library, after a check, a repair, another device | Free | `save/entry_capture.dart` | `test/save_v2/capture_preference_test.dart` | — |
-| Download a number of entries I type | save sheet → **Entries from here** → count | Free | `library_ui/save_scope_sheet.dart` | `test/library_ui/save_scope_sheet_test.dart` | — |
+| Download a number of entries I type | save sheet → **Entries from here** → count | Free | `library_ui/save_scope_section.dart` | `test/library_ui/save_scope_section_test.dart` | — |
 | Download the next N even if the library doesn't know them | same, count > what is held | Free | `save/capture_journey.dart` | `test/save_v2/capture_journey_test.dart` | — |
 | Get N entries on this device from a count of N | same | Free | `features/v2_add_flow.dart` | `test/save_v2/capture_journey_test.dart` | — |
 | Download entries the library already has | save sheet → **Entries already in your library** | Free | `save/save_scope.dart` | `test/save_v2/save_scope_test.dart` | — |
@@ -85,7 +85,7 @@ expected to carry one.
 | See how far through an entry I am | Library → collection rows | Free | `library_ui/collection_models.dart` | `test/library_ui/reading_progress_test.dart` | — |
 | Not be asked what to save every single time | save sheet, after answering once | Free | `save/capture_preference.dart` | `test/library_ui/save_panel_test.dart` | — |
 | Change what a Collection is saved as | Library → collection menu → **What to save** | Free | `library_ui/collection_actions.dart` | `test/v2_check_flow_test.dart` | — |
-| Queue work without starting it | save sheet → **Queue only** | Free | `library_ui/save_scope_sheet.dart` | `test/library_ui/save_panel_test.dart` | — |
+| Queue work without starting it | save sheet → **Queue only** | Free | `features/v2_save_flow.dart` | `test/library_ui/save_panel_test.dart` | — |
 | Start what I queued, from where I am | Activity · Browser panel | **Free** | `library_ui/entry_offline.dart` | `test/activity_screen_test.dart` | — |
 | Point at the next-entry control when the app can't find it | Browser → assist overlay | Free | `features/selection_overlay.dart` | `integration_test/user_assist_test.dart` | **yes** |
 | Find my archived Collections | Library → **Show archived** | Free | `library_ui/shelf_screen.dart` | `test/library_ui/shelf_test.dart` | — |
