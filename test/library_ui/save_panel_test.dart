@@ -803,12 +803,13 @@ void main() {
       expect(await preferences.of(collectionId), CaptureMode.imageSequence);
     });
 
-    screenTest('a default nobody touched is not an answer about the work', (
+    screenTest('proceeding with the proposed mode is what remembers it', (
       tester,
     ) async {
-      // The preselection is detection's answer about *this page*. Continuing
-      // past it is not a decision about the whole collection, and writing one
-      // would put words in the user's mouth.
+      // The rule this replaces: only a tap counted, so a user already looking
+      // at *Images only* had to tap *Images only* before the app would
+      // believe them — and a work saved as images fifty times running still
+      // asked on the fifty-first (V2-D61).
       final collectionId = await seedKnownEntry();
       await openPanel(tester, _entryUrl, _entryTitle);
       await pumpUntil(tester, key('v2DownloadEntry'));
@@ -818,9 +819,77 @@ void main() {
 
       expect(adds, hasLength(1), reason: 'the save happened');
       expect(
+        adds.single.captureModeIsUserSet,
+        isFalse,
+        reason: 'accepted, not chosen — the capture is not told otherwise',
+      );
+      expect(
+        await CapturePreferenceStore(LocalSettingsStore(h.db)).of(collectionId),
+        CaptureMode.imageSequence,
+      );
+    });
+
+    screenTest('opening the sheet and saving nothing says nothing', (
+      tester,
+    ) async {
+      // Acceptance is *starting a save*, not *seeing a proposal*.
+      final collectionId = await seedKnownEntry();
+      await openPanel(tester, _entryUrl, _entryTitle);
+      await pumpUntil(tester, key('v2DownloadEntry'));
+
+      expect(find.text('What to save'), findsOneWidget);
+      expect(adds, isEmpty);
+      expect(
         await CapturePreferenceStore(LocalSettingsStore(h.db)).of(collectionId),
         isNull,
-        reason: 'nothing was chosen, so nothing is remembered',
+      );
+    });
+
+    screenTest('*Ask each time* keeps asking, save after save', (tester) async {
+      // The label is a promise. Because proceeding now records a mode, the
+      // answer has to be stored as an answer or the next download would
+      // quietly undo it (V2-D61).
+      final collectionId = await seedKnownEntry();
+      final preferences = CapturePreferenceStore(LocalSettingsStore(h.db));
+      await preferences.askEachTime(collectionId);
+
+      await openPanel(tester, _entryUrl, _entryTitle);
+      await pumpUntil(tester, key('v2DownloadEntry'));
+      expect(find.text('What to save'), findsOneWidget);
+      await tapAndPump(tester, key('v2DownloadEntry'));
+
+      expect(adds, hasLength(1));
+      expect(
+        await preferences.of(collectionId),
+        isNull,
+        reason: 'the save proposed a mode; it did not become a standing one',
+      );
+      expect(await preferences.isAnswered(collectionId), isTrue);
+    });
+
+    screenTest('a page that could not honour it does not redefine the work', (
+      tester,
+    ) async {
+      // The other half of "the preference proposes and the page disposes"
+      // (V2-D53): the mode on screen here is the *fallback*, and saving with
+      // it must not turn one awkward entry into a new standing answer.
+      final collectionId = await seedKnownEntry();
+      final preferences = CapturePreferenceStore(LocalSettingsStore(h.db));
+      await preferences.remember(collectionId, CaptureMode.textOnly);
+
+      await openPanel(tester, _entryUrl, _entryTitle);
+      await pumpUntil(tester, key('v2DownloadEntry'));
+      // The probe carries no prose, so text-only is blocked and the block is
+      // asked again with the image fallback selected.
+      expect(find.text('What to save'), findsOneWidget);
+      await tapAndPump(tester, key('v2DownloadEntry'));
+
+      expect(adds, hasLength(1));
+      expect(adds.single.captureMode, CaptureMode.imageSequence);
+      expect(
+        await preferences.of(collectionId),
+        CaptureMode.textOnly,
+        reason: 'one page could not honour it; that is not a change of mind',
       );
     });
 
@@ -984,6 +1053,92 @@ void main() {
   });
 
   // ─── the routine flow, end to end ───────────────────────────────────────
+
+  // ─── the lifecycle, end to end (V2-D61) ─────────────────────────────────
+
+  group('the first save answers it and the next one does not ask', () {
+    // One test, one journey, because the claim is about what happens *between*
+    // two saves. Every step is a control a user would press.
+    screenTest('accept on the first entry, compact on the second', (
+      tester,
+    ) async {
+      final root = await h.root();
+      final collection = await h.collection('Alpha', folderId: root.id);
+      final source = await h.source(collection.id, pathKey: '/works/alpha');
+      final first = await h.entryIn(
+        collection.id,
+        title: _entryTitle,
+        ordinal: 12,
+      );
+      await h.location(first.id, _entryUrl, sourceId: source.id);
+      final second = await h.entryIn(
+        collection.id,
+        title: 'Alpha 13',
+        ordinal: 13,
+      );
+      const secondUrl = 'https://reading.example.com/works/alpha/13';
+      await h.location(second.id, secondUrl, sourceId: source.id);
+      reportedCollectionId = collection.id;
+      final preferences = CapturePreferenceStore(LocalSettingsStore(h.db));
+
+      // ── first save: nothing is remembered, so the whole block is asked
+      expect(await preferences.of(collection.id), isNull);
+      await openPanel(tester, _entryUrl, _entryTitle);
+      await pumpUntil(tester, key('v2DownloadEntries'));
+
+      expect(find.text('What to save'), findsOneWidget);
+      expect(key('captureMode_imageSequence'), findsOneWidget);
+      expect(key('captureModeRemembered'), findsNothing);
+
+      // …and the proposal is *not* tapped. The user goes for the count.
+      await tapAndPump(tester, key('v2DownloadEntries'));
+
+      // The plural control opens on the plural answer, before anything is
+      // tapped: the count field belongs to the counted range and does not
+      // exist under *This entry*, and the note beside it is the one *Entries
+      // from here* carries.
+      await pumpUntil(tester, key('saveCountField'));
+      expect(
+        key('saveScopeReadsForwardNote'),
+        findsOneWidget,
+        reason: '*Download entries…* must not arrive on *This entry*',
+      );
+      expect(key('saveScopeLibraryOnlyNote'), findsNothing);
+
+      await tester.enterText(key('saveCountField'), '4');
+      await tapAndPump(tester, key('saveScopeAddToQueue'));
+
+      expect(adds, hasLength(1));
+      expect(adds.single.limits!.maxEntries, 4);
+      expect(adds.single.discoverMissing, isTrue);
+      expect(adds.single.captureMode, CaptureMode.imageSequence);
+      expect(
+        adds.single.captureModeIsUserSet,
+        isFalse,
+        reason: 'accepted, not chosen',
+      );
+      expect(
+        await preferences.of(collection.id),
+        CaptureMode.imageSequence,
+        reason: 'starting the save is the acceptance',
+      );
+
+      // ── second save, another entry of the same work: compact, no question
+      await openPanel(tester, secondUrl, 'Alpha 13');
+      await pumpUntil(tester, key('captureModeRemembered'));
+
+      expect(find.text('Capture'), findsOneWidget);
+      expect(find.text('Images only'), findsOneWidget);
+      expect(
+        find.text('What to save'),
+        findsNothing,
+        reason: 'the question has an answer and is not asked again',
+      );
+      expect(key('captureMode_imageSequence'), findsNothing);
+      expect(key('captureMode_textOnly'), findsNothing);
+      expect(key('captureDetectionSummary'), findsNothing);
+    });
+  });
 
   group('a collection the app already knows', () {
     // The shape this pass is aiming at, asserted rather than described:

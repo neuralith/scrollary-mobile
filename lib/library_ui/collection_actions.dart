@@ -607,10 +607,11 @@ Future<void> _addEntryToCollection(
 
 /// Choose what entries of this Collection are normally saved as.
 ///
-/// Four answers, and the fourth is a real one: **Ask each time** clears the
-/// preference and goes back to letting the page propose. There is no "safest"
-/// capture mode — each produces a different artifact — so *no answer* has to
-/// stay expressible.
+/// Four answers, and the fourth is a real one: **Ask each time** goes back to
+/// letting each page propose, and is *recorded* as the answer it is (V2-D61) —
+/// otherwise the next save, which now records the mode it went ahead with,
+/// would quietly undo it. There is no "safest" capture mode — each produces a
+/// different artifact — so *no standing mode* has to stay expressible.
 ///
 /// What is chosen here proposes; the page still disposes. A collection kept as
 /// images asks again on an entry that has none, and this preference is
@@ -670,7 +671,11 @@ Future<void> showCaptureModePreference(
 
   final mode = chosen.mode;
   if (mode == null) {
-    await preferences.forget(view.collection.id);
+    // Recorded, not erased. Since starting a save with the proposed mode is
+    // now what creates a preference (V2-D61), a Collection with no answer at
+    // all would have one again after the next download — which is not what
+    // somebody who asked to be asked each time meant.
+    await preferences.askEachTime(view.collection.id);
     if (!context.mounted) return;
     showLibraryMessage(context, 'Scrollary will ask each time.');
     return;

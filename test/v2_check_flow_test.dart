@@ -590,6 +590,15 @@ void main() {
         isNull,
         reason: 'there is no safest mode, so no answer stays expressible',
       );
+      // And it is *recorded* as an answer, not erased. Since a save now
+      // records the mode it went ahead with, a collection with nothing stored
+      // would have a standing mode again after the next download — which is
+      // not what somebody who asked to be asked each time meant (V2-D61).
+      expect(
+        await preferences.isAnswered(collection.id),
+        isTrue,
+        reason: '"keep asking" survives the next save',
+      );
     });
 
     screenTest('what happens to finished entries here is changeable from '

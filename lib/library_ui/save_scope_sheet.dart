@@ -139,6 +139,14 @@ class SaveScopeChoice {
 /// the two launches this lane can describe on its own, which is what a test
 /// with no such surface around it sees.
 ///
+/// [initialScope] is which range the sheet opens on. The default is *This
+/// entry*, because a caller that has not said means "how much of this", and
+/// the smallest answer is the one that opens no page. A control that already
+/// said *entries*, plural — *Download entries…*, *Add & download…* — passes
+/// [SaveScope.fixedCount] so the sheet opens on the answer its own label
+/// promised, rather than on the one the user declined by not pressing the
+/// other button (V2-D61).
+///
 /// [naming] is set only for a Collection that does not exist yet: the header
 /// line becomes an editable field, and the confirmed name comes back on
 /// [SaveScopeChoice.collectionName] (V2-D57). [collectionName] is still what
@@ -148,6 +156,7 @@ Future<SaveScopeChoice?> showSaveScopeSheet(
   BuildContext context, {
   required String collectionName,
   int initialCount = 2,
+  SaveScope initialScope = SaveScope.currentPageOnly,
   List<int> alreadyDownloadedBytes = const [],
   Widget Function(BuildContext, void Function(SaveStartMode))? launchActions,
   NewCollectionNaming? naming,
@@ -158,6 +167,7 @@ Future<SaveScopeChoice?> showSaveScopeSheet(
     builder: (sheetContext) => _SaveScopeSheet(
       collectionName: collectionName,
       initialCount: initialCount,
+      initialScope: initialScope,
       alreadyDownloadedBytes: alreadyDownloadedBytes,
       launchActions: launchActions,
       naming: naming,
@@ -169,6 +179,7 @@ class _SaveScopeSheet extends StatefulWidget {
   const _SaveScopeSheet({
     required this.collectionName,
     required this.initialCount,
+    required this.initialScope,
     this.alreadyDownloadedBytes = const [],
     this.launchActions,
     this.naming,
@@ -176,6 +187,9 @@ class _SaveScopeSheet extends StatefulWidget {
 
   final String collectionName;
   final int initialCount;
+
+  /// The range the sheet opens on. See [showSaveScopeSheet].
+  final SaveScope initialScope;
 
   /// The Collection this sheet is about to bring into existence, when it is
   /// about to. See [showSaveScopeSheet].
@@ -241,7 +255,7 @@ class _SaveScopeSheetState extends State<_SaveScopeSheet> {
 
   String? _nameError;
 
-  SaveScope _scope = SaveScope.currentPageOnly;
+  late SaveScope _scope = widget.initialScope;
 
   /// Which of the two counted ranges is selected, while [_scope] is
   /// [SaveScope.fixedCount]. It survives a switch to *This entry* for the same

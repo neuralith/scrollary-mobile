@@ -38,6 +38,7 @@ void main() {
   Future<void> openSheet(
     WidgetTester tester, {
     NewCollectionNaming? naming,
+    SaveScope initialScope = SaveScope.currentPageOnly,
   }) async {
     chosen = null;
     closed = false;
@@ -51,6 +52,7 @@ void main() {
                   chosen = await showSaveScopeSheet(
                     context,
                     collectionName: naming?.suggestedName ?? 'Alpha notes',
+                    initialScope: initialScope,
                     naming: naming,
                   );
                   closed = true;
@@ -313,6 +315,38 @@ void main() {
 
     await tapAndPump(tester, find.byKey(const ValueKey('saveScopeAddToQueue')));
     expect(chosen!.limits.maxEntries, 4);
+  });
+
+  screenTest('a caller that already said *entries* opens on entries', (
+    tester,
+  ) async {
+    // The default stays *This entry* — the smallest answer, and the one that
+    // opens no page. A control whose own label promised the plural passes the
+    // plural, so the sheet does not arrive selecting what the user declined by
+    // not pressing the other button (V2-D61).
+    await openSheet(tester, initialScope: SaveScope.fixedCount);
+
+    expect(countField(), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('saveScopeReadsForwardNote')),
+      findsOneWidget,
+    );
+    await tapAndPump(tester, find.byKey(const ValueKey('saveScopeAddToQueue')));
+
+    expect(chosen!.limits.maxEntries, 2, reason: 'the replaceable default');
+    expect(chosen!.limits.isSinglePage, isFalse);
+    expect(chosen!.discoverMissing, isTrue);
+  });
+
+  screenTest('and the way back to this entry alone is still one tap', (
+    tester,
+  ) async {
+    await openSheet(tester, initialScope: SaveScope.fixedCount);
+    await tapAndPump(tester, find.byKey(const ValueKey('saveScopeThisEntry')));
+    await tapAndPump(tester, find.byKey(const ValueKey('saveScopeAddToQueue')));
+
+    expect(chosen!.limits.isSinglePage, isTrue);
+    expect(chosen!.discoverMissing, isFalse);
   });
 
   screenTest('backing out chooses nothing at all', (tester) async {
