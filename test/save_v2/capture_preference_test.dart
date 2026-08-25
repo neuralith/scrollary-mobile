@@ -125,6 +125,25 @@ void main() {
       expect(await captureRow(task), isNull);
     });
 
+    test('*Ask each time* proposes nothing at the seam either', () async {
+      final seeded = await h.repos.seedLibrary();
+      await h.preferences.askEachTime(seeded.collection.id);
+
+      final task = await rowWithNoMode(
+        entryId: seeded.entry.id,
+        locationId: seeded.location.id,
+        url: seeded.location.url,
+      );
+
+      expect(
+        await captureRow(task),
+        isNull,
+        reason:
+            'stored as an answer, and read as no mode — the engine seam '
+            'never learns there is a difference',
+      );
+    });
+
     test('a standalone entry is given no collection to inherit from', () async {
       final seeded = await h.repos.seedLibrary();
       // The library's other Collection does have a preference, so what is

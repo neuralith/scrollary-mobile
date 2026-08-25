@@ -1117,3 +1117,55 @@ Collection again must not start asking a question it had already answered.
 (STORE_PACKAGE.md §6.3 and §6.6, pinned by
 `test/capture_mode_section_test.dart`), and the compact line is a separate
 widget for exactly that reason.
+
+### V2-D61 · Proceeding with the proposed mode is what answers the question
+
+V2-D53 made a Collection remember what it is saved as, and wrote the answer
+only when the user **tapped** a mode row. That asked somebody already looking
+at *Images only* to tap *Images only* before the app would believe them, so a
+work saved as images fifty times running still opened the full three-mode block
+on the fifty-first. The preference existed and almost nobody had one.
+
+Starting or queueing a save with the mode on screen **is** the answer. There is
+no meaningful difference between choosing a value and accepting the one already
+chosen for you, once you act on it — and the acting is the part that matters,
+which is why merely opening the sheet still writes nothing.
+
+Four things it will not do:
+
+* **Nothing is written unless something was queued.** A sheet opened and
+  dismissed, a listing that writes no Entry, and a refusal all say nothing
+  about the work. `AddToLibraryReport.queued` is the test.
+* **An answer already given is only changed by a tap.** The mode on screen may
+  be the *fallback* for a page that could not honour the standing one, and
+  overwriting a Collection kept as images because one of its entries had none
+  is exactly the mistake V2-D53's "one page could not honour it; that is not a
+  change of mind" exists to prevent.
+* **A standalone save writes nothing** (I3), and one Collection's answer is
+  never written by an Entry that landed in another.
+* **Provenance is unchanged.** `captureModeIsUserSet` still means *a person
+  chose this mode on this page*, so an accepted mode never claims in the
+  manifest to have been picked. The engine seam's precedence (V2-D58) —
+  explicit per-save, then the Collection's answer, then detection — is
+  untouched.
+
+**Why *Ask each time* became a stored value.** With acceptance writing, *nobody
+has said* and *somebody said keep asking* stop behaving alike: the first should
+record what the next save was made with, and the second must not. Left as an
+absent key, *Ask each time* would have been undone by the very next download —
+a label that promises "each time" honoured once. So `kAskEachTime` is written
+under the same settings key, spelled as a name no `CaptureMode` has, which
+means `captureModeFromName` reads it as null and **nothing downstream changes**:
+the proposal is still a mode or nothing, and the capture seam never learns
+there is a difference. `CapturePreferenceStore.isAnswered` is the one reader
+that needs it, and `forget` — dropping the key entirely — stays what a deleted
+Collection gets (V2-D60).
+
+**And the sheet a plural control opens.** *Download entries…* and *Add &
+download…* opened the scope sheet on **This entry**: a control that said
+*entries* arriving preselected on the answer the user had just declined by not
+pressing the other button. `showSaveScopeSheet` takes an `initialScope`; the
+default stays `currentPageOnly`, because a caller that has not said means *how
+much of this* and the smallest answer is the one that opens no page, and the
+two plural controls pass `fixedCount`. Every test in the suite had been tapping
+*Entries from here* as its first action, which is why nothing caught it.

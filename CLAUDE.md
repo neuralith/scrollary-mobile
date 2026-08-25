@@ -103,8 +103,13 @@ in [docs/DECISIONS.md](docs/DECISIONS.md).
   (`Capture · Images only ⌄`, V2-D60) whose row opens the full block inline —
   never a second modal — and the Collection menu states the answer rather than
   the question. Only an explicit tap writes a preference; a preselection is
-  detection's answer about that page. Removing a Collection forgets it,
-  archiving keeps it.
+  detection's answer about that page. **Starting or queueing a save with the
+  proposed mode is what answers it** (V2-D61): opening the sheet writes
+  nothing, an answer already given is only changed by a tap — the mode on
+  screen may be a fallback — and *Ask each time* is stored as a value so the
+  next save cannot undo it. Removing a Collection forgets it, archiving keeps
+  it. A plural control (*Download entries…*, *Add & download…*) opens the scope
+  sheet on *Entries from here*; the sheet's own default stays *This entry*.
 - **Reading on to the next Entry** (`lib/reading_v2/forward_transition.dart`,
   V2-D59) — finishing an Entry and moving forward inside a Collection is what
   frees its downloaded copy, by a rule the user is asked for **once per

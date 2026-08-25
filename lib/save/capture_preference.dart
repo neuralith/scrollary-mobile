@@ -35,6 +35,17 @@ import 'capture_mode.dart';
 /// vanishes.
 String captureModeKeyFor(String collectionId) => 'capture_mode.$collectionId';
 
+/// *Ask each time*, stored.
+///
+/// **Why a value and not an absent key** (V2-D61). Since accepting the sheet's
+/// proposal is what creates a preference, *nobody has said* and *somebody said
+/// keep asking* stop behaving alike: the first is a Collection whose next save
+/// should record what it was saved as, and the second is a standing
+/// instruction not to. Written as a name no [CaptureMode] has, so
+/// [captureModeFromName] reads it as null — the proposal is unchanged
+/// everywhere, and the engine seam (V2-D58) never sees it at all.
+const String kAskEachTime = 'askEachTime';
+
 /// Reads and writes what a Collection is normally captured as.
 class CapturePreferenceStore {
   const CapturePreferenceStore(this._settings);
@@ -55,17 +66,45 @@ class CapturePreferenceStore {
     );
   }
 
+  /// Whether the user has answered *what to save* for this Collection at all.
+  ///
+  /// True for a stored mode **and** for *Ask each time*, which is an answer;
+  /// false only where nobody has said anything yet. The distinction exists for
+  /// exactly one caller — the save sheet, deciding whether proceeding with the
+  /// proposed mode should record it (V2-D61) — and it is deliberately not
+  /// [of]'s business: what to *propose* is a mode or nothing, and that is all
+  /// the capture seam ever asks for.
+  Future<bool> isAnswered(String? collectionId) async {
+    if (collectionId == null || collectionId.isEmpty) return false;
+    final stored = await _settings.get(captureModeKeyFor(collectionId));
+    return stored == kAskEachTime || captureModeFromName(stored) != null;
+  }
+
   /// Remember [mode] for this Collection.
   ///
-  /// Called only for a choice the **user** made. A mode that came from
-  /// detection is the page's answer about that page, and writing it here would
-  /// turn one page's shape into a standing instruction about the whole work.
+  /// Called for a mode the user **chose**, and for one they **accepted** by
+  /// starting a save with it while the Collection had no answer of its own
+  /// (V2-D61). What is never written here is a mode nothing was saved with: a
+  /// sheet that was opened and dismissed has said nothing about the work.
   Future<void> remember(String? collectionId, CaptureMode mode) async {
     if (collectionId == null || collectionId.isEmpty) return;
     await _settings.set(captureModeKeyFor(collectionId), mode.name);
   }
 
-  /// Go back to asking the page. Not a deletion of anything the user can see.
+  /// *Ask each time*: keep proposing what each page can offer, and record that
+  /// this is what the user asked for.
+  ///
+  /// Not the same as [forget]. This is an answer, and it survives the next
+  /// save — which is the whole point of the label.
+  Future<void> askEachTime(String? collectionId) async {
+    if (collectionId == null || collectionId.isEmpty) return;
+    await _settings.set(captureModeKeyFor(collectionId), kAskEachTime);
+  }
+
+  /// Drop the answer entirely, as though it had never been given.
+  ///
+  /// For a Collection that is going away (V2-D60), not for a user changing
+  /// their mind — [askEachTime] is that.
   Future<void> forget(String collectionId) =>
       _settings.remove(captureModeKeyFor(collectionId));
 }

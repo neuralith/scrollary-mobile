@@ -620,17 +620,41 @@ class _V2SavePanelState extends ConsumerState<V2SavePanel> {
     });
   }
 
-  /// Keep what the user chose, for the Collection they chose it on.
+  /// Keep what this save was made with, for the Collection it went to.
   ///
-  /// Only an explicit choice, and only against a Collection: a mode that came
-  /// from detection is the page's answer about that page, and a standalone
-  /// save has no work to be a standing answer for. One Collection's
-  /// preference is never written by an Entry that landed somewhere else —
-  /// the id comes from the report, which names where this save actually went.
-  Future<void> _rememberMode(String? collectionId) async {
+  /// **Proceeding is accepting** (V2-D61). The rule used to be that only a tap
+  /// on a mode row counted, which asked a user who was already looking at
+  /// *Images only* to tap *Images only* before the app would believe them —
+  /// so a work saved as images fifty times running still asked on the
+  /// fifty-first. Starting or queueing a save with the mode on screen is an
+  /// answer about the work, and it is recorded as one.
+  ///
+  /// Four things it will not do.
+  ///
+  /// * **Nothing is written unless something was queued** — [queued] is the
+  ///   caller's answer to *did a capture actually get asked for*. A sheet
+  ///   opened and dismissed, a listing that writes no row, and a refusal all
+  ///   say nothing about the work.
+  /// * **An answer already given is only changed by a tap.** When the
+  ///   Collection has one, an untouched mode is left alone — and it has to be,
+  ///   because the mode on screen may be the *fallback* for a page that could
+  ///   not honour the standing answer (V2-D53). Overwriting a Collection kept
+  ///   as images because one entry of it had no images is precisely the
+  ///   mistake that rule exists to prevent.
+  /// * **A standalone save writes nothing**: no Collection, no work to be a
+  ///   standing answer for (I3).
+  /// * **One Collection's answer is never written by an Entry that landed
+  ///   somewhere else** — the id comes from the report, which names where
+  ///   this save actually went.
+  Future<void> _rememberMode(
+    String? collectionId, {
+    required int queued,
+  }) async {
     final mode = _mode;
-    if (!_modeIsUserSet || mode == null || collectionId == null) return;
-    await ref.read(capturePreferenceProvider).remember(collectionId, mode);
+    if (mode == null || collectionId == null || queued == 0) return;
+    final preferences = ref.read(capturePreferenceProvider);
+    if (!_modeIsUserSet && await preferences.isAnswered(collectionId)) return;
+    await preferences.remember(collectionId, mode);
     if (!mounted) return;
     setState(() {
       _preferenceCollectionId = collectionId;
@@ -690,7 +714,10 @@ class _V2SavePanelState extends ConsumerState<V2SavePanel> {
       }
     }
     if (!mounted) return report;
-    await _rememberMode(report.collectionId ?? _preferenceCollectionId);
+    await _rememberMode(
+      report.collectionId ?? _preferenceCollectionId,
+      queued: report.queued,
+    );
     if (!mounted) return report;
     await _refresh();
     return report;
@@ -739,6 +766,10 @@ class _V2SavePanelState extends ConsumerState<V2SavePanel> {
     final scope = await showSaveScopeSheet(
       context,
       collectionName: collectionName,
+      // The control said *entries*, so the sheet opens on entries. Landing on
+      // *This entry* made the two controls contradict each other: the one the
+      // user did not press is the one that arrived preselected (V2-D61).
+      initialScope: SaveScope.fixedCount,
       alreadyDownloadedBytes: costs,
       launchActions: _launchActions,
     );
@@ -835,6 +866,9 @@ class _V2SavePanelState extends ConsumerState<V2SavePanel> {
       scope = await showSaveScopeSheet(
         context,
         collectionName: collectionName,
+        // *Add & download…* is the plural control on this branch, and opens
+        // on the plural answer for the same reason (V2-D61).
+        initialScope: SaveScope.fixedCount,
         alreadyDownloadedBytes: costs,
         launchActions: _launchActions,
       );
