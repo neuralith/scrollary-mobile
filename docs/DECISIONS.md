@@ -1169,3 +1169,56 @@ default stays `currentPageOnly`, because a caller that has not said means *how
 much of this* and the smallest answer is the one that opens no page, and the
 two plural controls pass `fixedCount`. Every test in the suite had been tapping
 *Entries from here* as its first action, which is why nothing caught it.
+
+### V2-D63 · An Entry's steady state is drawn on its row, not written
+
+The Entry row spent a whole line on the sentence `Unread · On this device` —
+prose for two booleans, printed under an identity that inside a Collection
+(V2-D55) is often a single number. A row with an Entry's own name under its
+position was three lines tall to say two things that never change while you
+look at them, and at 320pt with a 1.3× text scale that line was an unbounded
+`Row` which overflowed by 115px and hard-clipped: content nobody could see, in
+the configuration where being able to read it matters most.
+
+Both facts moved into the trailing block, which is now capped at exactly two
+marks and a control:
+
+* **Read state** is [EntryProgressRing], and it is drawn on **every** row.
+  This reverses the earlier "an untouched Entry gets no indicator rather than
+  an empty circle": that was right while the word *Unread* was also on the
+  row, and wrong the moment it was the only signal, because an absent
+  indicator is indistinguishable from an Entry nothing is known about.
+* **Availability** is one `download_for_offline` glyph in `palette.primary`,
+  present exactly when this device holds bytes. The filled glyph against its
+  outlined twin — *held* against *offered* — is the pairing the Browser and
+  the Entry menu already use, so the row did not need a vocabulary of its own.
+  Never a checkmark: `ui/status_style.dart`'s rule is that read state owns the
+  check and nothing else does, and `offline_pin` / `cloud_done` are checkmarks.
+
+**The rule that keeps the right-hand side legible.** A state that *is* gets a
+glyph; a state that is *happening* gets a word. Waiting to start, Downloading,
+Download failed and Needs placement stay worded chips on the badge line, so a
+row mid-download is temporarily taller and says why. Without that division the
+trailing block accumulates one more unlabelled mark per feature until none of
+them means anything.
+
+**Nothing was taken from anyone.** `entryRowSemantics` puts the identity, the
+Entry's own name, the read state, the **percentage** and the availability on
+one semantics node — strictly more than the visible line carried, since the
+line never said how far through. Availability is spoken only when it is true,
+exactly as it is drawn; a list where every row ends *not on this device* is the
+download-manager reading of a library, said out loud. *Entry details* still
+prints all four facts in full, and the Collection header still counts unread.
+
+The row is `kEntryRowMinHeight` (56) in both steady states, against 70 and 79
+before, so a list scans as one column instead of alternating blocks — and a
+downloaded Entry is exactly the same size as one this device has never held,
+which is roadmap D3's rule made structural rather than promised.
+
+**What this decision does not touch.** Reading-state semantics, download
+semantics, what the queue does, navigation, and the ring's painter are all
+unchanged. One consequence is worth stating: a reading with nothing measured
+yet — *Open at source* on a page with no position to be at (V2-D54) — now looks
+identical to unread, because the ring is a quantity and that quantity is zero.
+The status word used to cover it. It is still spoken, and still in *Entry
+details*.

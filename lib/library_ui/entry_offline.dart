@@ -40,11 +40,13 @@ import 'providers.dart';
 /// What the queue is doing about one Entry, on its row — or **null** when the
 /// answer is "nothing worth a badge".
 ///
-/// Three states print: waiting, downloading, and failed. A completed row prints
-/// nothing, because the row already says *On this device* and two badges for
-/// one fact is how a list starts lying about which one is current. A cancelled
-/// row prints nothing either — the user was told when they cancelled it, and a
-/// permanent badge for a decision they already made is nagging, not honesty.
+/// Three states print: waiting, downloading, and failed — the states that are
+/// *happening*, which is exactly what earns a word on a row (V2-D63). A
+/// completed row prints nothing, because the row's own trailing glyph is now
+/// the fact and two marks for one fact is how a list starts lying about which
+/// one is current. A cancelled row prints nothing either — the user was told
+/// when they cancelled it, and a permanent badge for a decision they already
+/// made is nagging, not honesty.
 ///
 /// Null rather than an empty box: the row spaces its badges, and a spacer for
 /// an invisible chip is a gap with no cause.
