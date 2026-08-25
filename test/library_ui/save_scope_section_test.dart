@@ -1,18 +1,21 @@
-/// The recovered count sheet.
+/// The recovered count block.
 ///
 /// This interaction was device-tested in V1 and is under test here so it stays
 /// recovered rather than redesigned: digits and nothing else, a blank and a
 /// zero refused where they were typed, the ceiling stated and enforced, and an
-/// OK that confirms the number without starting anything.
+/// OK that confirms the number without starting anything. It is now a
+/// **section of the save sheet** rather than a sheet after it (V2-D62), so
+/// what is pumped here is that section over its controller, with a launch row
+/// the surface would normally supply.
 ///
 /// The two counted ranges are here for the same reason: *Entries from here*
 /// counts on the Source and reads it forward for what the library is missing,
 /// *Entries already in your library* counts on the library and opens nothing,
-/// and which one the sheet returns is the difference between an app that opens
+/// and which one the block returns is the difference between an app that opens
 /// someone's site and one that does not.
 ///
 /// The bound itself is not this file's to assert twice — `SaveLimits.forScope`
-/// owns it — but *that the sheet builds its limits through it* is, because a
+/// owns it — but *that the block builds its limits through it* is, because a
 /// range whose real ceiling lived somewhere the user could not see is the
 /// thing CLAUDE.md forbids.
 library;
@@ -20,7 +23,7 @@ library;
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:web_reader/core/config.dart';
-import 'package:web_reader/library_ui/save_scope_sheet.dart';
+import 'package:web_reader/library_ui/save_scope_section.dart';
 
 import 'support/ui_harness.dart';
 
@@ -34,7 +37,15 @@ void main() {
 
   SaveScopeChoice? chosen;
   var closed = false;
+  SaveScopeController? controller;
 
+  tearDown(() {
+    controller?.dispose();
+    controller = null;
+  });
+
+  /// The section as the save sheet composes it: the block, the pinned OK bar
+  /// below the scroll, and a launch row that validates through the controller.
   Future<void> openSheet(
     WidgetTester tester, {
     NewCollectionNaming? naming,
@@ -42,29 +53,69 @@ void main() {
   }) async {
     chosen = null;
     closed = false;
+    final scope = controller = SaveScopeController(
+      initialScope: initialScope,
+      naming: naming,
+    );
+    void submit(SaveStartMode start) {
+      final choice = scope.choiceFor(start);
+      if (choice == null) return;
+      chosen = choice;
+      closed = true;
+    }
+
     await tester.pumpWidget(
       h.app(
-        Builder(
-          builder: (context) => Scaffold(
-            body: Center(
-              child: ElevatedButton(
-                onPressed: () async {
-                  chosen = await showSaveScopeSheet(
-                    context,
-                    collectionName: naming?.suggestedName ?? 'Alpha notes',
-                    initialScope: initialScope,
-                    naming: naming,
-                  );
-                  closed = true;
-                },
-                child: const Text('open the sheet'),
-              ),
+        Scaffold(
+          body: SafeArea(
+            child: Column(
+              children: [
+                Flexible(
+                  child: SingleChildScrollView(
+                    child: Column(
+                      children: [
+                        SaveScopeSection(controller: scope),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: OutlinedButton(
+                                key: const ValueKey('saveScopeAddToQueue'),
+                                onPressed: () =>
+                                    submit(SaveStartMode.queueOnly),
+                                child: const Text('Queue only'),
+                              ),
+                            ),
+                            Expanded(
+                              child: FilledButton(
+                                key: const ValueKey('saveScopeStartNow'),
+                                onPressed: () => submit(SaveStartMode.startNow),
+                                child: const Text('Start now'),
+                              ),
+                            ),
+                          ],
+                        ),
+                        TextButton(
+                          key: const ValueKey('saveScopeCancel'),
+                          onPressed: () => closed = true,
+                          child: const Text('Cancel'),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                AnimatedBuilder(
+                  animation: scope,
+                  builder: (context, _) => scope.showsOkBar
+                      ? SaveCountOkBar(onPressed: scope.confirmCount)
+                      : const SizedBox.shrink(),
+                ),
+              ],
             ),
           ),
         ),
       ),
     );
-    await tapAndPump(tester, find.text('open the sheet'));
+    await tester.pump();
   }
 
   /// The sheet as the Entry save flow opens it for a Collection that does not
@@ -93,11 +144,6 @@ void main() {
     await openSheet(tester);
 
     expect(find.textContaining('up to $ceiling'), findsOneWidget);
-    expect(
-      find.textContaining('Queued downloads wait for Start'),
-      findsOneWidget,
-      reason: 'the queue never starts itself, and the sheet says so',
-    );
   });
 
   screenTest('the typed count says what it counts, before it is typed into', (
@@ -365,7 +411,6 @@ void main() {
     ) async {
       await openNamingSheet(tester);
 
-      expect(find.text('New collection'), findsOneWidget);
       expect(
         tester.widget<TextField>(nameField()).controller!.text,
         'Quiet Harbour',
@@ -492,8 +537,9 @@ void main() {
         find.byKey(const ValueKey('newCollectionSourceFact')),
         findsNothing,
       );
-      expect(find.text('How many entries'), findsOneWidget);
-      expect(find.textContaining('From Alpha notes'), findsOneWidget);
+      // The block names the question; which Collection it is about is the
+      // sheet's own identity line above it now (V2-D62).
+      expect(find.text('How much'), findsOneWidget);
 
       await tapAndPump(
         tester,

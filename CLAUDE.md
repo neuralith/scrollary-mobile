@@ -108,8 +108,13 @@ in [docs/DECISIONS.md](docs/DECISIONS.md).
   nothing, an answer already given is only changed by a tap — the mode on
   screen may be a fallback — and *Ask each time* is stored as a value so the
   next save cannot undo it. Removing a Collection forgets it, archiving keeps
-  it. A plural control (*Download entries…*, *Add & download…*) opens the scope
-  sheet on *Entries from here*; the sheet's own default stays *This entry*.
+  it. **The save sheet asks everything** (V2-D62): one identity line, the range
+  block (`library_ui/save_scope_section.dart`), the capture line and the launch,
+  in that order and on one surface. There is no *Download this entry* /
+  *Download entries…* pair and no scope sheet after this one; the picker stays
+  the only modal on the unknown-site path. A listing has no range, and a
+  standalone Entry keeps its single download because it has no Collection order
+  to count along.
 - **Reading on to the next Entry** (`lib/reading_v2/forward_transition.dart`,
   V2-D59) — finishing an Entry and moving forward inside a Collection is what
   frees its downloaded copy, by a rule the user is asked for **once per

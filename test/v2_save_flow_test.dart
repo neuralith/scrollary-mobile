@@ -326,7 +326,11 @@ void main() {
       await openPanel(tester);
 
       await pumpUntil(tester, find.byKey(const ValueKey('v2StartButton')));
-      expect(find.byKey(const ValueKey('v2DownloadEntry')), findsNothing);
+      expect(
+        find.byKey(const ValueKey('saveScopeThisEntry')),
+        findsNothing,
+        reason: 'a row already waiting is not asked for again',
+      );
       expect(find.text('Queued — waiting for Start.'), findsOneWidget);
       expect((await theOnlyTask()).state, SaveTaskState.queued);
     });
