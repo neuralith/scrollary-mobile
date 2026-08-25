@@ -213,19 +213,28 @@ void main() {
       await pumpUntil(tester, find.byKey(ValueKey('entryRow-${read.id}')));
 
       expect(find.byKey(ValueKey('entryProgress-${read.id}')), findsOneWidget);
-      expect(
-        find.byKey(ValueKey('entryProgress-${untouched.id}')),
-        findsNothing,
-        reason: 'an untouched entry gets no indicator, not an empty one',
-      );
-      final ring = tester.widget<EntryProgressRing>(
+      EntryProgressRing ringOf(String entryId) => tester.widget(
         find.descendant(
-          of: find.byKey(ValueKey('entryProgress-${read.id}')),
+          of: find.byKey(ValueKey('entryProgress-$entryId')),
           matching: find.byType(EntryProgressRing),
         ),
       );
+
+      final ring = ringOf(read.id);
       expect(ring.fraction, closeTo(0.42, 0.0001));
       expect(ring.completed, isFalse);
+
+      // The untouched Entry gets an **empty** ring rather than no ring
+      // (V2-D63). It was left off while the row also printed the word
+      // *Unread*; with that word gone, an absent indicator would be
+      // indistinguishable from an Entry nothing is known about.
+      expect(
+        find.byKey(ValueKey('entryProgress-${untouched.id}')),
+        findsOneWidget,
+      );
+      final empty = ringOf(untouched.id);
+      expect(empty.fraction, 0);
+      expect(empty.completed, isFalse);
     });
 
     screenTest('a finished entry is a full ring, whatever was measured', (

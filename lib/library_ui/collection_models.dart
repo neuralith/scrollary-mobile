@@ -110,10 +110,6 @@ class EntryRowView {
   double get readFraction =>
       status == ReadStatus.completed ? 1 : progress.clamp(0.0, 1.0);
 
-  /// Whether there is anything to draw at all. An untouched Entry gets no
-  /// indicator rather than an empty one.
-  bool get hasProgress => status == ReadStatus.completed || progress > 0;
-
   String get id => row.id;
 
   /// A position the app could not establish is a real, visible state — not an

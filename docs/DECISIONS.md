@@ -1169,3 +1169,107 @@ default stays `currentPageOnly`, because a caller that has not said means *how
 much of this* and the smallest answer is the one that opens no page, and the
 two plural controls pass `fixedCount`. Every test in the suite had been tapping
 *Entries from here* as its first action, which is why nothing caught it.
+
+### V2-D63 · An Entry's steady state is drawn on its row, not written
+
+The Entry row spent a whole line on the sentence `Unread · On this device` —
+prose for two booleans, printed under an identity that inside a Collection
+(V2-D55) is often a single number. A row with an Entry's own name under its
+position was three lines tall to say two things that never change while you
+look at them, and at 320pt with a 1.3× text scale that line was an unbounded
+`Row` which overflowed by 115px and hard-clipped: content nobody could see, in
+the configuration where being able to read it matters most.
+
+Both facts moved into the trailing block, which is now capped at exactly two
+marks and a control:
+
+* **Read state** is [EntryProgressRing], and it is drawn on **every** row.
+  This reverses the earlier "an untouched Entry gets no indicator rather than
+  an empty circle": that was right while the word *Unread* was also on the
+  row, and wrong the moment it was the only signal, because an absent
+  indicator is indistinguishable from an Entry nothing is known about.
+* **Availability** is one `download_for_offline` glyph in `palette.primary`,
+  present exactly when this device holds bytes. The filled glyph against its
+  outlined twin — *held* against *offered* — is the pairing the Browser and
+  the Entry menu already use, so the row did not need a vocabulary of its own.
+  Never a checkmark: `ui/status_style.dart`'s rule is that read state owns the
+  check and nothing else does, and `offline_pin` / `cloud_done` are checkmarks.
+
+**The rule that keeps the right-hand side legible.** A state that *is* gets a
+glyph; a state that is *happening* gets a word. Waiting to start, Downloading,
+Download failed and Needs placement stay worded chips on the badge line, so a
+row mid-download is temporarily taller and says why. Without that division the
+trailing block accumulates one more unlabelled mark per feature until none of
+them means anything.
+
+**Nothing was taken from anyone.** `entryRowSemantics` puts the identity, the
+Entry's own name, the read state, the **percentage** and the availability on
+one semantics node — strictly more than the visible line carried, since the
+line never said how far through. Availability is spoken only when it is true,
+exactly as it is drawn; a list where every row ends *not on this device* is the
+download-manager reading of a library, said out loud. *Entry details* still
+prints all four facts in full, and the Collection header still counts unread.
+
+The row is `kEntryRowMinHeight` (56) in both steady states, against 70 and 79
+before, so a list scans as one column instead of alternating blocks — and a
+downloaded Entry is exactly the same size as one this device has never held,
+which is roadmap D3's rule made structural rather than promised.
+
+**What this decision does not touch.** Reading-state semantics, download
+semantics, what the queue does, navigation, and the ring's painter are all
+unchanged. One consequence is worth stating: a reading with nothing measured
+yet — *Open at source* on a page with no position to be at (V2-D54) — now looks
+identical to unread, because the ring is a quantity and that quantity is zero.
+The status word used to cover it. It is still spoken, and still in *Entry
+details*.
+
+### V2-D64 · A menu sheet is scroll-controlled and scrolls; the download control says which download it is
+
+Two defects in the Entry menu, with one cause between them: nothing had ever
+asked that sheet a question about its own size.
+
+**The sheet could not be reached.** `showModalBottomSheet` caps a sheet at
+**nine sixteenths of the window** unless it is told `isScrollControlled`, and a
+`Column` handed less height than it needs does not scroll or shrink — it
+overflows, and the remainder is clipped, unhittable and gone. Eight sheets were
+built as `SafeArea > Column(min)` with no scroll view, so on a 390×844 phone
+every one of them was cut at 474.8pt. The Entry menu lost *Download for
+offline*, *Remove offline copy* and *Remove from library* — four of its nine
+items — and the collection, folder, source, capture-mode, cleanup and both
+browser sheets had the same hole.
+
+It survived review because the widget-test window is **430×1400**: nine
+sixteenths of that is 787pt, and the extra width lets subtitles wrap to fewer
+lines, so the menus fitted in the suite and in no phone anybody owns. Every
+finder in those tests was `find.text` or `find.byKey`, and **neither requires a
+widget to be on screen** — `entry_adoption_test.dart` matched an
+`entryDownload` sitting 400pt below the sheet and passed.
+
+`ui/menu_sheet.dart`'s `showLibraryMenu` is the one definition: scroll-
+controlled so the sheet may be as tall as it needs, `useSafeArea` so it cannot
+slide under the status bar, and a `SingleChildScrollView` so being taller than
+the screen is a scroll rather than a clip. A `Column(MainAxisSize.min)` inside
+it is exactly as tall as its contents, so a five-item menu is still a
+five-item menu — no fixed height, no fraction, nothing to tune per sheet. It is
+the shape `library_ui/entry_details.dart` already used and the menus never
+adopted; `kPhoneWindow` in the test harness is how a menu is now asked whether
+it fits.
+
+**The download control described the wrong action.** *Download for offline* and
+*Remove offline copy* appearing together is **not** a bug: whether this device
+holds a copy and what the queue is doing are two independent facts (PRODUCT.md
+§2.3), a copy already here never blocked an intentional re-request, and
+`downloadForOffline` has always confirmed the replacement — *Already downloaded
+— download it again?* — before queueing one. What was wrong is that the control
+above it read *Puts a copy on this device*, which is a promise, followed by a
+confirmation to overwrite that nobody had a reason to expect. It now reads
+**Download again** · *reads the page from the start and replaces the copy on
+this device* wherever a copy exists. Same action, same queue, same
+confirmation; the menu simply stopped disagreeing with the dialog it opens.
+
+**One state loses the copy's control.** *Remove offline copy* is not offered
+while a download is `running`: those bytes are being replaced at that moment,
+and freeing them under a live capture is a race whose loser is the copy the
+user still has. *Stop this download* is the verb for changing a run, and it is
+directly above. A `queued` row is **not** running — nothing has started — so
+the copy's control stays offered there, and nothing else in the matrix moves.

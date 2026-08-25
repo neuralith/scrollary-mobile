@@ -90,8 +90,10 @@ void main() {
 
     expect(find.text('1 item · 1 unread'), findsOneWidget);
     expect(find.text('A one-off piece'), findsOneWidget);
-    // Availability is a row state and this row has none of it.
+    // Availability is a row state and nothing here has any of it — neither
+    // the prose the row used to print nor the glyph that replaced it.
     expect(find.text('On this device'), findsNothing);
+    expect(find.byIcon(Icons.download_for_offline), findsNothing);
   });
 
   screenTest('a brand-new library says so honestly', (tester) async {

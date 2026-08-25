@@ -310,6 +310,21 @@ Future<void> tapAndPump(WidgetTester tester, Finder finder) async {
   }
 }
 
+/// The window these tests run in unless one says otherwise: a phone's width
+/// and a deliberately generous height, so a long list fits and a finder can
+/// reach the bottom of it.
+const Size kListWindow = Size(430, 1400);
+
+/// A phone that exists. **Use this for anything whose bug is about height.**
+///
+/// [kListWindow] is 1400pt tall, and a modal bottom sheet that is not
+/// scroll-controlled is capped at nine sixteenths of the window — 787pt there
+/// against 474.8pt here. Every menu sheet in the app fitted the first number
+/// and clipped at the second, which is how four items of the Entry menu
+/// shipped unreachable with nothing in the suite going red (V2-D64). A test
+/// about whether something fits belongs at this size.
+const Size kPhoneWindow = Size(390, 844);
+
 /// `testWidgets`, but at a phone's shape and with the widget tree torn down
 /// inside the test body.
 ///
@@ -320,9 +335,13 @@ Future<void> tapAndPump(WidgetTester tester, Finder finder) async {
 /// the default 800×600 window is wider and much shorter than any phone, so
 /// list rows fall off the bottom and finders miss widgets a real device
 /// shows.
-void screenTest(String name, Future<void> Function(WidgetTester) body) {
+void screenTest(
+  String name,
+  Future<void> Function(WidgetTester) body, {
+  Size window = kListWindow,
+}) {
   testWidgets(name, (tester) async {
-    tester.view.physicalSize = const Size(430, 1400);
+    tester.view.physicalSize = window;
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.reset);
     await body(tester);

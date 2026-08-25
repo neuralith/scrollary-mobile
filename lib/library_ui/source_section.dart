@@ -21,6 +21,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../domain/source.dart';
+import '../ui/menu_sheet.dart';
 import '../ui/palette.dart';
 import '../ui/status_style.dart';
 import 'library_widgets.dart';
@@ -171,59 +172,57 @@ Future<void> showSourceMenu(
   String collectionId,
   SourceView view,
 ) async {
-  final action = await showModalBottomSheet<_SourceAction>(
+  final action = await showLibraryMenu<_SourceAction>(
     context: context,
-    builder: (sheetContext) => SafeArea(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(20, 14, 20, 4),
-            child: Text(
-              view.host,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style: serifStyle(size: 20),
+    builder: (sheetContext) => Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(20, 14, 20, 4),
+          child: Text(
+            view.host,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: serifStyle(size: 20),
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(20, 0, 20, 10),
+          child: Text(
+            view.lifecycleSentence,
+            style: TextStyle(
+              fontSize: 12,
+              height: 1.5,
+              color: AppPalette.of(sheetContext).inkMuted,
             ),
           ),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(20, 0, 20, 10),
-            child: Text(
-              view.lifecycleSentence,
-              style: TextStyle(
-                fontSize: 12,
-                height: 1.5,
-                color: AppPalette.of(sheetContext).inkMuted,
-              ),
+        ),
+        if (view.preferred)
+          ListTile(
+            key: const ValueKey('sourceClearPreferred'),
+            leading: const Icon(Icons.star_border),
+            title: const Text('Clear preferred source'),
+            subtitle: const Text(
+              'Leaves this collection with no preference between its sites.',
             ),
+            onTap: () => Navigator.of(sheetContext).pop(_SourceAction.clear),
+          )
+        // Absent for a site that cannot be read from: preferring one would
+        // be a preference the app could not honour.
+        else if (view.readable)
+          ListTile(
+            key: const ValueKey('sourcePrefer'),
+            leading: const Icon(Icons.star_outline),
+            title: const Text('Prefer this source'),
+            subtitle: const Text(
+              'Which site you would rather read this collection on. '
+              'Nothing is fetched by choosing it.',
+            ),
+            onTap: () => Navigator.of(sheetContext).pop(_SourceAction.prefer),
           ),
-          if (view.preferred)
-            ListTile(
-              key: const ValueKey('sourceClearPreferred'),
-              leading: const Icon(Icons.star_border),
-              title: const Text('Clear preferred source'),
-              subtitle: const Text(
-                'Leaves this collection with no preference between its sites.',
-              ),
-              onTap: () => Navigator.of(sheetContext).pop(_SourceAction.clear),
-            )
-          // Absent for a site that cannot be read from: preferring one would
-          // be a preference the app could not honour.
-          else if (view.readable)
-            ListTile(
-              key: const ValueKey('sourcePrefer'),
-              leading: const Icon(Icons.star_outline),
-              title: const Text('Prefer this source'),
-              subtitle: const Text(
-                'Which site you would rather read this collection on. '
-                'Nothing is fetched by choosing it.',
-              ),
-              onTap: () => Navigator.of(sheetContext).pop(_SourceAction.prefer),
-            ),
-          const SizedBox(height: 8),
-        ],
-      ),
+        const SizedBox(height: 8),
+      ],
     ),
   );
   if (action == null || !context.mounted) return;

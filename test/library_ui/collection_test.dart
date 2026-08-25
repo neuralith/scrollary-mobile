@@ -19,6 +19,7 @@ import 'package:web_reader/library_ui/library_widgets.dart';
 import 'package:web_reader/save/capture_mode.dart';
 import 'package:web_reader/save/capture_preference.dart';
 import 'package:web_reader/save/queue_task.dart';
+import 'package:web_reader/ui/status_style.dart';
 
 import 'support/ui_harness.dart';
 
@@ -68,6 +69,15 @@ void main() {
   Future<void> openEntryMenu(WidgetTester tester, String entryId) =>
       tapAndPump(tester, find.byKey(ValueKey('entryMenu-$entryId')));
 
+  /// A finished Entry, as the row draws one now that it prints no word for it
+  /// (V2-D63): the ring on that row, filled.
+  Finder finishedRing(String entryId) => find.descendant(
+    of: find.byKey(ValueKey('entryProgress-$entryId')),
+    matching: find.byWidgetPredicate(
+      (w) => w is EntryProgressRing && w.completed,
+    ),
+  );
+
   Future<void> dismissSheet(WidgetTester tester) async {
     await tester.tapAt(const Offset(10, 10));
     for (var i = 0; i < 12; i++) {
@@ -87,9 +97,13 @@ void main() {
 
     expect(find.byType(ListView), findsOneWidget);
     expect(find.byType(EntryRowTile), findsNWidgets(3));
-    // Availability is a line on the row that holds bytes, and nothing at all
-    // on the two that do not.
-    expect(find.text('On this device'), findsOneWidget);
+    // Availability is one glyph on the row that holds bytes, and nothing at
+    // all on the two that do not (V2-D63). No row spends a line of prose on
+    // it, and no row is a different size for holding one.
+    expect(find.text('On this device'), findsNothing);
+    expect(find.byKey(ValueKey('entryOffline-${s.held.id}')), findsOneWidget);
+    expect(find.byKey(ValueKey('entryOffline-${s.plain.id}')), findsNothing);
+    expect(find.byKey(ValueKey('entryOffline-${s.unplaced.id}')), findsNothing);
     expect(find.text('3 items · 3 unread'), findsOneWidget);
   });
 
@@ -130,12 +144,12 @@ void main() {
 
     await openEntryMenu(tester, s.plain.id);
     await tapAndPump(tester, find.text('Mark read'));
-    await pumpUntil(tester, find.text('Read'));
+    await pumpUntil(tester, finishedRing(s.plain.id));
     expect((await h.reading.stateOf(s.plain.id)).status, ReadStatus.completed);
 
     await openEntryMenu(tester, s.plain.id);
     await tapAndPump(tester, find.text('Mark unread'));
-    await pumpUntilGone(tester, find.text('Read'));
+    await pumpUntilGone(tester, finishedRing(s.plain.id));
     expect((await h.reading.stateOf(s.plain.id)).status, ReadStatus.unread);
   });
 
@@ -175,7 +189,10 @@ void main() {
     await tapAndPump(tester, find.text('Remove offline copy'));
     await tapAndPump(tester, find.widgetWithText(TextButton, 'Remove copy'));
     await letFilesSettle(tester);
-    await pumpUntilGone(tester, find.text('On this device'));
+    await pumpUntilGone(
+      tester,
+      find.byKey(ValueKey('entryOffline-${s.held.id}')),
+    );
 
     expect(await h.entries.byId(s.held.id), isNotNull);
     expect(await h.offlineCopyRows(s.held.id), 0);
@@ -206,6 +223,7 @@ void main() {
   screenTest('opening at source records access and never completion', (
     tester,
   ) async {
+    final semantics = tester.ensureSemantics();
     final s = await seed();
     final source = await h.source(s.collection.id);
     await h.location(
@@ -221,12 +239,21 @@ void main() {
 
     await openEntryMenu(tester, s.plain.id);
     await tapAndPump(tester, find.text('Open at source'));
-    await pumpUntil(tester, find.text('Reading'));
+    // Access with nothing measured yet moves no wedge, so the row draws no
+    // visible change (V2-D63) — but it says so, and that is what is waited
+    // on here.
+    await pumpUntil(
+      tester,
+      find.bySemanticsLabel(RegExp(r'The second one\. Reading')),
+    );
 
     expect(h.opened, ['https://reading.example.com/serial/2']);
     final state = await h.reading.stateOf(s.plain.id);
     expect(state.status, ReadStatus.reading);
     expect(state.completedAt, isNull);
+    // Before the end of the body: `screenTest` tears the tree down there, and
+    // the handle check runs ahead of any `addTearDown`.
+    semantics.dispose();
   });
 
   /// Was "downloading is not faked while the capture lane is absent" — the
@@ -635,9 +662,10 @@ void main() {
       // `findsWidgets`: the Collection's own Sources section is on the screen
       // behind the sheet, and it names the same host.
       expect(find.text('alpha.example'), findsWidgets);
-      // Four independent facts, and two of them are here as themselves.
-      // `findsWidgets` again: the row underneath the sheet says Unread too.
-      expect(find.text('Unread'), findsWidgets);
+      // Four independent facts, and two of them are here as themselves. The
+      // row underneath the sheet prints neither word now (V2-D63), so the
+      // sheet is the only place either one is written.
+      expect(find.text('Unread'), findsOneWidget);
       expect(find.text('Not downloaded'), findsOneWidget);
     });
   });

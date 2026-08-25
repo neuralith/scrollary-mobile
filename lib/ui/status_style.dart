@@ -347,13 +347,21 @@ class StatusChip extends StatelessWidget {
       children: [
         Icon(icon, size: iconSize, color: fg),
         const SizedBox(width: 4),
-        Text(
-          label,
-          style: TextStyle(
-            fontSize: 11,
-            fontVariations: wght(500),
-            fontWeight: FontWeight.w500,
-            color: fg,
+        // Flexible under a `min` Row costs nothing while there is room — the
+        // pill is still exactly as wide as its contents — and clips to an
+        // ellipsis instead of overflowing when a large text scale makes the
+        // label wider than the space its line has left.
+        Flexible(
+          child: Text(
+            label,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              fontSize: 11,
+              fontVariations: wght(500),
+              fontWeight: FontWeight.w500,
+              color: fg,
+            ),
           ),
         ),
       ],
