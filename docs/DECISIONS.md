@@ -1339,3 +1339,62 @@ and freeing them under a live capture is a race whose loser is the copy the
 user still has. *Stop this download* is the verb for changing a run, and it is
 directly above. A `queued` row is **not** running — nothing has started — so
 the copy's control stays offered there, and nothing else in the matrix moves.
+
+### V2-D65 · An unscrolled page gets no vote on what a Collection is kept as
+
+V2-D61 made the first save settle a Collection's capture mode, and V2-D60 gave
+the settled answer a compact line. On a real reading site the full three-row
+block came back anyway, on every save, for ever.
+
+**The cause is a measurement taken too early.** The save sheet probes the page
+as it finds it — nothing has been scrolled — and hands that probe to
+`detectCaptureCapabilities`. On a lazy reader almost none of the images have
+loaded yet, so `selectImageCandidates` finds too few, `imageSequence` lands in
+`blocked`, and `_modeIsRemembered`'s `capabilities.allows(remembered)` clause
+vetoes the Collection's own answer. The engine has always known better and says
+so in its own comment: *"Measured on the SETTLED probe, after scrolling: before
+it, a lazy page reports whatever happened to have loaded"* — it re-measures
+after scrolling and would have honoured *Images only* all along.
+
+Widget tests could not see it. Their probe carries no text and no images, which
+trips `detectCaptureCapabilities`'s "nothing offerable" escape hatch, puts
+`imageSequence` back into `available`, and makes the veto pass. A probe shaped
+like a real page — prose in the DOM, images not loaded yet — fails on `master`
+and passes here.
+
+So the veto now asks whether the block is one an unscrolled page can vouch for.
+`ModeBlockReason.survivesAnUnscrolledPage` is true only for `noReadableText`:
+prose is in the DOM from the first byte, while both image reasons are counts of
+what has arrived so far. A remembered mode that is only blocked by an image
+count is still shown, still passed to the save as it stands, and still resolved
+by the engine against the settled page — where a genuine impossibility falls
+back with its explanation, and the Collection's preference is left alone
+(V2-D53).
+
+**Two ranges, not three.** *Entries already in your library* answered a
+different question — queue what is already known, open nothing — and nobody
+reaches for it while saving the page in front of them. It is gone from the save
+sheet; `SaveScopePlanner` still implements it for the paths that use it, and a
+test now fails if the row comes back.
+
+**And the sheet got shorter.** One surface asking three questions had inherited
+three surfaces' worth of prose:
+
+* the range rows lose their descriptions and become one line each, with the
+  count **on** the row it belongs to rather than in a field below three
+  paragraphs. The row's tap is idempotent, because the field is inside its tap
+  target and re-choosing a range must not clear a refusal being read;
+* everything those descriptions carried is said once, under the counted range:
+  that the count is inclusive, the ceiling as a number (CLAUDE.md requires the
+  user can see it), one page at a time, nothing else taken, stoppable;
+* the launch rows go `dense` — the printed sentence under each label goes, the
+  **spoken** one stays in every row's semantic label, and the one rule that has
+  to be visible is stated once beneath the group instead of three times inside
+  it;
+* *what to save* moves **below** the range, because the range is what the user
+  came to decide and the mode is usually already settled.
+
+Nothing about the domain moved, and the numeric interaction is untouched:
+digits only, a blank and a zero refused where they were typed, the ceiling
+enforced, `004` normalised on confirmation, and the OK bar still pinned below
+the scrolling body for the number pad iOS gives no return key.

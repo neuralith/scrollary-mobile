@@ -135,13 +135,11 @@ void main() {
   Future<void> chooseTypedRange(WidgetTester tester) =>
       tapAndPump(tester, find.byKey(const ValueKey('saveScopeFromHere')));
 
-  Future<void> chooseLibraryOnlyRange(WidgetTester tester) =>
-      tapAndPump(tester, find.byKey(const ValueKey('saveScopeKnownOnly')));
-
-  screenTest('states the ceiling in words before anything is typed', (
+  screenTest('states the ceiling in words, where the count is typed', (
     tester,
   ) async {
     await openSheet(tester);
+    await chooseTypedRange(tester);
 
     expect(find.textContaining('up to $ceiling'), findsOneWidget);
   });
@@ -153,25 +151,25 @@ void main() {
     await chooseTypedRange(tester);
 
     expect(
-      find.text('How many entries, counting this one?'),
+      find.textContaining('Counts this entry as the first'),
       findsOneWidget,
       reason:
           'ten from entry 101 is 101 through 110, and a sheet that leaves '
           'that to be inferred has said the wrong thing to half its readers',
     );
     expect(
-      find.textContaining('5 means this entry and the next four'),
+      find.textContaining('5 means this one and the next four'),
       findsOneWidget,
-      reason: 'said again in numbers, where the answer is being typed',
+      reason: 'said again in numbers, beside the field it is typed into',
     );
     expect(
-      find.textContaining('reads forward for the next one'),
+      find.textContaining('One page at a time'),
       findsOneWidget,
       reason:
           'the count is a claim about the site, and the site is read as the '
           'download moves along it',
     );
-    expect(find.textContaining('stop it at any point'), findsOneWidget);
+    expect(find.textContaining('stop at any point'), findsOneWidget);
   });
 
   screenTest('the typed count reads this site forward for what is missing', (
@@ -186,48 +184,64 @@ void main() {
     expect(chosen!.discoverMissing, isTrue);
   });
 
-  screenTest('the quieter range keeps the library-only answer', (tester) async {
+  screenTest('there is no third range: saving does not offer the library', (
+    tester,
+  ) async {
+    // *Entries already in your library* answered a different question —
+    // queue what is already known, open nothing — and nobody reaches for it
+    // while saving the page in front of them. It is gone from the save flow
+    // and must not come back (V2-D65); `SaveScopePlanner` still implements it
+    // for the paths that legitimately use it.
     await openSheet(tester);
-    await chooseLibraryOnlyRange(tester);
 
-    expect(
-      countField(),
-      findsOneWidget,
-      reason: 'it is the same question, answered from the library',
-    );
-    expect(
-      find.textContaining('this site is not opened'),
-      findsOneWidget,
-      reason: 'which is the whole difference, so it is the sentence shown',
-    );
-    expect(
-      find.textContaining('5 means this entry and the next four'),
-      findsOneWidget,
-      reason: 'a count means the same thing whichever range answers it',
-    );
+    expect(find.byKey(const ValueKey('saveScopeKnownOnly')), findsNothing);
+    expect(find.textContaining('already in your library'), findsNothing);
+    expect(find.byKey(const ValueKey('saveScopeThisEntry')), findsOneWidget);
+    expect(find.byKey(const ValueKey('saveScopeFromHere')), findsOneWidget);
 
-    await tester.enterText(countField(), '6');
+    await chooseTypedRange(tester);
+    await tester.enterText(countField(), '5');
     await tapAndPump(tester, find.byKey(const ValueKey('saveScopeAddToQueue')));
 
-    expect(chosen!.limits.maxEntries, 6);
-    expect(chosen!.discoverMissing, isFalse);
+    expect(
+      chosen!.discoverMissing,
+      isTrue,
+      reason: 'the one counted range reads the site forward',
+    );
   });
 
-  screenTest('switching between the two counted ranges keeps the number', (
+  screenTest('a tap that lands on the row does not clear a refusal', (
+    tester,
+  ) async {
+    // The count sits inside the row's tap target now, so the row's own tap has
+    // to be idempotent: re-choosing the range it is already on must not wipe
+    // the sentence the user is reading (V2-D65).
+    await openSheet(tester);
+    await chooseTypedRange(tester);
+    await tester.enterText(countField(), '0');
+    await tapAndPump(tester, find.byKey(const ValueKey('saveScopeAddToQueue')));
+    expect(find.text('Enter a whole number of 1 or more.'), findsOneWidget);
+
+    await chooseTypedRange(tester);
+    expect(find.text('Enter a whole number of 1 or more.'), findsOneWidget);
+  });
+
+  screenTest('the number survives a trip through *This entry* and back', (
     tester,
   ) async {
     await openSheet(tester);
     await chooseTypedRange(tester);
-    await tester.enterText(countField(), '7');
-    await chooseLibraryOnlyRange(tester);
-
-    expect(tester.widget<TextField>(countField()).controller!.text, '7');
-
+    await tester.enterText(countField(), '12');
+    await tapAndPump(tester, find.byKey(const ValueKey('saveScopeThisEntry')));
     await chooseTypedRange(tester);
-    await tapAndPump(tester, find.byKey(const ValueKey('saveScopeAddToQueue')));
 
-    expect(chosen!.limits.maxEntries, 7);
-    expect(chosen!.discoverMissing, isTrue);
+    expect(
+      tester.widget<TextField>(countField()).controller!.text,
+      '12',
+      reason:
+          'coming back and finding the number gone would be the sheet '
+          'forgetting something the user said',
+    );
   });
 
   screenTest('the default range is this entry alone', (tester) async {
@@ -539,7 +553,7 @@ void main() {
       );
       // The block names the question; which Collection it is about is the
       // sheet's own identity line above it now (V2-D62).
-      expect(find.text('How much'), findsOneWidget);
+      expect(find.byKey(const ValueKey('saveScopeThisEntry')), findsOneWidget);
 
       await tapAndPump(
         tester,

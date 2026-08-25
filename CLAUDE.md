@@ -114,7 +114,12 @@ in [docs/DECISIONS.md](docs/DECISIONS.md).
   *Download entries…* pair and no scope sheet after this one; the picker stays
   the only modal on the unknown-site path. A listing has no range, and a
   standalone Entry keeps its single download because it has no Collection order
-  to count along.
+  to count along. Two ranges, not three — *Entries already in your library* is
+  the planner's, not the save sheet's — and **the sheet's own probe never
+  vetoes a remembered mode on an image count** (V2-D65): it measures a page
+  that has not been scrolled, where "not enough images" means "not yet". Only
+  `noReadableText` is a fact at that point; the engine re-resolves everything
+  else on the settled page.
 - **Reading on to the next Entry** (`lib/reading_v2/forward_transition.dart`,
   V2-D59) — finishing an Entry and moving forward inside a Collection is what
   frees its downloaded copy, by a rule the user is asked for **once per

@@ -161,12 +161,12 @@ class SaveScopeController extends ChangeNotifier {
   SaveScope _scope;
   SaveScope get scope => _scope;
 
-  /// Which of the two counted ranges is selected, while [scope] is
-  /// [SaveScope.fixedCount]. It survives a switch to *This entry* for the same
-  /// reason the typed number does: coming back and finding the answer changed
-  /// would be the sheet forgetting something the user said.
-  bool _discoverMissing = true;
-  bool get discoverMissing => _discoverMissing;
+  /// The counted range on this sheet is always the one that reads the site
+  /// forward (V2-D65). *Entries already in your library* was a third row that
+  /// answered a different question — queue what is already known, open
+  /// nothing — and nobody reaches for it while saving the page in front of
+  /// them. `SaveScopePlanner` still implements it for the paths that do.
+  bool get discoverMissing => _scope == SaveScope.fixedCount;
 
   String? _countError;
   String? get countError => _countError;
@@ -213,9 +213,13 @@ class SaveScopeController extends ChangeNotifier {
     notifyListeners();
   }
 
-  void chooseCounted({required bool discoverMissing}) {
+  void chooseCounted() {
+    // Idempotent on purpose. The count field sits inside this row's tap
+    // target, so a tap that lands beside the number reaches here too — and
+    // re-choosing the range it is already on must not clear a refusal the
+    // user is in the middle of reading.
+    if (_scope == SaveScope.fixedCount) return;
     _scope = SaveScope.fixedCount;
-    _discoverMissing = discoverMissing;
     _countError = null;
     notifyListeners();
   }
@@ -304,7 +308,7 @@ class SaveScopeController extends ChangeNotifier {
       start: start,
       // *This entry* is the page already in front of the user: there is
       // nothing after it to look for, so it never asks a site for anything.
-      discoverMissing: _scope == SaveScope.fixedCount && _discoverMissing,
+      discoverMissing: discoverMissing,
       collectionName: collectionName,
     );
   }
@@ -398,94 +402,90 @@ class SaveScopeSection extends StatelessWidget {
           ),
           const SizedBox(height: 12),
         ],
-        Text('How much', style: serifStyle(size: 15, color: palette.ink)),
-        const SizedBox(height: 8),
         _RangeOption(
           key: const ValueKey('saveScopeThisEntry'),
           icon: Icons.article_outlined,
           title: 'This entry',
-          sub: 'Only the page you are on.',
           selected: !typed,
           onTap: controller.chooseThisEntry,
         ),
-        const SizedBox(height: 7),
+        const SizedBox(height: 6),
         _RangeOption(
           key: const ValueKey('saveScopeFromHere'),
           icon: Icons.tag,
           title: 'Entries from here',
-          sub:
-              'Type how many to download from this page onward — up to '
-              '${controller.ceiling}.',
-          selected: typed && controller.discoverMissing,
-          onTap: () => controller.chooseCounted(discoverMissing: true),
-        ),
-        const SizedBox(height: 7),
-        _RangeOption(
-          key: const ValueKey('saveScopeKnownOnly'),
-          icon: Icons.library_books_outlined,
-          title: 'Entries already in your library',
-          sub: 'The same count, but only the ones your library already knows.',
-          selected: typed && !controller.discoverMissing,
-          onTap: () => controller.chooseCounted(discoverMissing: false),
+          selected: typed,
+          onTap: controller.chooseCounted,
+          // The count lives **on** the row it belongs to (V2-D65): a field
+          // under three descriptions was a form, and the number is the second
+          // half of this one answer rather than a question of its own.
+          trailing: typed
+              ? SizedBox(
+                  width: 74,
+                  child: TextField(
+                    key: const ValueKey('saveCountField'),
+                    controller: controller.count,
+                    focusNode: controller.countFocus,
+                    // **Not autofocused.** Choosing a range is not asking for
+                    // a keyboard: the launches sit directly below this, and
+                    // the number pad would bury them (V2-D62).
+                    // Unsigned and non-decimal, so the platform draws the
+                    // plain number pad rather than a punctuation keyboard.
+                    keyboardType: TextInputType.number,
+                    // Honoured where the platform draws a return key. Android
+                    // does; iOS's number pad has none, which is why it is
+                    // never the only way out — see [SaveCountOkBar].
+                    textInputAction: TextInputAction.done,
+                    textAlign: TextAlign.center,
+                    // A number and nothing else, however the text arrives.
+                    inputFormatters: [
+                      FilteringTextInputFormatter.digitsOnly,
+                      LengthLimitingTextInputFormatter(controller.maxDigits),
+                    ],
+                    style: monoStyle(size: 17, color: palette.ink),
+                    onChanged: (_) => controller.clearCountError(),
+                    onSubmitted: (_) => controller.confirmCount(),
+                    // Flutter leaves a mobile text field focused when the user
+                    // taps elsewhere. Tapping the sheet is a plain way to say
+                    // "I have finished typing", and this does not consume the
+                    // tap. OK is inside the field's own tap region and so is
+                    // not "elsewhere".
+                    onTapOutside: (_) => controller.countFocus.unfocus(),
+                    decoration: const InputDecoration(
+                      isDense: true,
+                      contentPadding: EdgeInsets.symmetric(vertical: 8),
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                )
+              : null,
         ),
         if (typed) ...[
-          const SizedBox(height: 8),
-          TextField(
-            key: const ValueKey('saveCountField'),
-            controller: controller.count,
-            focusNode: controller.countFocus,
-            // **Not autofocused.** Choosing a range is not asking for a
-            // keyboard: this block sits above the launches on one sheet now,
-            // and raising the number pad on selection would bury them
-            // (V2-D62). Tapping the field is how the keyboard arrives.
-            // Unsigned and non-decimal, so the platform draws the plain
-            // number pad rather than a punctuation keyboard.
-            keyboardType: TextInputType.number,
-            // Honoured where the platform draws a return key. Android does;
-            // iOS's number pad has none, which is why it is never the only way
-            // out — see [SaveCountOkBar].
-            textInputAction: TextInputAction.done,
-            // A number and nothing else, however the text arrives.
-            inputFormatters: [
-              FilteringTextInputFormatter.digitsOnly,
-              LengthLimitingTextInputFormatter(controller.maxDigits),
-            ],
-            style: monoStyle(size: 20, color: palette.ink),
-            onChanged: (_) => controller.clearCountError(),
-            onSubmitted: (_) => controller.confirmCount(),
-            // Flutter leaves a mobile text field focused when the user taps
-            // elsewhere. Tapping the sheet is a plain way to say "I have
-            // finished typing", and this does not consume the tap. OK is
-            // inside the field's own tap region and so is not "elsewhere".
-            onTapOutside: (_) => controller.countFocus.unfocus(),
-            decoration: InputDecoration(
-              // The count's meaning, at the point it is typed: ten from entry
-              // 101 is 101 through 110, and a sheet that leaves that to be
-              // inferred has told half its readers the wrong thing.
-              labelText: 'How many entries, counting this one?',
-              errorText: controller.countError,
-              errorMaxLines: 2,
+          // The refusal, where the number was typed. `errorText` went with the
+          // field's own decoration when the field became a chip on the row, so
+          // it is stated here instead — under the row, still next to it.
+          if (controller.countError case final error?)
+            Padding(
+              key: const ValueKey('saveCountError'),
+              padding: const EdgeInsets.only(top: 6),
+              child: Text(
+                error,
+                style: TextStyle(fontSize: 11.5, color: palette.danger),
+              ),
             ),
-          ),
-          const SizedBox(height: 8),
+          const SizedBox(height: 6),
           Text(
-            controller.discoverMissing
-                // What the operation is, in the words the user can act on:
-                // where it starts, how it goes on, what it does not do, and
-                // that it ends when they say so. Said once and briefly.
-                ? '5 means this entry and the next four. Scrollary downloads '
-                      'this page, then reads forward for the next one and '
-                      'downloads that — one page at a time, nothing else '
-                      'downloaded, and you can stop it at any point.'
-                : '5 means this entry and the next four. Only entries your '
-                      'library already knows, and this site is not opened — '
-                      'if it knows fewer, Scrollary says so.',
-            key: controller.discoverMissing
-                ? const ValueKey('saveScopeReadsForwardNote')
-                : const ValueKey('saveScopeLibraryOnlyNote'),
+            // Everything the three range descriptions used to carry between
+            // them, in one sentence: the count is **inclusive**, the ceiling
+            // is a number the user can see (CLAUDE.md), the site is read one
+            // page at a time, nothing else is taken, and it stops when asked.
+            'Counts this entry as the first, so 5 means this one and the next '
+            'four — up to ${controller.ceiling}. One page at a time, nothing '
+            'else downloaded, and you can stop at any point.',
+            key: const ValueKey('saveScopeReadsForwardNote'),
             style: TextStyle(
               fontSize: 11.5,
-              height: 1.45,
+              height: 1.4,
               color: palette.inkMuted,
             ),
           ),
@@ -495,12 +495,12 @@ class SaveScopeSection extends StatelessWidget {
           if (controller.estimateSentence case final sentence?)
             Padding(
               key: const ValueKey('saveScopeEstimate'),
-              padding: const EdgeInsets.only(top: 6),
+              padding: const EdgeInsets.only(top: 4),
               child: Text(
                 sentence,
                 style: TextStyle(
                   fontSize: 11.5,
-                  height: 1.45,
+                  height: 1.4,
                   color: palette.inkMuted,
                 ),
               ),
@@ -561,70 +561,62 @@ class SaveCountOkBar extends StatelessWidget {
   }
 }
 
-/// One range, with its own sentence. Selected state is a border and a tick,
-/// never colour alone.
+/// One range, on one line. Selected state is a border and a tick, never colour
+/// alone.
 class _RangeOption extends StatelessWidget {
   const _RangeOption({
     super.key,
     required this.icon,
     required this.title,
-    required this.sub,
     required this.selected,
     required this.onTap,
+    this.trailing,
   });
 
   final IconData icon;
   final String title;
-  final String sub;
   final bool selected;
   final VoidCallback onTap;
+
+  /// The count, for the range that takes one. It sits inside the row's tap
+  /// target and is not part of it — a tap on the field is a tap on the field.
+  final Widget? trailing;
 
   @override
   Widget build(BuildContext context) {
     final palette = AppPalette.of(context);
     return Material(
       color: selected ? palette.primaryContainer : palette.surfaceMuted,
-      borderRadius: BorderRadius.circular(14),
+      borderRadius: BorderRadius.circular(12),
       clipBehavior: Clip.antiAlias,
       child: InkWell(
         onTap: onTap,
         child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 11),
+          padding: const EdgeInsets.fromLTRB(12, 9, 10, 9),
           decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(14),
+            borderRadius: BorderRadius.circular(12),
             border: Border.all(
               color: selected ? palette.primaryBorder : palette.border,
             ),
           ),
           child: Row(
             children: [
-              Icon(icon, size: 20, color: palette.primary),
+              Icon(icon, size: 19, color: palette.primary),
               const SizedBox(width: 11),
               Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      title,
-                      style: TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w500,
-                        color: palette.ink,
-                      ),
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      sub,
-                      style: TextStyle(
-                        fontSize: 11.5,
-                        height: 1.4,
-                        color: palette.inkMuted,
-                      ),
-                    ),
-                  ],
+                child: Text(
+                  title,
+                  style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w500,
+                    color: palette.ink,
+                  ),
                 ),
               ),
-              if (selected)
+              if (trailing case final field?) ...[
+                const SizedBox(width: 8),
+                field,
+              ] else if (selected)
                 Icon(Icons.check_circle, size: 19, color: palette.primary),
             ],
           ),

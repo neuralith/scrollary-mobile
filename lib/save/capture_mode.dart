@@ -128,6 +128,20 @@ enum ModeBlockReason {
     ModeBlockReason.noMeaningfulImages =>
       'No images were found inside the readable text.',
   };
+
+  /// Whether this reason can be trusted from a page that has **not been
+  /// scrolled** (V2-D65).
+  ///
+  /// The save engine measures capabilities on the settled page, after
+  /// scrolling, and says why in its own comment: "before it, a lazy page
+  /// reports whatever happened to have loaded". Both image reasons are counts
+  /// of what has loaded so far, so on a lazy reader they say *not yet* and
+  /// read as *never*. Prose is in the DOM from the first byte, so the absence
+  /// of it is a fact about the page rather than about its progress.
+  ///
+  /// Only a surface that measures before scrolling needs this — the engine's
+  /// own resolution happens after, where every reason is true.
+  bool get survivesAnUnscrolledPage => this == ModeBlockReason.noReadableText;
 }
 
 /// What a page can honestly be saved as, and what to preselect.
