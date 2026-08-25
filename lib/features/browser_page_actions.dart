@@ -8,6 +8,7 @@ import '../browser/browser_controller.dart';
 import '../browser/browser_url.dart';
 import '../core/url_utils.dart';
 import '../providers.dart';
+import '../ui/menu_sheet.dart';
 import '../ui/palette.dart';
 import '../ui/status_style.dart';
 import '../ui/theme.dart';
@@ -34,7 +35,7 @@ Future<PageAction> showPageActionsSheet({
   required String title,
   bool canSave = true,
 }) async {
-  final action = await showModalBottomSheet<PageAction>(
+  final action = await showLibraryMenu<PageAction>(
     context: context,
     showDragHandle: true,
     builder: (sheetContext) => _PageActionsSheet(
@@ -67,180 +68,174 @@ class _PageActionsSheet extends ConsumerWidget {
     final isSaved = saved.any((s) => s.urlKey == normalizeUrl(url));
     final host = displayHost(url);
 
-    return SafeArea(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(18, 0, 18, 8),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  title.isEmpty ? host : title,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    fontSize: 14,
-                    fontVariations: wght(600),
-                    fontWeight: FontWeight.w600,
-                    color: palette.ink,
-                  ),
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(18, 0, 18, 8),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                title.isEmpty ? host : title,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 14,
+                  fontVariations: wght(600),
+                  fontWeight: FontWeight.w600,
+                  color: palette.ink,
                 ),
-                const SizedBox(height: 3),
-                Text(
-                  shortUrl(url),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: monoStyle(size: 11, color: palette.inkMuted),
-                ),
-              ],
-            ),
+              ),
+              const SizedBox(height: 3),
+              Text(
+                shortUrl(url),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: monoStyle(size: 11, color: palette.inkMuted),
+              ),
+            ],
           ),
-          if (canSave)
-            Padding(
-              padding: const EdgeInsets.fromLTRB(18, 4, 18, 10),
-              child: Material(
-                color: palette.primary,
+        ),
+        if (canSave)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(18, 4, 18, 10),
+            child: Material(
+              color: palette.primary,
+              borderRadius: BorderRadius.circular(14),
+              child: InkWell(
+                key: const ValueKey('pageActionSave'),
+                onTap: () => Navigator.of(context).pop(PageAction.save),
                 borderRadius: BorderRadius.circular(14),
-                child: InkWell(
-                  key: const ValueKey('pageActionSave'),
-                  onTap: () => Navigator.of(context).pop(PageAction.save),
-                  borderRadius: BorderRadius.circular(14),
-                  child: Padding(
-                    padding: const EdgeInsets.fromLTRB(14, 13, 14, 13),
-                    child: Row(
-                      children: [
-                        Icon(
-                          Icons.download,
-                          size: 21,
-                          color: palette.onPrimary,
-                        ),
-                        const SizedBox(width: 10),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Text(
-                                'Save',
-                                style: TextStyle(
-                                  fontSize: 14,
-                                  fontVariations: wght(600),
-                                  fontWeight: FontWeight.w600,
-                                  color: palette.onPrimary,
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(14, 13, 14, 13),
+                  child: Row(
+                    children: [
+                      Icon(Icons.download, size: 21, color: palette.onPrimary),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              'Save',
+                              style: TextStyle(
+                                fontSize: 14,
+                                fontVariations: wght(600),
+                                fontWeight: FontWeight.w600,
+                                color: palette.onPrimary,
+                              ),
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              'This entry, or a number of entries from here',
+                              style: TextStyle(
+                                fontSize: 11.5,
+                                color: palette.onPrimary.withValues(
+                                  alpha: 0.78,
                                 ),
                               ),
-                              const SizedBox(height: 2),
-                              Text(
-                                'This entry, or a number of entries from here',
-                                style: TextStyle(
-                                  fontSize: 11.5,
-                                  color: palette.onPrimary.withValues(
-                                    alpha: 0.78,
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
+                            ),
+                          ],
                         ),
-                      ],
-                    ),
+                      ),
+                    ],
                   ),
                 ),
               ),
             ),
-          DecoratedBox(
-            decoration: BoxDecoration(
-              border: Border(top: BorderSide(color: palette.divider)),
-            ),
-            child: Column(
-              children: [
-                _ActionTile(
-                  icon: isSaved ? Icons.bookmark_added : Icons.bookmark_add,
-                  label: isSaved
-                      ? 'Already in saved sites'
-                      : 'Add to saved sites',
-                  badge: isSaved ? 'Saved' : null,
-                  onTap: () =>
-                      Navigator.of(context).pop(PageAction.addToSavedSites),
-                ),
-                _ActionTile(
-                  icon: Icons.link,
-                  label: 'Copy link',
-                  onTap: () async {
-                    final messenger = ScaffoldMessenger.maybeOf(context);
-                    final navigator = Navigator.of(context);
-                    await Clipboard.setData(ClipboardData(text: url));
-                    navigator.pop(PageAction.none);
+          ),
+        DecoratedBox(
+          decoration: BoxDecoration(
+            border: Border(top: BorderSide(color: palette.divider)),
+          ),
+          child: Column(
+            children: [
+              _ActionTile(
+                icon: isSaved ? Icons.bookmark_added : Icons.bookmark_add,
+                label: isSaved
+                    ? 'Already in saved sites'
+                    : 'Add to saved sites',
+                badge: isSaved ? 'Saved' : null,
+                onTap: () =>
+                    Navigator.of(context).pop(PageAction.addToSavedSites),
+              ),
+              _ActionTile(
+                icon: Icons.link,
+                label: 'Copy link',
+                onTap: () async {
+                  final messenger = ScaffoldMessenger.maybeOf(context);
+                  final navigator = Navigator.of(context);
+                  await Clipboard.setData(ClipboardData(text: url));
+                  navigator.pop(PageAction.none);
+                  messenger?.showSnackBar(
+                    const SnackBar(content: Text('Link copied')),
+                  );
+                },
+              ),
+              _ActionTile(
+                icon: Icons.ios_share,
+                label: 'Share',
+                onTap: () async {
+                  final navigator = Navigator.of(context);
+                  navigator.pop(PageAction.none);
+                  await SharePlus.instance.share(
+                    ShareParams(
+                      uri: Uri.tryParse(url),
+                      title: title.isEmpty ? host : title,
+                    ),
+                  );
+                },
+              ),
+              _ActionTile(
+                icon: Icons.open_in_new,
+                label: 'Open in Safari',
+                onTap: () async {
+                  final messenger = ScaffoldMessenger.maybeOf(context);
+                  final navigator = Navigator.of(context);
+                  final uri = Uri.tryParse(url);
+                  navigator.pop(PageAction.none);
+                  if (uri == null) return;
+                  // Explicitly leaves the app. Save is unaffected: it
+                  // runs against the in-app WebView, which stays where it
+                  // is.
+                  final launched = await launchUrl(
+                    uri,
+                    mode: LaunchMode.externalApplication,
+                  );
+                  if (!launched) {
                     messenger?.showSnackBar(
-                      const SnackBar(content: Text('Link copied')),
-                    );
-                  },
-                ),
-                _ActionTile(
-                  icon: Icons.ios_share,
-                  label: 'Share',
-                  onTap: () async {
-                    final navigator = Navigator.of(context);
-                    navigator.pop(PageAction.none);
-                    await SharePlus.instance.share(
-                      ShareParams(
-                        uri: Uri.tryParse(url),
-                        title: title.isEmpty ? host : title,
+                      const SnackBar(
+                        content: Text('No app could open this address'),
                       ),
                     );
-                  },
-                ),
-                _ActionTile(
-                  icon: Icons.open_in_new,
-                  label: 'Open in Safari',
-                  onTap: () async {
-                    final messenger = ScaffoldMessenger.maybeOf(context);
-                    final navigator = Navigator.of(context);
-                    final uri = Uri.tryParse(url);
-                    navigator.pop(PageAction.none);
-                    if (uri == null) return;
-                    // Explicitly leaves the app. Save is unaffected: it
-                    // runs against the in-app WebView, which stays where it
-                    // is.
-                    final launched = await launchUrl(
-                      uri,
-                      mode: LaunchMode.externalApplication,
-                    );
-                    if (!launched) {
-                      messenger?.showSnackBar(
-                        const SnackBar(
-                          content: Text('No app could open this address'),
-                        ),
-                      );
-                    }
-                  },
-                ),
-                _ActionTile(
-                  icon: Icons.find_in_page,
-                  label: 'Find in page',
-                  onTap: () => Navigator.of(context).pop(PageAction.findInPage),
-                ),
-                _ActionTile(
-                  icon: Icons.info_outline,
-                  label: 'Site information',
-                  onTap: () {
-                    Navigator.of(context).pop(PageAction.none);
-                    showSiteInformationSheet(
-                      context: context,
-                      ref: parentRef,
-                      url: url,
-                    );
-                  },
-                ),
-              ],
-            ),
+                  }
+                },
+              ),
+              _ActionTile(
+                icon: Icons.find_in_page,
+                label: 'Find in page',
+                onTap: () => Navigator.of(context).pop(PageAction.findInPage),
+              ),
+              _ActionTile(
+                icon: Icons.info_outline,
+                label: 'Site information',
+                onTap: () {
+                  Navigator.of(context).pop(PageAction.none);
+                  showSiteInformationSheet(
+                    context: context,
+                    ref: parentRef,
+                    url: url,
+                  );
+                },
+              ),
+            ],
           ),
-          const SizedBox(height: 8),
-        ],
-      ),
+        ),
+        const SizedBox(height: 8),
+      ],
     );
   }
 }
@@ -307,87 +302,83 @@ Future<void> showSiteInformationSheet({
   final cookies = await browser.cookieCountFor(url);
   if (!context.mounted) return;
 
-  await showModalBottomSheet<void>(
+  await showLibraryMenu<void>(
     context: context,
     showDragHandle: true,
     builder: (sheetContext) {
       final palette = AppPalette.of(sheetContext);
       final host = displayHost(url);
       final secure = url.startsWith('https://');
-      return SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Text(
-                'Site information',
-                style: serifStyle(size: 20, color: palette.ink),
-              ),
-              const SizedBox(height: 14),
-              Row(
-                children: [
-                  Icon(
-                    secure ? Icons.lock : Icons.lock_open,
-                    size: 19,
-                    color: secure ? palette.primary : palette.warn,
-                  ),
-                  const SizedBox(width: 9),
-                  Expanded(
-                    child: Text(
-                      secure
-                          ? 'Secure connection'
-                          : 'Not secure — this page is served over http',
-                      style: TextStyle(
-                        fontSize: 13.5,
-                        fontVariations: wght(500),
-                        fontWeight: FontWeight.w500,
-                        color: secure ? palette.ink : palette.warn,
-                      ),
+      return Padding(
+        padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text(
+              'Site information',
+              style: serifStyle(size: 20, color: palette.ink),
+            ),
+            const SizedBox(height: 14),
+            Row(
+              children: [
+                Icon(
+                  secure ? Icons.lock : Icons.lock_open,
+                  size: 19,
+                  color: secure ? palette.primary : palette.warn,
+                ),
+                const SizedBox(width: 9),
+                Expanded(
+                  child: Text(
+                    secure
+                        ? 'Secure connection'
+                        : 'Not secure — this page is served over http',
+                    style: TextStyle(
+                      fontSize: 13.5,
+                      fontVariations: wght(500),
+                      fontWeight: FontWeight.w500,
+                      color: secure ? palette.ink : palette.warn,
                     ),
                   ),
-                ],
-              ),
-              const SizedBox(height: 14),
-              _InfoRow(label: 'Site', value: host),
-              _InfoRow(label: 'Address', value: url, wrap: true),
-              _InfoRow(
-                label: 'Cookies',
-                value: cookies == 0
-                    ? 'none stored'
-                    : '$cookies stored for this site',
-              ),
-              const SizedBox(height: 16),
-              OutlinedButton.icon(
-                key: const ValueKey('siteInfoClearData'),
-                onPressed: cookies == 0
-                    ? null
-                    : () async {
-                        final messenger = ScaffoldMessenger.maybeOf(
-                          sheetContext,
-                        );
-                        final navigator = Navigator.of(sheetContext);
-                        await browser.clearDataForUrl(url);
-                        navigator.pop();
-                        messenger?.showSnackBar(
-                          SnackBar(
-                            content: Text(
-                              'Cleared stored data for $host — you may need '
-                              'to sign in again',
-                            ),
-                          ),
-                        );
-                      },
-                icon: const Icon(Icons.no_encryption, size: 18),
-                label: const Text('Clear data for this site'),
-                style: OutlinedButton.styleFrom(
-                  foregroundColor: palette.danger,
-                  side: BorderSide(color: palette.borderStrong),
                 ),
+              ],
+            ),
+            const SizedBox(height: 14),
+            _InfoRow(label: 'Site', value: host),
+            _InfoRow(label: 'Address', value: url, wrap: true),
+            _InfoRow(
+              label: 'Cookies',
+              value: cookies == 0
+                  ? 'none stored'
+                  : '$cookies stored for this site',
+            ),
+            const SizedBox(height: 16),
+            OutlinedButton.icon(
+              key: const ValueKey('siteInfoClearData'),
+              onPressed: cookies == 0
+                  ? null
+                  : () async {
+                      final messenger = ScaffoldMessenger.maybeOf(sheetContext);
+                      final navigator = Navigator.of(sheetContext);
+                      await browser.clearDataForUrl(url);
+                      navigator.pop();
+                      messenger?.showSnackBar(
+                        SnackBar(
+                          content: Text(
+                            'Cleared stored data for $host — you may need '
+                            'to sign in again',
+                          ),
+                        ),
+                      );
+                    },
+              icon: const Icon(Icons.no_encryption, size: 18),
+              label: const Text('Clear data for this site'),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: palette.danger,
+                side: BorderSide(color: palette.borderStrong),
               ),
-            ],
-          ),
+            ),
+          ],
         ),
       );
     },

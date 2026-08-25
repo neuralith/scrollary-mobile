@@ -32,6 +32,7 @@ import '../reading_v2/finished_cleanup.dart';
 import '../save/capture_mode.dart';
 import 'entry_details.dart';
 import '../save/queue_task.dart';
+import '../ui/menu_sheet.dart';
 import '../ui/palette.dart';
 import '../ui/status_style.dart';
 import 'collection_models.dart';
@@ -67,115 +68,111 @@ Future<void> showCollectionMenu(
       .of(view.collection.id);
   if (!context.mounted) return;
 
-  final action = await showModalBottomSheet<_CollectionAction>(
+  final action = await showLibraryMenu<_CollectionAction>(
     context: context,
-    builder: (sheetContext) => SafeArea(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(20, 14, 20, 8),
-            child: Text(
-              view.name,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style: serifStyle(size: 20),
-            ),
+    builder: (sheetContext) => Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(20, 14, 20, 8),
+          child: Text(
+            view.name,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: serifStyle(size: 20),
           ),
-          // Free, and never gated: what the app will *do* for a user is not
-          // smaller without Pro. Absent for an archived collection, because
-          // archiving is exactly "stop keeping this current" — offering a
-          // check there would contradict the sentence beside it.
-          if (!view.archived && ref.read(collectionCheckerProvider) != null)
-            ListTile(
-              key: const ValueKey('collectionCheck'),
-              leading: const Icon(Icons.search),
-              title: const Text('Check for new entries'),
-              subtitle: const Text(
-                'Reads this collection\'s site in the Browser. Nothing is '
-                'downloaded.',
-              ),
-              onTap: () =>
-                  Navigator.of(sheetContext).pop(_CollectionAction.check),
-            ),
-          // What this collection is normally saved as, changeable after the
-          // fact and **without starting a capture**. The save sheet is where
-          // it is first set; this is where someone who changed their mind
-          // goes, and the row carries the standing answer so that reading it
-          // costs nothing (V2-D60).
+        ),
+        // Free, and never gated: what the app will *do* for a user is not
+        // smaller without Pro. Absent for an archived collection, because
+        // archiving is exactly "stop keeping this current" — offering a
+        // check there would contradict the sentence beside it.
+        if (!view.archived && ref.read(collectionCheckerProvider) != null)
           ListTile(
-            key: const ValueKey('collectionCaptureMode'),
-            leading: const Icon(Icons.tune),
-            title: const Text('What to save'),
-            subtitle: Text(
-              capture == null
-                  ? 'Ask each time. Scrollary proposes what the page itself '
-                        'can offer.'
-                  : '${capture.label}. Used for entries of this collection, '
-                        'where the page can be saved that way.',
-            ),
-            onTap: () =>
-                Navigator.of(sheetContext).pop(_CollectionAction.captureMode),
-          ),
-          // What happens to a finished entry's downloaded files when the
-          // reader moves on. Set the first time it has a consequence, in the
-          // reader; this is where somebody who changed their mind goes, and
-          // the only place the answer can be cleared.
-          ListTile(
-            key: const ValueKey('collectionFinishedCleanup'),
-            leading: const Icon(Icons.auto_delete_outlined),
-            title: const Text('Finished entries'),
+            key: const ValueKey('collectionCheck'),
+            leading: const Icon(Icons.search),
+            title: const Text('Check for new entries'),
             subtitle: const Text(
-              'What happens to their downloaded files on this device when you '
-              'read on.',
+              'Reads this collection\'s site in the Browser. Nothing is '
+              'downloaded.',
             ),
-            onTap: () => Navigator.of(
-              sheetContext,
-            ).pop(_CollectionAction.finishedCleanup),
-          ),
-          if (view.archived)
-            ListTile(
-              key: const ValueKey('collectionFollow'),
-              leading: const Icon(Icons.bookmark_added_outlined),
-              title: const Text('Follow again'),
-              subtitle: const Text(
-                'Scrollary keeps this collection current as you read.',
-              ),
-              onTap: () =>
-                  Navigator.of(sheetContext).pop(_CollectionAction.follow),
-            )
-          else
-            ListTile(
-              key: const ValueKey('collectionArchive'),
-              leading: const Icon(Icons.inventory_2_outlined),
-              title: const Text('Archive'),
-              subtitle: const Text(
-                'Stops following it. Entries, reading state and anything on '
-                'this device stay exactly as they are.',
-              ),
-              onTap: () =>
-                  Navigator.of(sheetContext).pop(_CollectionAction.archive),
-            ),
-          ListTile(
-            key: const ValueKey('collectionMove'),
-            leading: const Icon(Icons.drive_file_move_outline),
-            title: const Text('Move to folder'),
-            subtitle: const Text('How you organise your library.'),
-            onTap: () => Navigator.of(sheetContext).pop(_CollectionAction.move),
-          ),
-          // Last, and never worded as a tidier archive: the two removals in
-          // this app are different sizes and the labels have to say so.
-          ListTile(
-            key: const ValueKey('collectionRemove'),
-            leading: const Icon(Icons.playlist_remove),
-            title: const Text('Remove from library'),
-            subtitle: const Text('Your library, on every device you use.'),
             onTap: () =>
-                Navigator.of(sheetContext).pop(_CollectionAction.remove),
+                Navigator.of(sheetContext).pop(_CollectionAction.check),
           ),
-          const SizedBox(height: 8),
-        ],
-      ),
+        // What this collection is normally saved as, changeable after the
+        // fact and **without starting a capture**. The save sheet is where
+        // it is first set; this is where someone who changed their mind
+        // goes, and the row carries the standing answer so that reading it
+        // costs nothing (V2-D60).
+        ListTile(
+          key: const ValueKey('collectionCaptureMode'),
+          leading: const Icon(Icons.tune),
+          title: const Text('What to save'),
+          subtitle: Text(
+            capture == null
+                ? 'Ask each time. Scrollary proposes what the page itself '
+                      'can offer.'
+                : '${capture.label}. Used for entries of this collection, '
+                      'where the page can be saved that way.',
+          ),
+          onTap: () =>
+              Navigator.of(sheetContext).pop(_CollectionAction.captureMode),
+        ),
+        // What happens to a finished entry's downloaded files when the
+        // reader moves on. Set the first time it has a consequence, in the
+        // reader; this is where somebody who changed their mind goes, and
+        // the only place the answer can be cleared.
+        ListTile(
+          key: const ValueKey('collectionFinishedCleanup'),
+          leading: const Icon(Icons.auto_delete_outlined),
+          title: const Text('Finished entries'),
+          subtitle: const Text(
+            'What happens to their downloaded files on this device when you '
+            'read on.',
+          ),
+          onTap: () =>
+              Navigator.of(sheetContext).pop(_CollectionAction.finishedCleanup),
+        ),
+        if (view.archived)
+          ListTile(
+            key: const ValueKey('collectionFollow'),
+            leading: const Icon(Icons.bookmark_added_outlined),
+            title: const Text('Follow again'),
+            subtitle: const Text(
+              'Scrollary keeps this collection current as you read.',
+            ),
+            onTap: () =>
+                Navigator.of(sheetContext).pop(_CollectionAction.follow),
+          )
+        else
+          ListTile(
+            key: const ValueKey('collectionArchive'),
+            leading: const Icon(Icons.inventory_2_outlined),
+            title: const Text('Archive'),
+            subtitle: const Text(
+              'Stops following it. Entries, reading state and anything on '
+              'this device stay exactly as they are.',
+            ),
+            onTap: () =>
+                Navigator.of(sheetContext).pop(_CollectionAction.archive),
+          ),
+        ListTile(
+          key: const ValueKey('collectionMove'),
+          leading: const Icon(Icons.drive_file_move_outline),
+          title: const Text('Move to folder'),
+          subtitle: const Text('How you organise your library.'),
+          onTap: () => Navigator.of(sheetContext).pop(_CollectionAction.move),
+        ),
+        // Last, and never worded as a tidier archive: the two removals in
+        // this app are different sizes and the labels have to say so.
+        ListTile(
+          key: const ValueKey('collectionRemove'),
+          leading: const Icon(Icons.playlist_remove),
+          title: const Text('Remove from library'),
+          subtitle: const Text('Your library, on every device you use.'),
+          onTap: () => Navigator.of(sheetContext).pop(_CollectionAction.remove),
+        ),
+        const SizedBox(height: 8),
+      ],
     ),
   );
   if (action == null || !context.mounted) return;
@@ -352,197 +349,212 @@ Future<void> showEntryMenu(
   EntryRowView view,
 ) async {
   final task = ref.read(entrySaveTaskProvider(view.id));
-  final action = await showModalBottomSheet<_EntryAction>(
+  final action = await showLibraryMenu<_EntryAction>(
     context: context,
-    builder: (sheetContext) => SafeArea(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Padding(
-            padding: EdgeInsets.fromLTRB(20, 14, 20, task == null ? 8 : 2),
-            child: Text(
-              view.label,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style: serifStyle(size: 20),
-            ),
+    builder: (sheetContext) => Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Padding(
+          padding: EdgeInsets.fromLTRB(20, 14, 20, task == null ? 8 : 2),
+          child: Text(
+            view.label,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: serifStyle(size: 20),
           ),
-          // What the queue is doing about this Entry, in the queue's own
-          // recorded outcome where it has one.
-          if (task != null)
-            Padding(
-              padding: const EdgeInsets.fromLTRB(20, 0, 20, 10),
-              child: Text(
-                saveTaskSentence(task),
-                style: TextStyle(
-                  fontSize: 12,
-                  height: 1.5,
-                  color: AppPalette.of(sheetContext).inkMuted,
-                ),
+        ),
+        // What the queue is doing about this Entry, in the queue's own
+        // recorded outcome where it has one.
+        if (task != null)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 0, 20, 10),
+            child: Text(
+              saveTaskSentence(task),
+              style: TextStyle(
+                fontSize: 12,
+                height: 1.5,
+                color: AppPalette.of(sheetContext).inkMuted,
               ),
             ),
-          if (view.availableOffline)
-            ListTile(
-              key: const ValueKey('entryRead'),
-              leading: const Icon(Icons.menu_book_outlined),
-              title: const Text('Read'),
-              subtitle: const Text('Opens the copy on this device.'),
-              onTap: () => Navigator.of(sheetContext).pop(_EntryAction.read),
-            ),
-          if (view.status == ReadStatus.completed)
-            ListTile(
-              key: const ValueKey('entryMarkUnread'),
-              leading: const Icon(Icons.remove_done),
-              title: const Text('Mark unread'),
-              subtitle: const Text('Reading state follows the entry itself.'),
-              onTap: () =>
-                  Navigator.of(sheetContext).pop(_EntryAction.markUnread),
-            )
-          else
-            ListTile(
-              key: const ValueKey('entryMarkRead'),
-              leading: const Icon(Icons.done_all),
-              title: const Text('Mark read'),
-              subtitle: const Text('Reading state follows the entry itself.'),
-              onTap: () =>
-                  Navigator.of(sheetContext).pop(_EntryAction.markRead),
-            ),
-          // What the library actually holds, verbatim. The list rows lead
-          // with an Entry's position and drop the part of a page title that
-          // only repeats it and the work's name — a *presentation* rule, so
-          // the evidence behind it has to be one tap away or the rule is a
-          // deletion pretending to be tidiness.
-          ListTile(
-            key: const ValueKey('entryDetails'),
-            leading: const Icon(Icons.info_outline),
-            title: const Text('Details'),
-            subtitle: const Text(
-              'What the source called it, where it is read from, and what '
-              'this device holds.',
-            ),
-            onTap: () => Navigator.of(sheetContext).pop(_EntryAction.details),
           ),
+        if (view.availableOffline)
           ListTile(
-            key: const ValueKey('entryOpenAtSource'),
-            leading: const Icon(Icons.open_in_new),
-            title: const Text('Open at source'),
+            key: const ValueKey('entryRead'),
+            leading: const Icon(Icons.menu_book_outlined),
+            title: const Text('Read'),
+            subtitle: const Text('Opens the copy on this device.'),
+            onTap: () => Navigator.of(sheetContext).pop(_EntryAction.read),
+          ),
+        if (view.status == ReadStatus.completed)
+          ListTile(
+            key: const ValueKey('entryMarkUnread'),
+            leading: const Icon(Icons.remove_done),
+            title: const Text('Mark unread'),
+            subtitle: const Text('Reading state follows the entry itself.'),
+            onTap: () =>
+                Navigator.of(sheetContext).pop(_EntryAction.markUnread),
+          )
+        else
+          ListTile(
+            key: const ValueKey('entryMarkRead'),
+            leading: const Icon(Icons.done_all),
+            title: const Text('Mark read'),
+            subtitle: const Text('Reading state follows the entry itself.'),
+            onTap: () => Navigator.of(sheetContext).pop(_EntryAction.markRead),
+          ),
+        // What the library actually holds, verbatim. The list rows lead
+        // with an Entry's position and drop the part of a page title that
+        // only repeats it and the work's name — a *presentation* rule, so
+        // the evidence behind it has to be one tap away or the rule is a
+        // deletion pretending to be tidiness.
+        ListTile(
+          key: const ValueKey('entryDetails'),
+          leading: const Icon(Icons.info_outline),
+          title: const Text('Details'),
+          subtitle: const Text(
+            'What the source called it, where it is read from, and what '
+            'this device holds.',
+          ),
+          onTap: () => Navigator.of(sheetContext).pop(_EntryAction.details),
+        ),
+        ListTile(
+          key: const ValueKey('entryOpenAtSource'),
+          leading: const Icon(Icons.open_in_new),
+          title: const Text('Open at source'),
+          subtitle: const Text(
+            'Records that you opened it. Position is not measured on a '
+            'website, so nothing is guessed about how far you got.',
+          ),
+          onTap: () =>
+              Navigator.of(sheetContext).pop(_EntryAction.openAtSource),
+        ),
+        // A position the app could not establish is the user's to give, and
+        // only theirs (V2-D16).
+        if (view.needsPlacement)
+          ListTile(
+            key: const ValueKey('entryPlace'),
+            leading: const Icon(Icons.numbers),
+            title: const Text('Set its position'),
             subtitle: const Text(
-              'Records that you opened it. Position is not measured on a '
-              'website, so nothing is guessed about how far you got.',
+              'Where this sits in the collection\'s sequence. Nothing is '
+              'guessed for you.',
+            ),
+            onTap: () => Navigator.of(sheetContext).pop(_EntryAction.place),
+          ),
+        // A standalone Entry is a first-class library item, not a mistake
+        // to be corrected — so this is offered, never urged, and only where
+        // it means anything: an Entry that is already in a Collection has
+        // nothing to adopt it (I3).
+        if (view.row.collectionId == null)
+          ListTile(
+            key: const ValueKey('entryAddToCollection'),
+            leading: const Icon(Icons.library_add_outlined),
+            title: const Text('Add to a collection…'),
+            subtitle: const Text(
+              'Moves this entry into a collection you already have. '
+              'Nothing on this device is removed.',
             ),
             onTap: () =>
-                Navigator.of(sheetContext).pop(_EntryAction.openAtSource),
+                Navigator.of(sheetContext).pop(_EntryAction.addToCollection),
           ),
-          // A position the app could not establish is the user's to give, and
-          // only theirs (V2-D16).
-          if (view.needsPlacement)
-            ListTile(
-              key: const ValueKey('entryPlace'),
-              leading: const Icon(Icons.numbers),
-              title: const Text('Set its position'),
-              subtitle: const Text(
-                'Where this sits in the collection\'s sequence. Nothing is '
-                'guessed for you.',
-              ),
-              onTap: () => Navigator.of(sheetContext).pop(_EntryAction.place),
-            ),
-          // A standalone Entry is a first-class library item, not a mistake
-          // to be corrected — so this is offered, never urged, and only where
-          // it means anything: an Entry that is already in a Collection has
-          // nothing to adopt it (I3).
-          if (view.row.collectionId == null)
-            ListTile(
-              key: const ValueKey('entryAddToCollection'),
-              leading: const Icon(Icons.library_add_outlined),
-              title: const Text('Add to a collection…'),
-              subtitle: const Text(
-                'Moves this entry into a collection you already have. '
-                'Nothing on this device is removed.',
-              ),
-              onTap: () =>
-                  Navigator.of(sheetContext).pop(_EntryAction.addToCollection),
-            ),
-          // Downloading is one Entry, onto one device, and it waits. A row
-          // already in the queue offers what can be done to *that row*
-          // instead — a second request would only ever be a second candidate
-          // for one copy (I13).
-          if (task == null || task.isTerminal)
-            ListTile(
-              key: const ValueKey('entryDownload'),
-              leading: const Icon(Icons.download_for_offline_outlined),
-              title: const Text('Download for offline'),
-              subtitle: const Text(
-                'Puts a copy on this device. It waits in the queue until you '
-                'start it.',
-              ),
-              onTap: () =>
-                  Navigator.of(sheetContext).pop(_EntryAction.download),
-            ),
-          if (task != null && task.state == SaveTaskState.queued) ...[
-            ListTile(
-              key: const ValueKey('entryStartDownload'),
-              leading: const Icon(Icons.play_arrow),
-              title: const Text('Start downloading'),
-              subtitle: const Text(
-                'Nothing has run on its own. Start it when you are ready.',
-              ),
-              onTap: () =>
-                  Navigator.of(sheetContext).pop(_EntryAction.startDownload),
-            ),
-            ListTile(
-              key: const ValueKey('entryRemoveWaiting'),
-              leading: const Icon(Icons.playlist_remove),
-              title: const Text('Remove from the download queue'),
-              subtitle: const Text(
-                'It has not run, so nothing is lost — and you can undo it.',
-              ),
-              onTap: () =>
-                  Navigator.of(sheetContext).pop(_EntryAction.removeWaiting),
-            ),
-          ],
-          if (task != null && task.state == SaveTaskState.running)
-            ListTile(
-              key: const ValueKey('entryStopDownload'),
-              leading: const Icon(Icons.stop_circle_outlined),
-              title: const Text('Stop this download'),
-              subtitle: const Text('It stops at the next safe point.'),
-              onTap: () =>
-                  Navigator.of(sheetContext).pop(_EntryAction.stopRunning),
-            ),
-          if (task != null && task.isTerminal)
-            ListTile(
-              key: const ValueKey('entryRemoveActivity'),
-              leading: const Icon(Icons.delete_outline),
-              title: const Text('Remove from activity'),
-              subtitle: const Text(
-                'Clears this record. Nothing on this device is deleted.',
-              ),
-              onTap: () => Navigator.of(
-                sheetContext,
-              ).pop(_EntryAction.removeFromActivity),
-            ),
-          if (view.availableOffline)
-            ListTile(
-              key: const ValueKey('entryRemoveCopy'),
-              leading: const Icon(Icons.cloud_off),
-              title: const Text('Remove offline copy'),
-              subtitle: const Text(
-                'Frees the bytes on this device. The entry stays in your '
-                'library.',
-              ),
-              onTap: () =>
-                  Navigator.of(sheetContext).pop(_EntryAction.removeCopy),
-            ),
+        // Downloading is one Entry, onto one device, and it waits. A row
+        // already in the queue offers what can be done to *that row*
+        // instead — a second request would only ever be a second candidate
+        // for one copy (I13).
+        if (task == null || task.isTerminal)
           ListTile(
-            key: const ValueKey('entryRemove'),
-            leading: const Icon(Icons.playlist_remove),
-            title: const Text('Remove from library'),
-            subtitle: const Text('Your library, on every device you use.'),
-            onTap: () => Navigator.of(sheetContext).pop(_EntryAction.remove),
+            key: const ValueKey('entryDownload'),
+            leading: const Icon(Icons.download_for_offline_outlined),
+            // The same action, and it has always been the same action — a
+            // copy already here never blocked an intentional re-request,
+            // and `downloadForOffline` has always confirmed the replacement
+            // before queueing one. What it did not do was *say so up here*:
+            // the row promised "puts a copy on this device" and then asked
+            // to overwrite one, which is a confirmation nobody had a reason
+            // to expect.
+            title: Text(
+              view.availableOffline ? 'Download again' : 'Download for offline',
+            ),
+            subtitle: Text(
+              view.availableOffline
+                  ? 'Reads the page from the start and replaces the copy on '
+                        'this device. It waits in the queue until you start '
+                        'it.'
+                  : 'Puts a copy on this device. It waits in the queue '
+                        'until you start it.',
+            ),
+            onTap: () => Navigator.of(sheetContext).pop(_EntryAction.download),
           ),
-          const SizedBox(height: 8),
+        if (task != null && task.state == SaveTaskState.queued) ...[
+          ListTile(
+            key: const ValueKey('entryStartDownload'),
+            leading: const Icon(Icons.play_arrow),
+            title: const Text('Start downloading'),
+            subtitle: const Text(
+              'Nothing has run on its own. Start it when you are ready.',
+            ),
+            onTap: () =>
+                Navigator.of(sheetContext).pop(_EntryAction.startDownload),
+          ),
+          ListTile(
+            key: const ValueKey('entryRemoveWaiting'),
+            leading: const Icon(Icons.playlist_remove),
+            title: const Text('Remove from the download queue'),
+            subtitle: const Text(
+              'It has not run, so nothing is lost — and you can undo it.',
+            ),
+            onTap: () =>
+                Navigator.of(sheetContext).pop(_EntryAction.removeWaiting),
+          ),
         ],
-      ),
+        if (task != null && task.state == SaveTaskState.running)
+          ListTile(
+            key: const ValueKey('entryStopDownload'),
+            leading: const Icon(Icons.stop_circle_outlined),
+            title: const Text('Stop this download'),
+            subtitle: const Text('It stops at the next safe point.'),
+            onTap: () =>
+                Navigator.of(sheetContext).pop(_EntryAction.stopRunning),
+          ),
+        if (task != null && task.isTerminal)
+          ListTile(
+            key: const ValueKey('entryRemoveActivity'),
+            leading: const Icon(Icons.delete_outline),
+            title: const Text('Remove from activity'),
+            subtitle: const Text(
+              'Clears this record. Nothing on this device is deleted.',
+            ),
+            onTap: () =>
+                Navigator.of(sheetContext).pop(_EntryAction.removeFromActivity),
+          ),
+        // Not while a download is actually running: those bytes are being
+        // replaced right now, and freeing them under the capture is a race
+        // whose loser is the copy the user still has. Stopping is the verb
+        // for that, and it is directly above. A *queued* row is not running
+        // — nothing has started, so freeing the copy is an ordinary choice
+        // and stays offered.
+        if (view.availableOffline &&
+            !(task != null && task.state == SaveTaskState.running))
+          ListTile(
+            key: const ValueKey('entryRemoveCopy'),
+            leading: const Icon(Icons.cloud_off),
+            title: const Text('Remove offline copy'),
+            subtitle: const Text(
+              'Frees the bytes on this device. The entry stays in your '
+              'library.',
+            ),
+            onTap: () =>
+                Navigator.of(sheetContext).pop(_EntryAction.removeCopy),
+          ),
+        ListTile(
+          key: const ValueKey('entryRemove'),
+          leading: const Icon(Icons.playlist_remove),
+          title: const Text('Remove from library'),
+          subtitle: const Text('Your library, on every device you use.'),
+          onTap: () => Navigator.of(sheetContext).pop(_EntryAction.remove),
+        ),
+        const SizedBox(height: 8),
+      ],
     ),
   );
   if (action == null || !context.mounted) return;
@@ -625,46 +637,43 @@ Future<void> showCaptureModePreference(
   final current = await preferences.of(view.collection.id);
   if (!context.mounted) return;
 
-  final chosen = await showModalBottomSheet<_ModeChoice>(
+  final chosen = await showLibraryMenu<_ModeChoice>(
     context: context,
-    builder: (sheetContext) => SafeArea(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(20, 14, 20, 8),
-            child: Text('What to save', style: serifStyle(size: 20)),
-          ),
-          for (final mode in CaptureMode.values)
-            ListTile(
-              key: ValueKey('collectionCaptureMode_${mode.name}'),
-              leading: Icon(
-                current == mode
-                    ? Icons.radio_button_checked
-                    : Icons.radio_button_unchecked,
-              ),
-              title: Text(mode.label),
-              subtitle: Text(mode.description),
-              onTap: () =>
-                  Navigator.of(sheetContext).pop(_ModeChoice.remember(mode)),
-            ),
+    builder: (sheetContext) => Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(20, 14, 20, 8),
+          child: Text('What to save', style: serifStyle(size: 20)),
+        ),
+        for (final mode in CaptureMode.values)
           ListTile(
-            key: const ValueKey('collectionCaptureModeAsk'),
+            key: ValueKey('collectionCaptureMode_${mode.name}'),
             leading: Icon(
-              current == null
+              current == mode
                   ? Icons.radio_button_checked
                   : Icons.radio_button_unchecked,
             ),
-            title: const Text('Ask each time'),
-            subtitle: const Text(
-              'Scrollary proposes what the page itself can offer.',
-            ),
+            title: Text(mode.label),
+            subtitle: Text(mode.description),
             onTap: () =>
-                Navigator.of(sheetContext).pop(const _ModeChoice.ask()),
+                Navigator.of(sheetContext).pop(_ModeChoice.remember(mode)),
           ),
-          const SizedBox(height: 8),
-        ],
-      ),
+        ListTile(
+          key: const ValueKey('collectionCaptureModeAsk'),
+          leading: Icon(
+            current == null
+                ? Icons.radio_button_checked
+                : Icons.radio_button_unchecked,
+          ),
+          title: const Text('Ask each time'),
+          subtitle: const Text(
+            'Scrollary proposes what the page itself can offer.',
+          ),
+          onTap: () => Navigator.of(sheetContext).pop(const _ModeChoice.ask()),
+        ),
+        const SizedBox(height: 8),
+      ],
     ),
   );
   if (chosen == null || !context.mounted) return;
@@ -706,48 +715,46 @@ Future<void> showFinishedCleanupPreference(
   final current = await preferences.of(view.collection.id);
   if (!context.mounted) return;
 
-  final chosen = await showModalBottomSheet<_CleanupChoice>(
+  final chosen = await showLibraryMenu<_CleanupChoice>(
     context: context,
-    builder: (sheetContext) => SafeArea(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(20, 14, 20, 8),
-            child: Text('Finished entries', style: serifStyle(size: 20)),
-          ),
-          for (final rule in FinishedCleanupRule.values)
-            ListTile(
-              key: ValueKey('collectionFinishedCleanup_${rule.name}'),
-              leading: Icon(
-                current == rule
-                    ? Icons.radio_button_checked
-                    : Icons.radio_button_unchecked,
-              ),
-              title: Text(finishedCleanupRuleCopy(rule).$1),
-              subtitle: Text(finishedCleanupRuleCopy(rule).$2),
-              onTap: () =>
-                  Navigator.of(sheetContext).pop(_CleanupChoice.remember(rule)),
-            ),
+    builder: (sheetContext) => Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(20, 14, 20, 8),
+          child: Text('Finished entries', style: serifStyle(size: 20)),
+        ),
+        for (final rule in FinishedCleanupRule.values)
           ListTile(
-            key: const ValueKey('collectionFinishedCleanupAsk'),
+            key: ValueKey('collectionFinishedCleanup_${rule.name}'),
             leading: Icon(
-              current == null
+              current == rule
                   ? Icons.radio_button_checked
                   : Icons.radio_button_unchecked,
             ),
-            title: const Text('Ask again next time'),
-            subtitle: const Text(
-              'Clears this choice. Nothing on this device is removed, and the '
-              'question comes back the next time you read on from a finished '
-              'entry here.',
-            ),
+            title: Text(finishedCleanupRuleCopy(rule).$1),
+            subtitle: Text(finishedCleanupRuleCopy(rule).$2),
             onTap: () =>
-                Navigator.of(sheetContext).pop(const _CleanupChoice.ask()),
+                Navigator.of(sheetContext).pop(_CleanupChoice.remember(rule)),
           ),
-          const SizedBox(height: 8),
-        ],
-      ),
+        ListTile(
+          key: const ValueKey('collectionFinishedCleanupAsk'),
+          leading: Icon(
+            current == null
+                ? Icons.radio_button_checked
+                : Icons.radio_button_unchecked,
+          ),
+          title: const Text('Ask again next time'),
+          subtitle: const Text(
+            'Clears this choice. Nothing on this device is removed, and the '
+            'question comes back the next time you read on from a finished '
+            'entry here.',
+          ),
+          onTap: () =>
+              Navigator.of(sheetContext).pop(const _CleanupChoice.ask()),
+        ),
+        const SizedBox(height: 8),
+      ],
     ),
   );
   if (chosen == null || !context.mounted) return;

@@ -1222,3 +1222,54 @@ yet — *Open at source* on a page with no position to be at (V2-D54) — now lo
 identical to unread, because the ring is a quantity and that quantity is zero.
 The status word used to cover it. It is still spoken, and still in *Entry
 details*.
+
+### V2-D64 · A menu sheet is scroll-controlled and scrolls; the download control says which download it is
+
+Two defects in the Entry menu, with one cause between them: nothing had ever
+asked that sheet a question about its own size.
+
+**The sheet could not be reached.** `showModalBottomSheet` caps a sheet at
+**nine sixteenths of the window** unless it is told `isScrollControlled`, and a
+`Column` handed less height than it needs does not scroll or shrink — it
+overflows, and the remainder is clipped, unhittable and gone. Eight sheets were
+built as `SafeArea > Column(min)` with no scroll view, so on a 390×844 phone
+every one of them was cut at 474.8pt. The Entry menu lost *Download for
+offline*, *Remove offline copy* and *Remove from library* — four of its nine
+items — and the collection, folder, source, capture-mode, cleanup and both
+browser sheets had the same hole.
+
+It survived review because the widget-test window is **430×1400**: nine
+sixteenths of that is 787pt, and the extra width lets subtitles wrap to fewer
+lines, so the menus fitted in the suite and in no phone anybody owns. Every
+finder in those tests was `find.text` or `find.byKey`, and **neither requires a
+widget to be on screen** — `entry_adoption_test.dart` matched an
+`entryDownload` sitting 400pt below the sheet and passed.
+
+`ui/menu_sheet.dart`'s `showLibraryMenu` is the one definition: scroll-
+controlled so the sheet may be as tall as it needs, `useSafeArea` so it cannot
+slide under the status bar, and a `SingleChildScrollView` so being taller than
+the screen is a scroll rather than a clip. A `Column(MainAxisSize.min)` inside
+it is exactly as tall as its contents, so a five-item menu is still a
+five-item menu — no fixed height, no fraction, nothing to tune per sheet. It is
+the shape `library_ui/entry_details.dart` already used and the menus never
+adopted; `kPhoneWindow` in the test harness is how a menu is now asked whether
+it fits.
+
+**The download control described the wrong action.** *Download for offline* and
+*Remove offline copy* appearing together is **not** a bug: whether this device
+holds a copy and what the queue is doing are two independent facts (PRODUCT.md
+§2.3), a copy already here never blocked an intentional re-request, and
+`downloadForOffline` has always confirmed the replacement — *Already downloaded
+— download it again?* — before queueing one. What was wrong is that the control
+above it read *Puts a copy on this device*, which is a promise, followed by a
+confirmation to overwrite that nobody had a reason to expect. It now reads
+**Download again** · *reads the page from the start and replaces the copy on
+this device* wherever a copy exists. Same action, same queue, same
+confirmation; the menu simply stopped disagreeing with the dialog it opens.
+
+**One state loses the copy's control.** *Remove offline copy* is not offered
+while a download is `running`: those bytes are being replaced at that moment,
+and freeing them under a live capture is a race whose loser is the copy the
+user still has. *Stop this download* is the verb for changing a run, and it is
+directly above. A `queued` row is **not** running — nothing has started — so
+the copy's control stays offered there, and nothing else in the matrix moves.

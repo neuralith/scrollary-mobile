@@ -105,7 +105,10 @@ void main() {
     await openScreen(tester, s.collection.id);
 
     await openEntryMenu(tester, s.held.id);
-    await tapAndPump(tester, find.text('Download for offline'));
+    // This device already holds a copy of this one, so the control is the
+    // replacement it would actually be — and it still refuses for want of an
+    // address, before anything is queued.
+    await tapAndPump(tester, find.text('Download again'));
     await pumpUntil(tester, find.textContaining('No address is recorded'));
 
     expect(await h.queue.all(), isEmpty);

@@ -15,6 +15,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../data/schema.dart';
+import '../ui/menu_sheet.dart';
 import '../ui/status_style.dart';
 import 'folder_models.dart';
 import 'folder_picker.dart';
@@ -28,43 +29,41 @@ Future<void> showFolderMenu(
   FolderRow folder, {
   VoidCallback? onDeleted,
 }) async {
-  final action = await showModalBottomSheet<_FolderAction>(
+  final action = await showLibraryMenu<_FolderAction>(
     context: context,
-    builder: (sheetContext) => SafeArea(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(20, 14, 20, 8),
-            child: Text(
-              folderDisplayName(folder),
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style: serifStyle(size: 20),
-            ),
+    builder: (sheetContext) => Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(20, 14, 20, 8),
+          child: Text(
+            folderDisplayName(folder),
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: serifStyle(size: 20),
           ),
-          ListTile(
-            leading: const Icon(Icons.drive_file_rename_outline),
-            title: const Text('Rename folder'),
-            onTap: () => Navigator.of(sheetContext).pop(_FolderAction.rename),
+        ),
+        ListTile(
+          leading: const Icon(Icons.drive_file_rename_outline),
+          title: const Text('Rename folder'),
+          onTap: () => Navigator.of(sheetContext).pop(_FolderAction.rename),
+        ),
+        ListTile(
+          leading: const Icon(Icons.drive_file_move_outline),
+          title: const Text('Move folder'),
+          subtitle: const Text('Puts this folder inside another one.'),
+          onTap: () => Navigator.of(sheetContext).pop(_FolderAction.move),
+        ),
+        ListTile(
+          leading: const Icon(Icons.folder_delete_outlined),
+          title: const Text('Delete folder'),
+          subtitle: const Text(
+            'Everything inside moves up one level. Nothing is deleted.',
           ),
-          ListTile(
-            leading: const Icon(Icons.drive_file_move_outline),
-            title: const Text('Move folder'),
-            subtitle: const Text('Puts this folder inside another one.'),
-            onTap: () => Navigator.of(sheetContext).pop(_FolderAction.move),
-          ),
-          ListTile(
-            leading: const Icon(Icons.folder_delete_outlined),
-            title: const Text('Delete folder'),
-            subtitle: const Text(
-              'Everything inside moves up one level. Nothing is deleted.',
-            ),
-            onTap: () => Navigator.of(sheetContext).pop(_FolderAction.delete),
-          ),
-          const SizedBox(height: 8),
-        ],
-      ),
+          onTap: () => Navigator.of(sheetContext).pop(_FolderAction.delete),
+        ),
+        const SizedBox(height: 8),
+      ],
     ),
   );
   if (action == null || !context.mounted) return;
