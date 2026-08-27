@@ -111,6 +111,10 @@ class _AppBootState extends State<AppBoot> with WidgetsBindingObserver {
   Future<void> _finishWhenReady(Future<void> running) async {
     final startedAt = DateTime.now();
     await running;
+    debugPrint(
+      '[startup] sequence: '
+      '${DateTime.now().difference(startedAt).inMilliseconds}ms',
+    );
     if (!mounted || _controller.value.hasFailed) return;
 
     for (final warning in _controller.value.warnings) {
@@ -128,6 +132,14 @@ class _AppBootState extends State<AppBoot> with WidgetsBindingObserver {
     // is already painted by the time it becomes visible.
     setState(() => _services = _startup.services);
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      // The app's *first painted frame*, which is the number that matches what
+      // the user experiences — the sequence above can be instant and the
+      // launch still feel long if the first frame is expensive.
+      debugPrint(
+        '[startup] first app frame: '
+        '${DateTime.now().difference(startedAt).inMilliseconds}ms after the '
+        'sequence began',
+      );
       if (mounted) setState(() => _splashOpacity = 0);
     });
   }

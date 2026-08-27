@@ -6,6 +6,7 @@ import '../browser/saved_sites_repository.dart';
 import '../capability/foreground_gate.dart';
 import '../capability/foreground_multitasking.dart';
 import '../core/local_reset.dart';
+import '../core/version.dart';
 import '../library_ui/sync_status_section.dart';
 import '../providers.dart';
 import '../ui/palette.dart';
@@ -219,6 +220,20 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 fontSize: 13,
                 height: 1.55,
                 color: AppPalette.of(context).inkMuted,
+              ),
+            ),
+          ),
+          // What this build is, where a person looking for it would look. The
+          // build number is beside the version because it is the half that
+          // identifies *which* 1.0.1 a bug report is about.
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
+            child: Text(
+              'Scrollary $appVersionLabel',
+              key: const ValueKey('settingsVersion'),
+              style: monoStyle(
+                size: 11.5,
+                color: AppPalette.of(context).inkFaint,
               ),
             ),
           ),
