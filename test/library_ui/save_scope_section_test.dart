@@ -144,32 +144,27 @@ void main() {
     expect(find.textContaining('up to $ceiling'), findsOneWidget);
   });
 
-  screenTest('the typed count says what it counts, before it is typed into', (
-    tester,
-  ) async {
+  screenTest('the typed count says what it counts and where it stops, on one '
+      'secondary line', (tester) async {
     await openSheet(tester);
     await chooseTypedRange(tester);
 
+    // Two facts the number itself does not carry, and no third: the count is
+    // inclusive — ten from entry 101 is 101 through 110, and a sheet that
+    // leaves that to be inferred has said the wrong thing to half its
+    // readers — and the ceiling is a number the user can see (CLAUDE.md).
     expect(
-      find.textContaining('Counts this entry as the first'),
+      find.textContaining('This entry counts as the first'),
       findsOneWidget,
-      reason:
-          'ten from entry 101 is 101 through 110, and a sheet that leaves '
-          'that to be inferred has said the wrong thing to half its readers',
     );
-    expect(
-      find.textContaining('5 means this one and the next four'),
-      findsOneWidget,
-      reason: 'said again in numbers, beside the field it is typed into',
-    );
+    expect(find.textContaining('up to $ceiling'), findsOneWidget);
     expect(
       find.textContaining('One page at a time'),
-      findsOneWidget,
+      findsNothing,
       reason:
-          'the count is a claim about the site, and the site is read as the '
-          'download moves along it',
+          'the paragraph is gone; how the run behaves is said by the run\'s '
+          'own surface, while it is true',
     );
-    expect(find.textContaining('stop at any point'), findsOneWidget);
   });
 
   screenTest('the typed count reads this site forward for what is missing', (
@@ -387,8 +382,10 @@ void main() {
     await openSheet(tester, initialScope: SaveScope.fixedCount);
 
     expect(countField(), findsOneWidget);
+    // The ceiling is a number the user can see (CLAUDE.md), on the secondary
+    // line under the row that takes the count — not a paragraph above it.
     expect(
-      find.byKey(const ValueKey('saveScopeReadsForwardNote')),
+      find.text('This entry counts as the first · up to $ceiling'),
       findsOneWidget,
     );
     await tapAndPump(tester, find.byKey(const ValueKey('saveScopeAddToQueue')));

@@ -2,17 +2,21 @@
 ///
 /// **This is fixed store copy.** STORE_PACKAGE.md §6.3 and §6.6 are marked
 /// *Built — verbatim*, and they are transcribed from this widget: the
-/// detection summary, the three mode rows with their descriptions, the reason
-/// each unavailable mode gives, and the two video sentences. Change a word
-/// here and §6.3/§6.6 stop describing the app; change one there and this stops
-/// matching. `test/capture_mode_section_test.dart` holds the pairing.
+/// detection summary, the three mode labels, the reason each unavailable mode
+/// gives, and the two video sentences. Change a word here and §6.3/§6.6 stop
+/// describing the app; change one there and this stops matching.
+/// `test/capture_mode_section_test.dart` holds the pairing.
 ///
-/// Two rules the layout carries rather than states:
+/// Three rules the layout carries rather than states:
 ///
 /// * **Every mode is always on screen.** An unavailable one is disabled with
-///   its reason in place of its description, because a missing option reads as
-///   a bug while a greyed one with "no readable text was found on this page"
-///   beside it reads as an answer.
+///   its reason where nothing else is printed, because a missing option reads
+///   as a bug while a greyed one with "no readable text was found on this
+///   page" beside it reads as an answer.
+/// * **An available mode is its label and its glyph, and nothing else.** The
+///   sheet asks three questions above this block; a sentence under each of
+///   three labels the icons already distinguish made the answer harder to
+///   find, not easier. A *reason* is not a description and stays.
 /// * **A mode is only offered when the engine can carry it out.**
 ///   [CaptureCapabilities] is measured on the settled page, so the sheet can
 ///   never offer a mode the save would then refuse. There is no video mode,
@@ -67,11 +71,20 @@ class CaptureModeSection extends StatelessWidget {
     required this.capabilities,
     required this.selected,
     required this.onSelect,
+    this.onCollapse,
   });
 
   final CaptureCapabilities capabilities;
   final CaptureMode? selected;
   final ValueChanged<CaptureMode> onSelect;
+
+  /// Close the block again, for a sheet that opened it from
+  /// [RememberedCaptureLine]. Non-null makes the heading the same control the
+  /// line was: tapping *What to save* a second time puts the answer back on
+  /// one line, which is what every other dropdown in the world does. Null
+  /// where there is no settled answer to collapse to — the first save of a
+  /// work is the block, and nothing else.
+  final VoidCallback? onCollapse;
 
   static const _icons = {
     CaptureMode.imageSequence: Icons.photo_library_outlined,
@@ -87,10 +100,31 @@ class CaptureModeSection extends StatelessWidget {
   Widget build(BuildContext context) {
     final palette = AppPalette.of(context);
 
+    final heading = Text(
+      'What to save',
+      style: serifStyle(size: 15, color: palette.ink),
+    );
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text('What to save', style: serifStyle(size: 15, color: palette.ink)),
+        if (onCollapse case final collapse?)
+          InkWell(
+            key: const ValueKey('captureModeCollapse'),
+            onTap: collapse,
+            child: Padding(
+              padding: const EdgeInsets.only(top: 2, bottom: 2),
+              child: Row(
+                children: [
+                  heading,
+                  const SizedBox(width: 4),
+                  Icon(Icons.expand_less, size: 18, color: palette.inkMuted),
+                ],
+              ),
+            ),
+          )
+        else
+          heading,
         const SizedBox(height: 6),
         Text(
           captureDetectionSummary(capabilities),
@@ -105,21 +139,24 @@ class CaptureModeSection extends StatelessWidget {
           const SizedBox(height: 10),
           _VideoNotice(hasAlternative: capabilities.canSaveAnything),
         ],
-        const SizedBox(height: 10),
+        const SizedBox(height: 8),
         for (final mode in CaptureMode.values) ...[
           _ModeOption(
             key: ValueKey('captureMode_${mode.name}'),
             icon: _icons[mode]!,
             title: mode.label,
+            // A reason, and only a reason: what an available mode does is its
+            // label and its glyph, and the sheet has three other questions on
+            // it.
             sub: capabilities.allows(mode)
-                ? mode.description
+                ? null
                 : (capabilities.blocked[mode]?.message ??
                       'Not possible on this page.'),
             selected: selected == mode,
             enabled: capabilities.allows(mode),
             onTap: () => onSelect(mode),
           ),
-          const SizedBox(height: 7),
+          const SizedBox(height: 6),
         ],
       ],
     );
@@ -273,7 +310,10 @@ class _ModeOption extends StatelessWidget {
 
   final IconData icon;
   final String title;
-  final String sub;
+
+  /// Why this mode is not on offer. Null for an available one, which is one
+  /// line: its glyph and its name.
+  final String? sub;
   final bool selected;
   final VoidCallback onTap;
 
@@ -291,7 +331,7 @@ class _ModeOption extends StatelessWidget {
       child: InkWell(
         onTap: enabled ? onTap : null,
         child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 12),
+          padding: const EdgeInsets.fromLTRB(13, 9, 13, 9),
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(14),
             border: Border.all(
@@ -319,15 +359,17 @@ class _ModeOption extends StatelessWidget {
                         color: enabled ? palette.ink : palette.inkFaint,
                       ),
                     ),
-                    const SizedBox(height: 2),
-                    Text(
-                      sub,
-                      style: TextStyle(
-                        fontSize: 11.5,
-                        height: 1.4,
-                        color: enabled ? palette.inkMuted : palette.inkFaint,
+                    if (sub case final reason?) ...[
+                      const SizedBox(height: 2),
+                      Text(
+                        reason,
+                        style: TextStyle(
+                          fontSize: 11.5,
+                          height: 1.4,
+                          color: enabled ? palette.inkMuted : palette.inkFaint,
+                        ),
                       ),
-                    ),
+                    ],
                   ],
                 ),
               ),

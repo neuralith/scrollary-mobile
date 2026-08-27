@@ -364,14 +364,26 @@ The low-confidence and unclear cases are deliberately two lines rather than one:
 forcing "not something we could classify" through the *"this looks like…"*
 template produced a sentence that read as a guess about a guess.
 
-Modes, all three always visible; unavailable ones are disabled with the reason
-in place of the description:
+Modes, all three always visible. An **available** mode is one line — its glyph
+and its label, nothing else; a sentence under each of three labels the icons
+already distinguish made the answer harder to find on a sheet that asks three
+other questions above this block. An **unavailable** one is disabled with its
+reason beside it, because a missing option reads as a bug while a greyed one
+with "no readable text was found on this page" beside it reads as an answer:
 
-| Mode | Description | Reason when unavailable |
-|---|---|---|
-| **Images only** | Save the page images in order, with no text. | This page does not have enough full-size images to save as an image sequence. |
-| **Text only** | Save the readable text. No images are downloaded. | No readable text was found on this page. |
-| **Text and images** | Save the readable text with the images that sit inside it. | No images were found inside the readable text. |
+| Mode | Reason when unavailable |
+|---|---|
+| **Images only** | This page does not have enough full-size images to save as an image sequence. |
+| **Text only** | No readable text was found on this page. |
+| **Text and images** | No images were found inside the readable text. |
+
+Where the *description* of a mode is still printed: the Collection's own
+capture-mode menu (`lib/library_ui/collection_actions.dart`), which is a
+standing choice about a work rather than a control on the way past.
+
+Once a Collection has a standing answer the whole block collapses to one line —
+`Capture · Images only ⌄` — and the heading **What to save** is the control that
+closes it again. It is a dropdown: whatever opens it closes it.
 
 Optional, when the page belongs to a collection:
 **Use "<mode>" for this collection from now on** — **not built.** The V2

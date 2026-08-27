@@ -21,8 +21,8 @@ import 'package:web_reader/core/config.dart';
 // merge.
 import 'package:web_reader/features/v2_add_flow.dart';
 import 'package:web_reader/features/v2_save_flow.dart';
+import 'package:web_reader/library_ui/entry_offline.dart';
 import 'package:web_reader/library_ui/providers.dart';
-import 'package:web_reader/save/queue_task.dart';
 import 'package:web_reader/providers.dart';
 import 'package:web_reader/data/local_settings.dart';
 import 'package:web_reader/save/capture_mode.dart';
@@ -189,6 +189,13 @@ void main() {
     ),
   );
 
+  /// The panel **as the Browser hosts it**: a modal route over a surface that
+  /// outlives it, and which performs the Start the sheet answers with.
+  ///
+  /// It is pumped this way rather than as a bare body because the thing under
+  /// test in half these cases is the route itself — a launch closes this sheet
+  /// and hands the Start to the surface underneath, and a panel with no route
+  /// of its own could not be asked whether it closed.
   Future<void> openPanel(
     WidgetTester tester,
     String url,
@@ -210,13 +217,18 @@ void main() {
         ],
         child: MaterialApp(
           theme: appTheme(palette: AppPalette.light),
-          home: Scaffold(
-            body: V2SavePanel(url: url, pageTitle: title),
-          ),
+          home: _SaveSheetHost(url: url, pageTitle: title),
         ),
       ),
     );
+    // The first frame schedules the sheet; these turn its transition.
+    for (var i = 0; i < 8; i++) {
+      await tester.pump(const Duration(milliseconds: 50));
+    }
   }
+
+  /// Whether the save sheet is still on screen.
+  Finder sheet() => find.byType(V2SavePanel);
 
   Finder key(String value) => find.byKey(ValueKey(value));
 
@@ -259,31 +271,75 @@ void main() {
       return collection.id;
     }
 
-    screenTest('a run in flight is stopped from the sheet that started it', (
+    screenTest('*Start and keep using Scrollary* closes the sheet and starts', (
       tester,
     ) async {
-      await seed(queued: true);
-      await openPanel(tester, _entryUrl, _entryTitle);
-      await pumpUntil(tester, key('v2StartButton'));
-      final task = (await h.queue.pending()).single;
-      await h.queue.claim(task.id);
-
-      // The panel's own Stop is docked at the bottom of the Browser — which is
-      // exactly where this sheet sits. A control the user must dismiss the
-      // sheet to reach is not reachable while the thing it stops is running.
-      final panel = tester.state(find.byType(V2SavePanel));
-      // ignore: avoid_dynamic_calls
-      (panel as dynamic).debugSetRunningFromHere(true);
-      await tester.pump();
-
-      expect(key('sheetStopRun'), findsOneWidget);
-      await tapAndPump(tester, key('sheetStopRun'));
-
-      expect(
-        (await h.queue.byId(task.id))?.state,
-        SaveTaskState.cancelled,
-        reason: 'the sheet must be able to stop what the sheet started',
+      // The bug: this launch left the sheet on screen over the Browser for the
+      // whole run — `startQueuedDownloads` does not return until the batch is
+      // done, and unlike *Start now* nothing pops the route on its way past.
+      // The user chose "keep using Scrollary" and could not use anything.
+      capability.override = EntitlementOverride.forcePro;
+      capability.preference = true;
+      final collectionId = await seed();
+      // A row already waiting, as in *Start now actually starts*: the domain
+      // is stood in for here, so the queue only holds what this test puts in
+      // it, and "it started" needs something to start.
+      final other = await h.entryIn(
+        collectionId,
+        title: 'Alpha 13',
+        ordinal: 13,
       );
+      const otherUrl = 'https://reading.example.com/works/alpha/13';
+      final source = await h.source(collectionId, pathKey: '/works/alpha-2');
+      final otherLocation = await h.location(
+        other.id,
+        otherUrl,
+        sourceId: source.id,
+      );
+      await h.queue.enqueue(
+        entryId: other.id,
+        locationId: otherLocation.id,
+        locationUrl: otherUrl,
+      );
+
+      await openPanel(tester, _entryUrl, _entryTitle);
+      await pumpUntil(tester, key('saveScopeThisEntry'));
+
+      await launch(tester, key('startKeepUsingApp'));
+      await pumpUntilGone(tester, sheet());
+
+      expect(adds, hasLength(1), reason: 'the work was queued');
+      expect(
+        h.starts,
+        1,
+        reason:
+            'and the surface underneath started it — closing the sheet is '
+            'not cancelling the launch',
+      );
+      expect(
+        h.queue.saveStartAuthorised,
+        isTrue,
+        reason: 'the start is the authorisation, and it is explicit',
+      );
+      expect(
+        key('startOptionsCancel'),
+        findsNothing,
+        reason: 'the gate was answered on the sheet; nothing asks again',
+      );
+    });
+
+    screenTest('the sheet stays open when nothing was started', (tester) async {
+      // The other half of the rule: *Queue only* answers the sheet's question
+      // and starts nothing, so there is nothing for the user to go back to the
+      // page for. It is also what keeps a refusal on screen.
+      await seed();
+      await openPanel(tester, _entryUrl, _entryTitle);
+      await pumpUntil(tester, key('saveScopeThisEntry'));
+
+      await launch(tester, key('saveScopeAddToQueue'));
+
+      expect(sheet(), findsOneWidget);
+      expect(h.starts, 0);
     });
 
     screenTest('asks how much on the sheet itself, under one identity line', (
@@ -398,6 +454,7 @@ void main() {
       await tapAndPump(tester, key('saveScopeFromHere'));
       await tester.enterText(key('saveCountField'), '3');
       await launch(tester, key('startInBrowser'));
+      await pumpUntilGone(tester, sheet());
 
       expect(adds, hasLength(1));
       expect(
@@ -406,6 +463,11 @@ void main() {
         reason: 'asking again where to wait is the modal this removes',
       );
       expect(h.starts, 1, reason: 'Start now means it started');
+      expect(
+        sheet(),
+        findsNothing,
+        reason: 'and the user is back on the page it is about to read',
+      );
     });
 
     screenTest('choosing a range and a count starts nothing on its own', (
@@ -453,12 +515,20 @@ void main() {
       expect(key('v2DownloadEntry'), findsNothing);
 
       await tapAndPump(tester, key('v2StartButton'));
+      await pumpUntilGone(tester, sheet());
 
       expect(h.starts, 1);
       expect(
         h.queue.saveStartAuthorised,
         isTrue,
         reason: 'the Start is the authorisation, and it is explicit',
+      );
+      expect(
+        sheet(),
+        findsNothing,
+        reason:
+            'this Start runs in the Browser too, and the sheet is over the '
+            'Browser',
       );
     });
   });
@@ -794,6 +864,51 @@ void main() {
       expect(find.text('What to save'), findsOneWidget);
       expect(key('captureMode_textOnly'), findsOneWidget);
       expect(key('captureModeRemembered'), findsNothing);
+    });
+
+    screenTest('the line opens the block and closes it again', (tester) async {
+      // A dropdown, not a one-way door. Opening it used to be permanent: the
+      // line was the only control, it was replaced by the block it opened, and
+      // the sheet stayed three rows taller for the rest of its life.
+      final collectionId = await seedKnownEntry();
+      await CapturePreferenceStore(
+        LocalSettingsStore(h.db),
+      ).remember(collectionId, CaptureMode.imageSequence);
+
+      await openPanel(tester, _entryUrl, _entryTitle);
+      await pumpUntil(tester, key('captureModeRemembered'));
+
+      await tapAndPump(tester, key('captureModeRemembered'));
+      expect(key('captureMode_textOnly'), findsOneWidget);
+      expect(key('captureModeCollapse'), findsOneWidget);
+
+      // The same control, in the same place, closing what it opened.
+      await tapAndPump(tester, key('captureModeCollapse'));
+      expect(key('captureMode_textOnly'), findsNothing);
+      expect(key('captureModeRemembered'), findsOneWidget);
+      expect(find.text('Images only'), findsOneWidget);
+
+      // …and again, because a toggle that only works once is the bug.
+      await tapAndPump(tester, key('captureModeRemembered'));
+      expect(key('captureMode_textOnly'), findsOneWidget);
+    });
+
+    screenTest('a mode chosen by hand keeps the block open', (tester) async {
+      // Collapsing after a tap would put the person's answer behind a line
+      // that reads as the *work's* standing one. What is on screen is theirs,
+      // so it stays on screen.
+      final collectionId = await seedKnownEntry();
+      await CapturePreferenceStore(
+        LocalSettingsStore(h.db),
+      ).remember(collectionId, CaptureMode.imageSequence);
+
+      await openPanel(tester, _entryUrl, _entryTitle);
+      await pumpUntil(tester, key('captureModeRemembered'));
+      await tapAndPump(tester, key('captureModeRemembered'));
+      await tapAndPump(tester, key('captureMode_imageSequence'));
+
+      expect(key('captureModeCollapse'), findsNothing);
+      expect(key('captureMode_textOnly'), findsOneWidget);
     });
 
     screenTest('the remembered answer is what the save is asked for', (
@@ -1272,4 +1387,39 @@ void main() {
       expect(key('startOptionsCancel'), findsNothing);
     });
   });
+}
+
+/// `BrowserScreen._showSaveSheet`, in miniature: it shows the panel as a modal
+/// route, and when the panel closes with a [SaveSheetStart] it performs the
+/// Start — from a surface that is still mounted, which is the whole point of
+/// handing it back.
+class _SaveSheetHost extends ConsumerStatefulWidget {
+  const _SaveSheetHost({required this.url, required this.pageTitle});
+
+  final String url;
+  final String pageTitle;
+
+  @override
+  ConsumerState<_SaveSheetHost> createState() => _SaveSheetHostState();
+}
+
+class _SaveSheetHostState extends ConsumerState<_SaveSheetHost> {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _show());
+  }
+
+  Future<void> _show() async {
+    final start = await showModalBottomSheet<SaveSheetStart>(
+      context: context,
+      isScrollControlled: true,
+      builder: (_) => V2SavePanel(url: widget.url, pageTitle: widget.pageTitle),
+    );
+    if (!mounted || start == null) return;
+    await startQueuedDownloads(context, ref, decided: start.where);
+  }
+
+  @override
+  Widget build(BuildContext context) => const Scaffold(body: SizedBox.expand());
 }

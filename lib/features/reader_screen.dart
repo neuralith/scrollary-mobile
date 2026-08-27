@@ -25,6 +25,7 @@ import '../storage/manifest.dart';
 import '../reading/decode_budget.dart';
 import '../ui/palette.dart';
 import 'document_reader.dart';
+import 'pull_up_next.dart';
 
 /// How long the reader waits before writing a scroll position.
 ///
@@ -56,7 +57,7 @@ class ReaderScreen extends ConsumerStatefulWidget {
     required this.offline,
     this.collectionId,
     this.previousEntryId,
-    this.nextEntryId,
+    this.onRequestNext,
     this.onOpenEntry,
   });
 
@@ -83,7 +84,21 @@ class ReaderScreen extends ConsumerStatefulWidget {
   /// lands on the reader's own not-downloaded state, where downloading and
   /// opening at the source are already offered.
   final String? previousEntryId;
-  final String? nextEntryId;
+
+  /// **Read on** — the one next-Entry request, told how far through this Entry
+  /// the reader is.
+  ///
+  /// Deliberately not a next-Entry id. What follows this Entry is a question
+  /// about the Collection *at the moment it is asked* — is there one, is it on
+  /// this device, has the site published more since — and it is answered in one
+  /// place for every way of asking (`lib/reading_v2/next_entry.dart`). A screen
+  /// handed an id would have had that question answered for it when it opened,
+  /// and would have to guess at the rest.
+  ///
+  /// Null — a standalone Entry, or one with no position in its Collection —
+  /// means there is no reading order to move forward through, so the control is
+  /// disabled and the pull-up is inert.
+  final Future<void> Function(double fraction)? onRequestNext;
 
   /// Open another Entry, told how far through *this* one the reader is.
   ///
@@ -184,6 +199,7 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
     unawaited(_flush());
     _scrollController?.dispose();
     _livePosition.dispose();
+    _pullUp.dispose();
     // Whatever this reader hid, it stops hiding on the way out — otherwise the
     // running-operation indicator would stay gone on every screen after it.
     //
@@ -550,6 +566,32 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
     }
   }
 
+  // --- reading on to the next entry ---------------------------------------
+
+  /// How far the reader has pulled past the end of this Entry.
+  ///
+  /// Held here rather than inside [PullUpForNext] because the gesture wraps the
+  /// scroll view and the affordance is drawn above the chrome — two different
+  /// places in this screen's stack, watching one number.
+  final PullUpController _pullUp = PullUpController();
+
+  /// The reader's **one** way of asking for the next Entry.
+  ///
+  /// The control in the bottom bar, the end of a finished Entry and the pull-up
+  /// from the bottom edge all come through here, so none of them can grow its
+  /// own idea of what "next" means. The fraction travels with the request
+  /// because only this screen knows it — an offline read stores an anchor, not
+  /// a fraction.
+  Future<void> _requestNext() async {
+    final request = widget.onRequestNext;
+    if (request == null) return;
+    // The position is written first: reading on is a way out of this Entry
+    // like any other, and losing the last few seconds of scroll because the
+    // reader left forwards rather than backwards would be indefensible.
+    await _flush();
+    await request(_position.fraction);
+  }
+
   /// Chrome starts visible so the way out is never hidden, then gets out of
   /// the way on the first tap. Tapping the page toggles it.
   bool _chromeVisible = true;
@@ -811,74 +853,86 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
             // ownership they had. It only supplies the evidence that
             // [_handleBodyTap] weighs. Wrapping here covers both reader bodies
             // at once — the policy is written once, not per artifact.
-            NotificationListener<ScrollEndNotification>(
-              onNotification: _onScrollEnd,
-              child: Listener(
-                onPointerDown: _onPointerDown,
-                onPointerMove: _onPointerMove,
-                onPointerUp: _onPointerUp,
-                onPointerCancel: _onPointerCancel,
-                child: GestureDetector(
-                  behavior: HitTestBehavior.opaque,
-                  onTap: _handleBodyTap,
-                  // Horizontal-only recogniser: it and the list's vertical drag
-                  // enter the same arena, so a reading scroll never reaches it
-                  // and a deliberate sideways drag never scrolls the page.
-                  onHorizontalDragStart: _onDragStart,
-                  onHorizontalDragUpdate: _onDragUpdate,
-                  onHorizontalDragEnd: _onDragEnd,
-                  // Everything above panel 1 lives INSIDE the scroll view, so the
-                  // banner scrolls away with the content instead of permanently
-                  // eating a band of the page. Its extent is a known constant,
-                  // and every offset conversion goes through [_leadingExtent].
-                  child: data.isDocument
-                      ? DocumentBody(
-                          document: data.document!,
-                          manifest: manifest,
-                          entryDir: data.entryDir!,
-                          controller: controller,
-                          leadingExtent: kReaderTopSpacer,
-                          onLayout: _onDocumentLayout,
-                          banner: partial
-                              ? _PartialBanner(
+            // Outermost, so it hears the scroll view's notifications on their
+            // way past everything else — and hears them *only*: it adds no
+            // recogniser to the arena, so the tap, the vertical scroll and the
+            // horizontal entry-navigation drag below keep exactly the
+            // ownership they had.
+            PullUpForNext(
+              controller: _pullUp,
+              onRequest: widget.onRequestNext == null ? null : _requestNext,
+              child: NotificationListener<ScrollEndNotification>(
+                onNotification: _onScrollEnd,
+                child: Listener(
+                  onPointerDown: _onPointerDown,
+                  onPointerMove: _onPointerMove,
+                  onPointerUp: _onPointerUp,
+                  onPointerCancel: _onPointerCancel,
+                  child: GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onTap: _handleBodyTap,
+                    // Horizontal-only recogniser: it and the list's vertical drag
+                    // enter the same arena, so a reading scroll never reaches it
+                    // and a deliberate sideways drag never scrolls the page.
+                    onHorizontalDragStart: _onDragStart,
+                    onHorizontalDragUpdate: _onDragUpdate,
+                    onHorizontalDragEnd: _onDragEnd,
+                    // Everything above panel 1 lives INSIDE the scroll view, so the
+                    // banner scrolls away with the content instead of permanently
+                    // eating a band of the page. Its extent is a known constant,
+                    // and every offset conversion goes through [_leadingExtent].
+                    child: data.isDocument
+                        ? DocumentBody(
+                            document: data.document!,
+                            manifest: manifest,
+                            entryDir: data.entryDir!,
+                            controller: controller,
+                            leadingExtent: kReaderTopSpacer,
+                            onLayout: _onDocumentLayout,
+                            banner: partial
+                                ? _PartialBanner(
+                                    stored: manifest.storedAssetCount,
+                                    detected: manifest.detectedAssetCount,
+                                    reason: manifest.statusReason,
+                                    onRetry: () => _retryMissing(data),
+                                  )
+                                : null,
+                            trailing: _EndOfEntry(data: data),
+                          )
+                        : ListView.builder(
+                            controller: controller,
+                            // The lead-in is list PADDING, not a child: padding adds its
+                            // extent exactly, while a short first child would skew
+                            // ListView's running estimate of total extent and leave the
+                            // scrollable's own maxScrollExtent short of the real bottom.
+                            padding: const EdgeInsets.only(
+                              top: kReaderTopSpacer,
+                            ),
+                            // One trailing row for the end-of-entry block, plus the
+                            // partial banner when there is one.
+                            itemCount:
+                                data.pages.length + 1 + (partial ? 1 : 0),
+                            itemBuilder: (context, index) {
+                              if (partial && index == 0) {
+                                return _PartialBanner(
                                   stored: manifest.storedAssetCount,
                                   detected: manifest.detectedAssetCount,
                                   reason: manifest.statusReason,
                                   onRetry: () => _retryMissing(data),
-                                )
-                              : null,
-                          trailing: _EndOfEntry(data: data),
-                        )
-                      : ListView.builder(
-                          controller: controller,
-                          // The lead-in is list PADDING, not a child: padding adds its
-                          // extent exactly, while a short first child would skew
-                          // ListView's running estimate of total extent and leave the
-                          // scrollable's own maxScrollExtent short of the real bottom.
-                          padding: const EdgeInsets.only(top: kReaderTopSpacer),
-                          // One trailing row for the end-of-entry block, plus the
-                          // partial banner when there is one.
-                          itemCount: data.pages.length + 1 + (partial ? 1 : 0),
-                          itemBuilder: (context, index) {
-                            if (partial && index == 0) {
-                              return _PartialBanner(
-                                stored: manifest.storedAssetCount,
-                                detected: manifest.detectedAssetCount,
-                                reason: manifest.statusReason,
-                                onRetry: () => _retryMissing(data),
+                                );
+                              }
+                              final panel = index - (partial ? 1 : 0);
+                              if (panel == data.pages.length) {
+                                return _EndOfEntry(data: data);
+                              }
+                              return _PanelView(
+                                page: data.pages[panel],
+                                index: panel + 1,
+                                height: _layout?.heightOf(panel),
                               );
-                            }
-                            final panel = index - (partial ? 1 : 0);
-                            if (panel == data.pages.length) {
-                              return _EndOfEntry(data: data);
-                            }
-                            return _PanelView(
-                              page: data.pages[panel],
-                              index: panel + 1,
-                              height: _layout?.heightOf(panel),
-                            );
-                          },
-                        ),
+                            },
+                          ),
+                  ),
                 ),
               ),
             ),
@@ -902,7 +956,7 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
             ),
             _ReaderChrome(
               previousEntryId: widget.previousEntryId,
-              nextEntryId: widget.nextEntryId,
+              onRequestNext: widget.onRequestNext == null ? null : _requestNext,
               onOpenEntry: widget.onOpenEntry,
               visible: _chromeVisible,
               data: data,
@@ -910,6 +964,10 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
               position: _livePosition,
               onToggleRead: _toggleRead,
             ),
+            // Last, so the pull reveals itself over the chrome rather than
+            // from behind it. It is never hit-testable, so the bar underneath
+            // keeps every one of its taps.
+            PullUpAffordance(controller: _pullUp),
           ],
         );
       },
@@ -934,7 +992,7 @@ class _ReaderChrome extends StatelessWidget {
     required this.position,
     required this.onToggleRead,
     this.previousEntryId,
-    this.nextEntryId,
+    this.onRequestNext,
     this.onOpenEntry,
   });
 
@@ -944,10 +1002,13 @@ class _ReaderChrome extends StatelessWidget {
   final ValueListenable<ReadingPosition> position;
   final VoidCallback onToggleRead;
 
-  /// Where the two ends of the bottom bar go. Resolved by the route.
+  /// Where the left end of the bottom bar goes. Resolved by the route.
   final String? previousEntryId;
-  final String? nextEntryId;
   final void Function(String entryId, double fraction)? onOpenEntry;
+
+  /// The right end of the bottom bar: **read on**, which is a request rather
+  /// than a destination. See [ReaderScreen.onRequestNext].
+  final Future<void> Function()? onRequestNext;
 
   @override
   Widget build(BuildContext context) {
@@ -1089,12 +1150,9 @@ class _ReaderChrome extends StatelessWidget {
                             completed: completed,
                           ),
                         ),
-                        _NeighbourButton(
+                        _NextEntryButton(
                           key: const ValueKey('readerNextEntry'),
-                          icon: Icons.chevron_right,
-                          tooltip: 'Next entry',
-                          entryId: nextEntryId,
-                          onOpen: openEntry,
+                          onRequest: onRequestNext,
                         ),
                       ],
                     ),
@@ -1566,13 +1624,13 @@ class _ReaderData {
 /// `file_store.dart` in the router.
 typedef ReaderFileStore = FileStore;
 
-/// One end of the bottom bar: the entry before this one, or the one after.
+/// The left end of the bottom bar: the entry before this one.
 ///
 /// Takes the same width whether or not there is somewhere to go, so the
-/// percentage between them does not shift as the reader moves through a
-/// collection. Disabled at the ends rather than absent, which is the honest
-/// shape: there *is* no next entry, and a control that vanished would read as
-/// something having gone wrong.
+/// percentage beside it does not shift as the reader moves through a
+/// collection. Disabled at the start rather than absent, which is the honest
+/// shape: there *is* nothing before the first entry, and a control that
+/// vanished would read as something having gone wrong.
 class _NeighbourButton extends StatelessWidget {
   const _NeighbourButton({
     super.key,
@@ -1601,6 +1659,38 @@ class _NeighbourButton extends StatelessWidget {
           color: enabled ? ReaderColors.accent : ReaderColors.track,
         ),
         onPressed: enabled ? () => open(id) : null,
+      ),
+    );
+  }
+}
+
+/// The right end of the bottom bar: **read on**.
+///
+/// Enabled wherever this Entry has a reading order to move forward through,
+/// including at what the library currently believes is the last Entry — because
+/// that belief is about the library and not about the work, and the request
+/// resolves it (`lib/reading_v2/next_entry.dart`). The old shape disabled
+/// itself there and, in doing so, told the reader the collection had ended.
+///
+/// Deliberately the same 44 logical pixels as [_NeighbourButton] opposite it,
+/// so the percentage between the two stays centred.
+class _NextEntryButton extends StatelessWidget {
+  const _NextEntryButton({super.key, required this.onRequest});
+
+  final Future<void> Function()? onRequest;
+
+  @override
+  Widget build(BuildContext context) {
+    final request = onRequest;
+    return SizedBox(
+      width: 44,
+      child: IconButton(
+        tooltip: request == null ? null : 'Next entry',
+        icon: Icon(
+          Icons.chevron_right,
+          color: request == null ? ReaderColors.track : ReaderColors.accent,
+        ),
+        onPressed: request == null ? null : () => unawaited(request()),
       ),
     );
   }

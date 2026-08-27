@@ -42,6 +42,8 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
+import 'package:web_reader/capability/entitlement.dart';
+import 'package:web_reader/features/v2_save_flow.dart';
 import 'package:web_reader/save/queue_task.dart';
 import 'package:web_reader/save/save_state.dart';
 import 'package:web_reader/storage/manifest.dart';
@@ -164,37 +166,23 @@ void main() {
     timeout: const Timeout(Duration(minutes: 8)),
   );
 
-  // ---------------------------------------------------------------- defect
+  // ------------------------------------------------- the sheet's own launches
   //
-  // **DEFECT — the save sheet's own Start button throws.** Skipped rather than
-  // deleted, because the scenario is right and the app is wrong.
+  // Both cases here are about the same rule (V2-D67): **a launch closes the
+  // save sheet, and the surface underneath performs the Start.**
   //
-  // `_V2SavePanelState._start` (lib/features/v2_save_flow.dart:242) awaits the
-  // starter and then calls `_refresh()`. The starter is the shell's
-  // `_startQueuedDownloads`, which for the *Start in Browser* choice calls
+  // This first one was skipped against a defect for as long as the sheet
+  // started the queue itself. `_V2SavePanelState._start` awaited the starter
+  // and then called `_refresh()`; the starter is the shell's
+  // `_startQueuedDownloads`, which for *Start in Browser* calls
   // `showBrowserSurface`, which pops the routes above the shell — dismissing
-  // the modal bottom sheet that hosts this very panel. `_refresh` then calls
-  // `v2PageStatusFor(ref, …)` (:221 → :50), which does
-  // `ref.read(libraryUiServicesProvider)` on a `ConsumerState` that is already
-  // disposed:
-  //
-  //     Bad state: Using "ref" when a widget is about to or has been unmounted
-  //     is unsafe.
-  //
-  // The `if (mounted)` guard inside `_refresh` sits *after* the `ref.read`, so
-  // it never runs. Reproduced on the iPhone 17 simulator, debug: Browser → a
-  // saveable page → Save → "Save for offline" → "Start" → "Start in Browser".
-  //
-  // The save itself still happens — the queue is authorised and the runner
-  // drains it — so this is an unhandled async error on the app's commonest save
-  // path rather than a functional stop. In an integration test it also wedges
-  // the binding and takes every later case in the file down with it, which is
-  // why this one is isolated here.
-  //
-  // Un-skip when the panel captures what it needs before the await, or returns
-  // early on `!mounted` before touching `ref`.
+  // the very sheet the panel was in. `_refresh` then read `ref` on a disposed
+  // `ConsumerState` and threw `Bad state: Using "ref" when a widget is about
+  // to or has been unmounted is unsafe`, wedging the binding and taking every
+  // later case in the file with it. The panel now pops *first* and touches
+  // nothing afterwards, so the scenario runs.
   testWidgets(
-    'the sheet\'s own Start button authorises the queue',
+    'the sheet\'s own Start button closes the sheet and authorises the queue',
     (tester) async {
       await boot(tester, startUrl: fixture.entry(1));
 
@@ -214,6 +202,13 @@ void main() {
         warnIfMissed: false,
       );
       await pumpFor(tester, const Duration(seconds: 2));
+      // The sheet is gone before the gate is answered: nobody had said where
+      // they would wait, so this is the one Start that still asks.
+      expect(
+        find.byType(V2SavePanel),
+        findsNothing,
+        reason: 'the sheet closes on the way to the Start it asked for',
+      );
       await tester.tap(
         find.byKey(const ValueKey('startInBrowser')),
         warnIfMissed: false,
@@ -225,7 +220,92 @@ void main() {
       expect(task.state, SaveTaskState.completed);
     },
     timeout: const Timeout(Duration(minutes: 8)),
-    skip: true,
+  );
+
+  // The defect this case exists for: *Start and keep using Scrollary* took the
+  // branch that claims the Browser surface **without popping anything**, so the
+  // save sheet stayed on screen over the page for the whole run — the one
+  // launch whose entire promise is that the user carries straight on. It is
+  // run on the Pro arm because that is the only arm the row is offered on.
+  //
+  // It is entered through the sheet's *Start*, not through the sheet's launch
+  // rows, for a reason that is about the fixture and not about the flow: the
+  // launch rows appear under the range block, the range block appears once the
+  // page has a Collection, and this fixture is served from `127.0.0.1` — an
+  // address a Source cannot be identified by (see "The one substitution" in
+  // the README), so the domain refuses to adopt it into one. Both paths reach
+  // the same `SaveSheetStart` / `startQueuedDownloads` pair; the launch rows'
+  // own half is pinned in `test/library_ui/save_panel_test.dart`, over the
+  // real modal route and the real starter.
+  testWidgets(
+    'a keep-using-the-app start closes the sheet and leaves the Browser '
+    'usable while the work runs',
+    (tester) async {
+      app = V2App(
+        tag: 'save_${caseIndex++}_$kRunStamp',
+        multitaskingPreference: true,
+        entitlement: EntitlementOverride.forcePro,
+      );
+      await app.boot(tester);
+      await showBrowser(tester);
+      await openPage(tester, app, fixture.entry(1));
+
+      await tester.tap(
+        find.byKey(const ValueKey('browserSaveAction')),
+        warnIfMissed: false,
+      );
+      await pumpFor(tester, const Duration(seconds: 3));
+      await tester.tap(
+        find.byKey(const ValueKey('v2SaveStandalone')),
+        warnIfMissed: false,
+      );
+      await pumpFor(tester, const Duration(seconds: 3));
+
+      await tester.tap(
+        find.byKey(const ValueKey('v2StartButton')),
+        warnIfMissed: false,
+      );
+      await pumpFor(tester, const Duration(seconds: 2));
+      expect(
+        find.byType(V2SavePanel),
+        findsNothing,
+        reason: 'the sheet closes before anything is started, every time',
+      );
+
+      final keepUsing = find.byKey(const ValueKey('startKeepUsingApp'));
+      expect(
+        keepUsing,
+        findsOneWidget,
+        reason: 'the Pro arm is the one this row is offered on',
+      );
+      await tester.tap(keepUsing);
+      await pumpFor(tester, const Duration(seconds: 4));
+
+      // The whole of the bug, asserted: nothing of the save UI is left, the
+      // Browser is in front of the user with its own controls hit-testable
+      // rather than behind a modal barrier, and the work is under way.
+      expect(find.byType(V2SavePanel), findsNothing);
+      expect(
+        find.byKey(const ValueKey('browserSaveAction')).hitTestable(),
+        findsOneWidget,
+        reason: 'the page and its controls are usable while the work runs',
+      );
+      expect(
+        app.runner.isRunning,
+        isTrue,
+        reason: 'and the launch the sheet closed on did start the work',
+      );
+
+      await awaitQueueIdle(tester, app);
+      final task = (await app.ui.queue.all()).single;
+      expect(task.state, SaveTaskState.completed);
+      expect(
+        await app.storedImagesOf(task.entryId),
+        kFixtureImagesPerEntry,
+        reason: 'the run went to completion with the sheet gone',
+      );
+    },
+    timeout: const Timeout(Duration(minutes: 8)),
   );
 
   testWidgets(

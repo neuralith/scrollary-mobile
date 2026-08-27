@@ -21,7 +21,7 @@ the middle is easier to read on its own.
 | Suite | The question only a device answers |
 |---|---|
 | `occlusion_gate_test.dart` | Does a **painted but fully covered** WebView keep rendering, scrolling and running JavaScript? The premise the whole foreground design rests on. |
-| `save_flow_test.dart` | The V2 save: the sheet queues, nothing captures until an explicit Start, one Start drains the queue, real PNG bytes land in order, a cancel stops without a false success. |
+| `save_flow_test.dart` | The V2 save: the sheet queues, nothing captures until an explicit Start, a launch closes the sheet and leaves the Browser usable while the run goes on behind it (V2-D67), one Start drains the queue, real PNG bytes land in order, a cancel stops without a false success. |
 | `capture_integrity_test.dart` | The bridge's per-call image cap and slice reassembly, coordinates when an inner element is the scroller, and `HTMLImageElement.complete` across every lazy/broken/loaded shape. |
 | `text_capture_test.dart` | Text and text+images capture: what the extractor keeps, what it drops, and a document package read back with the source gone. |
 | `offline_read_test.dart` | Capture online, destroy the origin, read entirely from disk. Partial entries warn; deleted files degrade without touching the Entry; the image reader opens *at* its anchor and the document reader restores *to* it. |
@@ -107,8 +107,6 @@ Nothing here is skipped to go green.
   `QueueRunner` holds no pending selection, `EntryCaptureService` has no
   selection path, and `operation_indicator.dart`'s `_needsUser` is hard-wired
   `false`. The five cases that establish the premise run today.
-- **`save_flow_test.dart`, one case** — a defect: the save sheet's own Start
-  button throws after the sheet is dismissed.
 - **`reading_flow_test.dart`, one case** — a defect: a re-capture discards the
   reading anchor.
 
@@ -118,7 +116,6 @@ Each is written up in full where it bites, with a reproduction.
 
 | Where | What |
 |---|---|
-| `lib/features/v2_save_flow.dart:242` | `_V2SavePanelState._start` calls `_refresh()` after the starter has dismissed the sheet, so `v2PageStatusFor` reads `ref` on a disposed `ConsumerState`. Unhandled async error on the commonest save path. |
 | `lib/data/offline_copy_repository.dart:35` | `recordCopy` inserts a fresh copy row with a null anchor, so a re-capture sends the reader back to the top. V1 had `carryReading` for exactly this and still unit-tests it. |
 | `lib/library_ui/collection_actions.dart:179` | The Entry action sheet is a non-scrolling `Column` in a `showModalBottomSheet` with no `isScrollControlled`, so on a shorter screen it overflows and its lower actions are unreachable. |
 | `lib/core/device_capacity_provider.dart:53` | `refresh` assigns `state` after an await with no `ref.mounted` check, throwing `UnmountedRefException` when the scope goes while a refresh is in flight. |

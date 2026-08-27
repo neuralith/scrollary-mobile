@@ -7,11 +7,12 @@
 /// it: asserting `mode.description` against itself would pass whatever the
 /// widget said.
 ///
-/// Two structural rules are pinned here as well, because they are what the
+/// Three structural rules are pinned here as well, because they are what the
 /// wording depends on: **all three modes are always on screen** — an
-/// unavailable one is disabled with its reason where its description would be
-/// — and **there is no video mode**, which is why §6.6 is a sentence rather
-/// than a fourth option.
+/// unavailable one is disabled with its reason beside it, and an available one
+/// is its label and its glyph and nothing else — **the heading is the control
+/// that closes the block** for a sheet that can reopen it, and **there is no
+/// video mode**, which is why §6.6 is a sentence rather than a fourth option.
 library;
 
 import 'package:flutter/material.dart';
@@ -141,6 +142,7 @@ void main() {
       WidgetTester tester,
       CaptureCapabilities capabilities, {
       CaptureMode? selected,
+      VoidCallback? onCollapse,
     }) async {
       await tester.pumpWidget(
         MaterialApp(
@@ -150,6 +152,7 @@ void main() {
               child: CaptureModeSection(
                 capabilities: capabilities,
                 selected: selected,
+                onCollapse: onCollapse,
                 onSelect: (mode) => chosen.add(mode),
               ),
             ),
@@ -177,7 +180,7 @@ void main() {
       );
     });
 
-    testWidgets('offers all three modes with their descriptions', (
+    testWidgets('offers all three modes, as a label and a glyph each', (
       tester,
     ) async {
       await pumpSection(
@@ -195,19 +198,45 @@ void main() {
       expect(find.text('Images only'), findsOneWidget);
       expect(find.text('Text only'), findsOneWidget);
       expect(find.text('Text and images'), findsOneWidget);
+      // One glyph per mode, and the same glyph the collapsed line uses.
+      for (final mode in CaptureMode.values) {
+        expect(find.byIcon(CaptureModeSection.iconFor(mode)), findsOneWidget);
+      }
 
-      expect(
-        find.text('Save the page images in order, with no text.'),
-        findsOneWidget,
+      // And no sentence under any of them: the block is three single lines,
+      // on a sheet that asks three other questions above it. What a mode does
+      // is still spelled out where it is a *choice about the work* — the
+      // Collection's own capture-mode menu — and the reason an unavailable
+      // one gives is not a description and stays (see the next case).
+      for (final mode in CaptureMode.values) {
+        expect(
+          find.text(mode.description),
+          findsNothing,
+          reason: '${mode.name} still prints its description',
+        );
+      }
+    });
+
+    testWidgets('the heading closes the block only where a caller can reopen '
+        'it', (tester) async {
+      // The dropdown rule: whatever opened this block closes it, and the
+      // heading is that control. A block with no collapsed line behind it —
+      // the first save of a work — has nothing to collapse *to*, so it is not
+      // offered a way to hide the question.
+      var collapsed = 0;
+      await pumpSection(tester, measured(ContentKind.article));
+      expect(find.byKey(const ValueKey('captureModeCollapse')), findsNothing);
+
+      await pumpSection(
+        tester,
+        measured(ContentKind.article),
+        onCollapse: () => collapsed++,
       );
-      expect(
-        find.text('Save the readable text. No images are downloaded.'),
-        findsOneWidget,
-      );
-      expect(
-        find.text('Save the readable text with the images that sit inside it.'),
-        findsOneWidget,
-      );
+      expect(find.text('What to save'), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('captureModeCollapse')));
+      await tester.pump();
+
+      expect(collapsed, 1);
     });
 
     testWidgets('keeps an unavailable mode on screen with its reason', (

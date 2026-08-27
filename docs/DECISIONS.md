@@ -1398,3 +1398,128 @@ Nothing about the domain moved, and the numeric interaction is untouched:
 digits only, a blank and a zero refused where they were typed, the ceiling
 enforced, `004` normalised on confirmation, and the OK bar still pinned below
 the scrolling body for the number pad iOS gives no return key.
+
+### V2-D66 · *Next entry* is a request, not a destination — and "there is no next one" is a fact about the library
+
+**The capability, in the user's words.** You reach the end of an Entry and read
+on — by the control in the bottom bar, or by pulling up from the bottom edge of
+the page. What happens next depends on what is actually there:
+
+| What the library holds | What the reader gets |
+|---|---|
+| The next Entry, downloaded on this device | It opens, through the same forward transition V2-D59 describes |
+| The next Entry, with no copy on this device | *The next entry is not downloaded here* — **Open on website** · *Stay here* |
+| No next Entry at all | *No next entry is currently in your library* — **Check for new entries** · *Not now* |
+
+**The bug this fixes is a sentence, not a crash.** Reading on to an Entry this
+device did not hold used to land in the reader's own honest not-downloaded
+state: a page that says the copy is missing, with a way back to the Collection.
+Every word of it was true and the effect was a dead end, because the Entry is a
+first-class library item whose Source is right there. And reaching the last
+Entry the library knew about disabled the control, which said *this collection
+has ended* — a claim the app has no evidence for. The Collection's site may have
+published more this morning; a check is the only thing that can tell, and update
+checking is Free.
+
+**So the control stopped being a destination.** It used to be handed a
+`nextEntryId`, resolved when the reader opened, and it was disabled when that
+was null. It is now handed **a request**, and what follows this Entry is
+resolved at the moment it is asked — because it changes under a reader who is
+reading: a download lands, a check writes a row. `lib/reading_v2/next_entry.dart`
+answers it, in four cases and no fifth, and nothing else in the app decides any
+of them.
+
+**One operation, three ways of asking.** The bottom-bar control, the end of a
+finished Entry and the pull-up gesture all call `ReaderScreen.onRequestNext`,
+which is the route's `_requestNextEntry`. None of them knows what "next" means,
+and none of them can grow its own answer. What a *move* means is still
+`ForwardTransitionService`'s — completion, the Collection's cleanup rule, the
+plan that falls due on arrival — so pulling up at the end of an unfinished Entry
+asks V2-D59's question exactly as tapping the control does.
+
+**Nothing is reimplemented.** Opening at the source is `sourceOpenerProvider`
+plus the Entry's earliest active Location — the same pair every other
+*Open on website* in the app uses, and the URL is **read, never constructed**.
+Checking is `collectionCheckerProvider`, which is the app's own Collection
+check: user-started, visible, bounded, cancellable, and it downloads nothing.
+After a check the library is asked once more; a check writes rows and no bytes,
+so what it found is offered at its source rather than opening on its own. It is
+never asked a third time — the same question twice is a loop, not an answer.
+
+**Pull up from the bottom to read on.** The one-handed twin of pull-to-refresh,
+at the other edge, and it exists because the control is in chrome the reader has
+usually tapped away. It is built on scroll notifications, exactly as
+`RefreshIndicator` is, and never on a gesture recogniser of its own: reading is
+a vertical gesture, and the arena — where the scroll view's drag and the
+horizontal leave-for-the-Collection drag already sit — is the last place this
+should be arguing. That choice is what makes the safety properties structural
+rather than tuned:
+
+* a pull can only start from an overscroll at the **true end** of the Entry;
+* a **fling** into the end carries no `dragDetails`, so it reveals nothing and
+  advances nothing;
+* **release decides**, not crossing: passing 88 logical pixels arms it and says
+  *Release for next entry*, and the request is made when the finger lifts;
+* **reversing cancels**, and a cancelled pull leaves the reader exactly where it
+  was.
+
+The affordance slides up from below the bottom edge, over the chrome, and is
+never hit-testable — it is the gesture reporting on itself, not a second
+control. The bar's own *Next entry* button is untouched and stays the way in for
+anyone who does not want a gesture at all.
+
+### V2-D67 · A launch closes the save sheet; the Browser performs the Start
+
+`_V2SavePanelState._run` used to `await startQueuedDownloads` itself, and that
+call does not return until `QueueRunner.start` has drained the batch. So the
+save sheet stayed on screen for the length of the run, over the very Browser
+the run was driving.
+
+*Start now* appeared to work only by accident: the shell's
+`_startQueuedDownloads` calls `showBrowserSurface` for that choice, which pops
+every route above the shell on its way to the Browser — and the sheet is one of
+them. *Start and keep using Scrollary* takes the other branch, which claims the
+surface without popping anything, so the user chose the launch whose whole
+promise is *carry on where you are* and was left looking at the sheet they had
+just answered, with the page behind it and the docked Stop underneath it.
+
+**The sheet answers and closes; the surface that outlives it starts the queue.**
+`V2SavePanel` pops with a `SaveSheetStart` — the `StartWhere` the user already
+chose, or null for the queue's own Start button, which is the one place the gate
+should still ask — and `BrowserScreen._showSaveSheet` performs
+`startQueuedDownloads` after the route is gone. Everything the sheet owns is
+done before the pop: the message, and the Collection's standing capture answer
+(V2-D61). What is dropped is the refresh afterwards, which was a re-read for a
+sheet that is leaving — and which threw on the commonest save path, because
+*Start now*'s accidental pop had already disposed the `ConsumerState` it read
+`ref` on.
+
+Two things follow. The in-sheet Stop goes: it existed because the panel sat on
+top of the docked running panel, and it no longer does. And a launch that
+queues nothing — a refusal, a listing — leaves the sheet open, because there is
+nothing to go back to the page for.
+
+### V2-D68 · *What to save* is a dropdown, and its rows are one line each
+
+Two changes to the same block, from the same complaint: the sheet asks three
+questions and this one took the most room to say the least.
+
+**The block closes the way it opened.** V2-D60's collapsed line opened the full
+block and nothing closed it again — *Change* was a one-way door on the grounds
+that re-collapsing would be the sheet arguing. In practice a user who tapped it
+to see what the options were had no way back, and the sheet stayed three rows
+taller for the rest of its life. The heading *What to save* is now that
+control (`captureModeCollapse`), and it is offered only where there is a
+settled answer to collapse **to**: the first save of a work is the question
+itself. A mode chosen by hand pins the block open, because collapsing then
+would put a person's answer behind a line that reads as the work's standing
+one.
+
+**An available mode is its glyph and its label.** The three descriptions said
+what three icons and three labels already said, under a heading, above a range
+block, above the launches. A *reason* is not a description: an unavailable mode
+still carries why, in place of nothing, because a greyed row that explains
+itself is an answer and a silent one is a bug. STORE_PACKAGE.md §6.3 moved with
+it, and the descriptions still exist — `CaptureMode.description` is printed by
+the Collection's own capture-mode menu, which is a standing choice about a work
+rather than a control on the way past.

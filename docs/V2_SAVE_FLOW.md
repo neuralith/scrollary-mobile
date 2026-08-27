@@ -157,15 +157,17 @@ different question — queue what is already known, open nothing — and nobody
 reaches for it on the page in front of them. `SaveScopePlanner` still
 implements it (§6) for the paths that use it.
 
-One sentence under the counted row carries everything the three descriptions
-used to carry between them:
+One **secondary line** under the counted row, and only the two facts the number
+itself does not carry:
 
-> Counts this entry as the first, so 5 means this one and the next four — up
-> to *N*. One page at a time, nothing else downloaded, and you can stop at any
-> point.
+> This entry counts as the first · up to *N*
 
-That is the inclusive count stated where the number is typed, the ceiling as a
-number the user can see, and what the operation does and does not do. The
+That is the inclusive count stated where the number is typed, and the ceiling as
+a number the user can see. The paragraph it replaces also said the site is read
+one page at a time, that nothing else is downloaded and that it can be stopped
+at any point; all three are said by the run's own surface — the docked
+operation panel and its Stop — at the moment they are true, rather than as a
+block of prose above the button. The
 ceiling is still enforced by `SaveLimits.forScope`, and so is every part of the
 recovered
 numeric interaction: digits only, a blank and a zero refused where they were
@@ -201,6 +203,12 @@ V2-D62 so is **what to save**.
 | **Start now** | Added and started, with the Browser in front of the user. One authorisation runs the whole operation — Activity is where a run is *watched*, never a second Start it has to be given. |
 | **Start and keep using Scrollary** | The same start, leaving the user where they are. |
 
+**A launch closes the sheet** (V2-D67). The panel pops with a `SaveSheetStart`
+carrying that answer and `BrowserScreen._showSaveSheet` performs the Start, so
+the run begins with the user back on the page and the docked operation panel —
+its progress and its Stop — in front of them. *Queue only*, a refusal and a
+listing queue nothing and leave the sheet where it is.
+
 The rows are the foreground gate's own — `ForegroundStartActions`, the same
 widget `startCollectionCheck` uses — supplied to the sheet by
 `v2_save_flow.dart`, because `lib/library_ui/` may not reach that boundary and
@@ -223,19 +231,20 @@ capability at all, the visible-Browser start is fully functional without one,
 and dismissing the sheet starts nothing and changes nothing.
 
 **Consent for the reading still comes first**, and it is where the count is
-typed — before anything is opened. The sentence under the field names the
-site, the ceiling, that nothing else is downloaded and that it can be stopped;
-a count of one opens nothing, and the library-only range opens nothing either.
+typed — before anything is opened. The line under the row names the ceiling and
+what the count includes; a count of one opens nothing, and the library-only
+range opens nothing either.
 
 Reading forward is not a state of its own any more, because it never happens on
 its own: it happens between one entry of a download and the next. So the
 compact running surface (`features/running_operation_panel.dart`) shows
 *Downloading* for the whole operation, with the counts and one Stop — and that
 Stop ends the journey, not merely the page it was on. No further address is
-opened and no further row is written. The save sheet carries the same stop,
-because the panel is docked exactly where the sheet sits and a control the user
-must dismiss the sheet to reach is not reachable while the thing it stops is
-running.
+opened and no further row is written. It is the **only** Stop the save path
+needs: a launch closes the save sheet before the run begins
+(`SaveSheetStart`), so the panel docked at the bottom of the Browser is never
+underneath it. The sheet used to carry a Stop of its own for exactly that
+reason, and it went with the sheet that stayed open.
 
 The journey is bounded twice: by the typed count, and by the pages it may open
 — one per Entry, so the ceiling is the count itself rather than

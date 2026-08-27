@@ -40,13 +40,42 @@ class ReaderHarness {
   LibraryDatabase get db => repos.db;
 
   String? _collectionId;
+  String? _sourceId;
 
   /// The Collection every seeded Entry joins. Created once, lazily, because a
   /// test that only ever opens one Entry should not have to know about it.
   Future<String> collectionId() async {
     final existing = _collectionId;
     if (existing != null) return existing;
-    return _collectionId = (await repos.seedLibrary()).collection.id;
+    final seeded = await repos.seedLibrary();
+    _sourceId = seeded.source.id;
+    return _collectionId = seeded.collection.id;
+  }
+
+  /// The Collection's Source — what a Location has to belong to.
+  Future<String> sourceId() async {
+    await collectionId();
+    return _sourceId!;
+  }
+
+  /// Give [entryId] an address, so a test about opening one at its source has
+  /// a real recorded Location to open rather than a constructed URL.
+  Future<String> seedLocation({
+    required String entryId,
+    required String url,
+    String sourceLabel = '',
+  }) async {
+    final (location, violation) = await repos.entries.addLocation(
+      entryId: entryId,
+      sourceId: await sourceId(),
+      url: url,
+      urlKey: url,
+      sourceLabel: sourceLabel,
+    );
+    if (violation != null) {
+      throw StateError('seed location: ${violation.message}');
+    }
+    return location!.id;
   }
 
   /// An Entry in the seeded Collection, with a Location to save from.

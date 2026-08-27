@@ -12,6 +12,7 @@ import '../browser/browser_navigator.dart';
 import '../browser/browser_presentation.dart';
 import '../browser/browser_url.dart';
 import '../core/url_utils.dart';
+import '../library_ui/entry_offline.dart';
 import '../save/capture_policy.dart';
 import '../core/config.dart';
 import '../core/connectivity.dart';
@@ -525,7 +526,7 @@ class _BrowserScreenState extends ConsumerState<BrowserScreen> {
     final browser = ref.read(browserProvider);
     final url = browser.currentUrl;
     if (url.isEmpty) return;
-    await showModalBottomSheet<void>(
+    final start = await showModalBottomSheet<SaveSheetStart>(
       context: context,
       // The panel is as tall as what it has to say — a Collection's context,
       // the ranges, and the sentence explaining what each one writes. Left at
@@ -536,6 +537,16 @@ class _BrowserScreenState extends ConsumerState<BrowserScreen> {
       builder: (_) => V2SavePanel(url: url, pageTitle: browser.title),
     );
     if (!mounted) return;
+    // The Start the sheet asked for, run **after** it has closed, from the
+    // surface the run itself needs. `startQueuedDownloads` does not return
+    // until the batch is done, so a sheet that awaited it stayed on top of the
+    // Browser for the whole run — visibly so for *Start and keep using
+    // Scrollary*, whose promise is that the user carries straight on
+    // ([SaveSheetStart]).
+    if (start != null) {
+      await startQueuedDownloads(this.context, ref, decided: start.where);
+      if (!mounted) return;
+    }
     unawaited(_loadPageEntryState(_pageSession, _pageKey));
   }
 }

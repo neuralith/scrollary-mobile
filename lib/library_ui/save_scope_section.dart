@@ -473,15 +473,15 @@ class SaveScopeSection extends StatelessWidget {
                 style: TextStyle(fontSize: 11.5, color: palette.danger),
               ),
             ),
-          const SizedBox(height: 6),
+          const SizedBox(height: 5),
           Text(
-            // Everything the three range descriptions used to carry between
-            // them, in one sentence: the count is **inclusive**, the ceiling
-            // is a number the user can see (CLAUDE.md), the site is read one
-            // page at a time, nothing else is taken, and it stops when asked.
-            'Counts this entry as the first, so 5 means this one and the next '
-            'four — up to ${controller.ceiling}. One page at a time, nothing '
-            'else downloaded, and you can stop at any point.',
+            // The ceiling is a number the user can see (CLAUDE.md), and the
+            // count is inclusive — the two facts the number itself does not
+            // carry, on the secondary line under the row that takes it. The
+            // paragraph this replaces also said the site is read one page at a
+            // time and can be stopped at any point; both are still said, by
+            // the run's own surface, at the moment they are true.
+            'This entry counts as the first · up to ${controller.ceiling}',
             key: const ValueKey('saveScopeReadsForwardNote'),
             style: TextStyle(
               fontSize: 11.5,

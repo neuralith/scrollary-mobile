@@ -134,6 +134,22 @@ in [docs/DECISIONS.md](docs/DECISIONS.md).
   is no Undo, for the reason V2-D33 gives. The plan is held by the service
   rather than by the reader, because `V2ReaderRoute` replaces itself to move and
   the widget that asked the questions is gone before the answer is owed.
+  ***Next entry* is a request, never a destination**
+  (`lib/reading_v2/next_entry.dart`, V2-D66): what follows an Entry is resolved
+  when the reader asks, in four cases and no fifth — it opens if this device
+  holds it, it is offered **at its Source** if the library has it and this
+  device does not, and where the library knows of no next Entry the offer is
+  **Check for new entries**, because that is a fact about the library and never
+  about the work. The bottom-bar control, the end of a finished Entry and the
+  **pull-up from the bottom edge** (`lib/features/pull_up_next.dart`) are three
+  ways of making one request; what a *move* means is still
+  `ForwardTransitionService`'s. Nothing there reimplements opening a source or
+  checking a Collection — both go through the composition seams the rest of the
+  app uses, and a source URL is read from a Location, never constructed. The
+  pull-up is built on scroll notifications as `RefreshIndicator` is, never on a
+  recogniser of its own: it starts only from an overscroll at the true end, a
+  fling into the end carries no `dragDetails` and does nothing, release commits
+  and reversing cancels.
 - **How an Entry reads** (`lib/library/entry_presentation.dart`) — inside a
   Collection a row leads with the Entry's **position**, because the work is
   already named above the list; across the library it names itself. The

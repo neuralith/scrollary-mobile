@@ -10,7 +10,6 @@ import '../data/recognition_index.dart';
 import '../domain/domain.dart';
 import '../library/collection_identity.dart' show PageHints;
 import '../library_ui/collection_picker.dart';
-import '../library_ui/entry_offline.dart';
 import '../library_ui/providers.dart';
 import '../library_ui/save_scope_section.dart';
 import '../providers.dart';
@@ -432,6 +431,28 @@ final v2SaveStandaloneProvider = Provider<V2SaveStandaloneFn>(
   (ref) => v2SaveStandalone,
 );
 
+/// What the sheet asks the Browser to do **once it has closed itself**.
+///
+/// The save sheet is a modal route over the Browser, and a start it performs
+/// itself runs behind it: `QueueRunner.start` does not return until the batch
+/// is done, so the sheet that awaited it stayed on screen over the page it had
+/// just sent the app to read. *Start now* only ever appeared to work because
+/// `showBrowserSurface` pops every route above the shell on its way past —
+/// which dismissed this sheet as a side effect, and did nothing at all for
+/// *Start and keep using Scrollary*, whose whole promise is that the user
+/// carries on where they are.
+///
+/// So the sheet answers and closes, and [BrowserScreen] — which is still
+/// mounted, and owns the surface the run needs — performs the Start with this.
+/// [where] is what the user already decided; null means nobody has asked yet,
+/// which is the queue's own Start button and the one place the gate should
+/// still ask.
+class SaveSheetStart {
+  const SaveSheetStart({this.where});
+
+  final StartWhere? where;
+}
+
 /// The sheet behind the Browser's save control.
 ///
 /// It asks the two questions V1 asked on the way in and V2 lost: **which
@@ -467,23 +488,6 @@ class _V2SavePanelState extends ConsumerState<V2SavePanel> {
 
   String? _message;
   bool _busy = false;
-
-  /// True while a run this sheet started is still going.
-  ///
-  /// **Why the sheet needs its own Stop.** The compact running surface is
-  /// docked at the bottom of the Browser — which is exactly where this sheet
-  /// sits — so a user who started a download from here would have to dismiss
-  /// the sheet to reach the control for the thing the sheet had just started.
-  /// It is the same stop, not a second one: it cancels the row that is
-  /// running, and a sequential capture ends with it rather than carrying on to
-  /// the next entry (V2-D56).
-  bool _runningFromHere = false;
-
-  /// Test hook, mirroring `QueueRunner.debugSetRunning`: the in-sheet Stop is
-  /// exercised without driving a real capture over a real site.
-  @visibleForTesting
-  void debugSetRunningFromHere(bool value) =>
-      setState(() => _runningFromHere = value);
 
   /// The Collection an index page was just added as, so the check can be
   /// offered in the same breath — the listing itself is not an Entry, so
@@ -533,12 +537,16 @@ class _V2SavePanelState extends ConsumerState<V2SavePanel> {
   /// standalone save never writes a preference for anything.
   String? _preferenceCollectionId;
 
-  /// True once the user has asked to see the full block again. *Change* is a
-  /// one-way door for this sheet: having asked what the options are, being
-  /// shown the collapsed line again would be the sheet arguing.
+  /// True while the user has the *What to save* block open.
+  ///
+  /// It used to be a one-way door — opened by the collapsed line and closed by
+  /// nothing — so a user who tapped it to look at the options had no way back
+  /// to the one-line answer and the sheet grew by three rows for the rest of
+  /// its life. It is a dropdown; the control that opens it closes it.
   bool _modesExpanded = false;
 
-  /// Whether the collapsed line stands in for the block.
+  /// Whether there is a settled answer for this work that the block can be
+  /// collapsed to. **Not** whether it currently is — see [_modesCollapsed].
   ///
   /// **What this deliberately does not do is trust an unscrolled page about
   /// images** (V2-D65). This sheet probes before anything has been scrolled,
@@ -551,11 +559,19 @@ class _V2SavePanelState extends ConsumerState<V2SavePanel> {
   /// *yet* is not.
   bool get _modeIsRemembered {
     final remembered = _remembered;
-    if (remembered == null || _modesExpanded || _modeIsUserSet) return false;
+    if (remembered == null) return false;
     if (_capabilities.allows(remembered)) return true;
     return !(_capabilities.blocked[remembered]?.survivesAnUnscrolledPage ??
         false);
   }
+
+  /// Whether the one-line answer is standing in for the block right now.
+  ///
+  /// A tap on a mode row opens the question for good on this sheet: what is on
+  /// screen is then the person's answer, not the work's, and collapsing it
+  /// back to a line that reads like a remembered one would misdescribe it.
+  bool get _modesCollapsed =>
+      _modeIsRemembered && !_modesExpanded && !_modeIsUserSet;
 
   @override
   void dispose() {
@@ -790,8 +806,22 @@ class _V2SavePanelState extends ConsumerState<V2SavePanel> {
     return detected.isNotEmpty ? detected : widget.pageTitle.trim();
   }
 
-  /// Run one domain call, show what it said, and start the queue if the user
-  /// asked for that in the same tap.
+  /// Run one domain call, show what it said, and hand the Start back to the
+  /// Browser if the user asked for one in the same tap.
+  ///
+  /// **The sheet closes before anything runs.** It used to await
+  /// `startQueuedDownloads` itself, and that call does not return until the
+  /// whole batch has been captured — so the sheet sat over the Browser for the
+  /// length of the run. *Start now* escaped that only because
+  /// `showBrowserSurface` pops the routes above the shell on its way to the
+  /// Browser; *Start and keep using Scrollary* has no such pop and left the
+  /// user staring at the sheet they had just answered. Both now answer,
+  /// dismiss, and let [BrowserScreen] start the queue on the surface that
+  /// outlives this route ([SaveSheetStart]).
+  ///
+  /// Everything this sheet still owns is done **before** the pop: the message
+  /// is shown, and the work's standing answer is written (V2-D61). What is
+  /// dropped is the refresh, which is a re-read for a sheet that is leaving.
   Future<AddToLibraryReport?> _run(
     Future<AddToLibraryReport> Function() call, {
     SaveStartMode start = SaveStartMode.queueOnly,
@@ -803,27 +833,29 @@ class _V2SavePanelState extends ConsumerState<V2SavePanel> {
       _busy = false;
       _message = report.sentence ?? _fallbackSentence(report);
     });
-    // The explicit Start, and the only one: `startQueuedDownloads` authorises
-    // the waiting rows and hands them to whatever runs them. Nothing about
-    // queueing implies it — and the launch the user already chose travels
-    // with it, so nothing asks them a second time where they would like to
-    // wait.
-    if (start.starts && report.queued > 0) {
-      setState(() => _runningFromHere = true);
-      try {
-        await startQueuedDownloads(context, ref, decided: start.where);
-      } finally {
-        if (mounted) setState(() => _runningFromHere = false);
-      }
-    }
-    if (!mounted) return report;
     await _rememberMode(
       report.collectionId ?? _preferenceCollectionId,
       queued: report.queued,
     );
     if (!mounted) return report;
+    // The explicit Start, and the only one. Nothing about queueing implies it
+    // — and the launch the user already chose travels with the answer, so
+    // nothing asks them a second time where they would like to wait.
+    if (start.starts && report.queued > 0) {
+      _closeWith(SaveSheetStart(where: start.where));
+      return report;
+    }
     await _refresh();
     return report;
+  }
+
+  /// Close this sheet, telling the Browser what to do next.
+  ///
+  /// `maybePop` rather than `pop`: the panel is also pumped directly in a
+  /// widget test, where there is no route of its own to dismiss, and a sheet
+  /// that has already gone must not take the Browser with it.
+  void _closeWith(SaveSheetStart start) {
+    Navigator.of(context).maybePop(start);
   }
 
   /// Only for a domain answer that carried no sentence of its own: a silent
@@ -883,7 +915,7 @@ class _V2SavePanelState extends ConsumerState<V2SavePanel> {
   /// Everything the block says stays one tap away, and the line is only drawn
   /// for an answer this page has not reliably ruled out (V2-D65).
   List<Widget> _captureBlock() => [
-    if (_modeIsRemembered)
+    if (_modesCollapsed)
       RememberedCaptureLine(
         mode: _remembered!,
         onChange: () => setState(() => _modesExpanded = true),
@@ -892,6 +924,12 @@ class _V2SavePanelState extends ConsumerState<V2SavePanel> {
       CaptureModeSection(
         capabilities: _capabilities,
         selected: _mode,
+        // The heading is the way back to the line, and only where there is a
+        // line to go back to: on a work with no settled answer this block is
+        // the question itself and closing it would hide it.
+        onCollapse: _modeIsRemembered && !_modeIsUserSet
+            ? () => setState(() => _modesExpanded = false)
+            : null,
         onSelect: (mode) => setState(() {
           _mode = mode;
           _modeIsUserSet = true;
@@ -975,26 +1013,27 @@ class _V2SavePanelState extends ConsumerState<V2SavePanel> {
           },
         ),
         const SizedBox(height: 7),
-        OutlinedButton(
+        OutlinedButton.icon(
           key: const ValueKey('saveScopeAddToQueue'),
           onPressed: () => submit(SaveStartMode.queueOnly),
-          child: const Text(
+          icon: const Icon(Icons.schedule, size: 18),
+          label: const Text(
             'Queue only',
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
           ),
         ),
-        const SizedBox(height: 8),
+        const SizedBox(height: 7),
         // The rule the rows above no longer each repeat, stated once where it
         // still has to be visible: nothing runs on its own, and nothing runs
-        // at all once the app is not in front of the user.
+        // at all once the app is not in front of the user. One line, because
+        // it is the only supporting sentence left under this group.
         Text(
-          'Nothing downloads on its own, and nothing runs while the app is '
-          'not in front of you.',
+          'Nothing runs on its own, or while the app is not in front of you.',
           key: const ValueKey('saveLaunchNote'),
           style: TextStyle(
-            fontSize: 11.5,
-            height: 1.4,
+            fontSize: 11,
+            height: 1.35,
             color: AppPalette.of(sheetContext).inkFaint,
           ),
         ),
@@ -1146,23 +1185,12 @@ class _V2SavePanelState extends ConsumerState<V2SavePanel> {
     );
   }
 
-  Future<void> _start() async {
-    await startQueuedDownloads(context, ref);
-    if (mounted) await _refresh();
-  }
-
-  /// Stop the run this sheet started, at the next safe point.
+  /// The queue's own Start, for a row that is already waiting.
   ///
-  /// The row's own cancel and nothing else — the same one Activity and the
-  /// docked panel ask for, so there is one way a download stops. A sequential
-  /// capture ends with the row it was on: no further page is opened and no
-  /// further row is written (V2-D56).
-  Future<void> _stopRun() async {
-    final queue = ref.read(libraryUiServicesProvider).queue;
-    for (final task in await queue.pending()) {
-      if (task.state == SaveTaskState.running) await queue.cancel(task.id);
-    }
-  }
+  /// Nobody has been asked where they would like to wait, so no answer travels
+  /// with it and the gate asks — which is right here, and only here. The sheet
+  /// closes first for the same reason every other launch does.
+  void _start() => _closeWith(const SaveSheetStart());
 
   Future<void> _check(String collectionId, String collectionName) async {
     await startCollectionCheck(
@@ -1275,30 +1303,9 @@ class _V2SavePanelState extends ConsumerState<V2SavePanel> {
               ? 'Queued — waiting for Start.'
               : 'Downloading now.',
         ),
-      if (_runningFromHere) ...[
-        _note(
-          palette,
-          'Downloading from this page onward — each next entry is found as '
-          'the one before it finishes.',
-        ),
-        const SizedBox(height: 8),
-        // The Stop belongs *here*, not only on the panel underneath. The panel
-        // is docked at the bottom of the Browser — which is exactly where this
-        // sheet sits — so a user who started the download from the sheet would
-        // have had to dismiss it to find the control for the thing the sheet
-        // had just started.
-        TextButton.icon(
-          key: const ValueKey('sheetStopRun'),
-          onPressed: _stopRun,
-          icon: const Icon(Icons.stop_circle_outlined, size: 18),
-          label: const Text('Stop downloading'),
-        ),
-        _note(
-          palette,
-          'Stops at the next safe point, and nothing after it is opened. What '
-          'is already on this device stays.',
-        ),
-      ],
+      // No Stop here, and no running note: a start closes this sheet, so what
+      // it started is watched and stopped on the panel docked under the
+      // Browser — the one surface that is there for the whole run.
       if (_message != null) _note(palette, _message!),
       const SizedBox(height: 12),
       // A listing writes no queue row, so what to take off a page is not a

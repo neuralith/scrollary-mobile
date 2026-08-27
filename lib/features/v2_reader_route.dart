@@ -6,9 +6,11 @@ import '../library_ui/providers.dart';
 import '../providers.dart' show cleanupProvider, forwardTransitionProvider;
 import '../reading_v2/finished_cleanup.dart';
 import '../reading_v2/forward_transition.dart';
+import '../reading_v2/next_entry.dart';
 import '../reading_v2/offline_read.dart';
 import '../storage/cleanup.dart';
 import 'cleanup_dialogs.dart';
+import 'next_entry_sheets.dart';
 import 'reader_screen.dart';
 
 /// The V2 reader route: resolve the Entry's OfflineCopy first, then open the
@@ -41,6 +43,22 @@ class _V2ReaderRouteState extends ConsumerState<V2ReaderRoute> {
   late final ForwardTransitionService _transitions;
   late final CleanupService _cleanup;
 
+  /// What follows an Entry, asked of the library rather than of this route's
+  /// last resolution — see [_requestNextEntry].
+  late final NextEntryResolver _nextEntry;
+
+  /// How this app opens a page, and how it checks a Collection for new
+  /// Entries. Both are composition seams and both are read once, in
+  /// `initState`, for the same reason everything else here is: they are used
+  /// after an `await`, where a disposed state cannot read a provider.
+  late final SourceOpener? _openSource;
+  late final CollectionChecker? _checkCollection;
+
+  /// True while a next-Entry request is being answered. One at a time: a second
+  /// tap, or a pull arriving while a sheet is up, must not stack a duplicate
+  /// question or start two moves.
+  bool _requestingNext = false;
+
   /// Resolved once per Entry — and **not** in `build`, which would re-resolve
   /// the package on every rebuild and re-report the arrival with it.
   late Future<_ReaderRouteData> _data;
@@ -56,6 +74,13 @@ class _V2ReaderRouteState extends ConsumerState<V2ReaderRoute> {
     _services = ref.read(libraryUiServicesProvider);
     _transitions = ref.read(forwardTransitionProvider);
     _cleanup = ref.read(cleanupProvider);
+    _openSource = ref.read(sourceOpenerProvider);
+    _checkCollection = ref.read(collectionCheckerProvider);
+    _nextEntry = NextEntryResolver(
+      entries: _services.entries,
+      collections: _services.collections,
+      offlineCopies: _services.offline,
+    );
     _open(widget.entryId);
   }
 
@@ -107,7 +132,10 @@ class _V2ReaderRouteState extends ConsumerState<V2ReaderRoute> {
           offline: resolved.read,
           collectionId: resolved.collectionId,
           previousEntryId: resolved.previousEntryId,
-          nextEntryId: resolved.nextEntryId,
+          // Offered wherever this Entry has a reading order at all — what
+          // actually follows it is resolved when the reader asks, not when
+          // the reader opened.
+          onRequestNext: resolved.hasReadingOrder ? _requestNextEntry : null,
           onOpenEntry: _openEntry,
         );
       },
@@ -129,22 +157,22 @@ class _V2ReaderRouteState extends ConsumerState<V2ReaderRoute> {
     final entry = await _services.entries.byId(entryId);
     final collectionId = entry?.collectionId;
 
-    // Neighbours by the Collection's own order, which is what "the next
-    // entry" means in V2 — not the next URL, and not the next thing this
-    // device happens to hold. An entry with no copy is still a neighbour: the
-    // route for it renders the reader's honest not-downloaded state, where
-    // downloading and opening at the source are already offered.
+    // Where back leads, by the Collection's own order — not the previous URL,
+    // and not the previous thing this device happens to hold. An entry with no
+    // copy is still a neighbour: the route for it renders the reader's honest
+    // not-downloaded state, where downloading and opening at the source are
+    // already offered.
+    //
+    // Only backwards. Forwards is [_requestNextEntry], resolved at the moment
+    // it is asked, because "what comes next" changes under a reader who is
+    // reading — a download lands, a check writes a row — and an answer worked
+    // out when the Entry opened would be the stale one.
     String? previous;
-    String? next;
-    if (collectionId != null && entry?.ordinal != null) {
-      final ordered = await _services.entries.entriesOf(collectionId);
-      final placed = [
-        for (final e in ordered)
-          if (e.ordinal != null) e,
-      ];
+    final hasReadingOrder = collectionId != null && entry?.ordinal != null;
+    if (hasReadingOrder) {
+      final placed = await placedEntriesOf(_services.entries, collectionId);
       final index = placed.indexWhere((e) => e.id == entryId);
       if (index > 0) previous = placed[index - 1].id;
-      if (index >= 0 && index < placed.length - 1) next = placed[index + 1].id;
     }
 
     // The destination has genuinely opened — or genuinely has not. Either way
@@ -162,7 +190,7 @@ class _V2ReaderRouteState extends ConsumerState<V2ReaderRoute> {
       read: read,
       collectionId: collectionId,
       previousEntryId: previous,
-      nextEntryId: next,
+      hasReadingOrder: hasReadingOrder,
     );
   }
 
@@ -197,6 +225,111 @@ class _V2ReaderRouteState extends ConsumerState<V2ReaderRoute> {
     // not stacking a screen per entry behind you, so the way back stays the
     // Collection however far you read.
     context.pushReplacement('/reader/$entryId');
+  }
+
+  /// **Read on** — the one next-Entry request, whichever way the reader asked.
+  ///
+  /// The *Next entry* control, the end of a finished Entry and the pull-up from
+  /// the bottom edge all arrive here, so the three of them cannot grow three
+  /// answers to the same question. What *is* next is resolved fresh, against
+  /// the library as it stands now (`lib/reading_v2/next_entry.dart`); what a
+  /// move *means* is still `ForwardTransitionService`'s, through [_openEntry].
+  Future<void> _requestNextEntry(double fraction) async {
+    if (_requestingNext) return;
+    _requestingNext = true;
+    try {
+      await _actOnNext(await _nextEntry.after(_resolving), fraction);
+    } finally {
+      _requestingNext = false;
+    }
+  }
+
+  /// Carry out one resolved answer.
+  ///
+  /// [mayCheck] is false on the second pass — the one after a check has run —
+  /// so a Collection whose site had nothing new asks the user nothing a second
+  /// time and simply says so.
+  Future<void> _actOnNext(
+    NextEntryOutcome outcome,
+    double fraction, {
+    bool mayCheck = true,
+  }) async {
+    if (!mounted) return;
+    switch (outcome) {
+      // Nothing to move forward through. The control is not offered in this
+      // state, so this is the belt to that braces.
+      case NoReadingOrder():
+        return;
+
+      // The ordinary case, and deliberately unchanged: the same move, with the
+      // same questions, made the same way it has always been made.
+      case NextEntryDownloaded(:final entryId):
+        await _openEntry(entryId, fraction);
+
+      // In the library, not on this device. The Entry is first-class and the
+      // way on is its Source — offered, never taken without being asked.
+      case NextEntryAtSourceOnly(
+        :final entryId,
+        :final entryName,
+        :final sourceUrl,
+      ):
+        final go = await showContinueAtSourceSheet(
+          context: context,
+          entryName: entryName,
+        );
+        if (!go || !mounted) return;
+        if (sourceUrl == null) {
+          _say('No address is recorded for the next entry.');
+          return;
+        }
+        final opener = _openSource;
+        if (opener == null) {
+          // Honest rather than silent: nothing opened, so nothing is recorded
+          // as having been opened.
+          _say('Opening a source is not available yet.');
+          return;
+        }
+        await opener(sourceUrl);
+        // Opening at the source is two facts, in this order: the page opens,
+        // and the library records that it was opened (I16 — never that it was
+        // finished).
+        await _services.reading.recordSourceAccess(entryId);
+
+      // The library knows of nothing after this one. That is a fact about the
+      // library, so the offer is to go and look — never an announcement that
+      // the Collection has ended.
+      case NoNextEntryYet(:final collectionId, :final collectionName):
+        final checker = _checkCollection;
+        if (!mayCheck) {
+          _say('Nothing new — there is still no next entry in your library.');
+          return;
+        }
+        final go = await showCheckForNewEntriesSheet(
+          context: context,
+          collectionName: collectionName,
+          canCheck: checker != null,
+        );
+        if (!go || checker == null || !mounted) return;
+        // The app's own Collection check, whole: it asks where the user will
+        // wait, it is visible, bounded and cancellable, and it downloads
+        // nothing. Nothing about a check is reimplemented here.
+        await checker(collectionId, collectionName);
+        if (!mounted) return;
+        // Ask the library again, once. A check writes rows and downloads
+        // nothing, so an Entry it found lands on the offer above rather than
+        // moving the reader anywhere on its own.
+        await _actOnNext(
+          await _nextEntry.after(_resolving),
+          fraction,
+          mayCheck: false,
+        );
+    }
+  }
+
+  void _say(String message) {
+    ScaffoldMessenger.maybeOf(context)
+      ?..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(content: Text(message)));
   }
 
   Future<EntryCompletionChoice?> _askToComplete(
@@ -250,11 +383,7 @@ Future<ReaderNeighbours> readerNeighbours(
     return const ReaderNeighbours();
   }
 
-  final ordered = await services.entries.entriesOf(collectionId);
-  final placed = [
-    for (final e in ordered)
-      if (e.ordinal != null) e,
-  ];
+  final placed = await placedEntriesOf(services.entries, collectionId);
   final index = placed.indexWhere((e) => e.id == entryId);
   if (index < 0) return const ReaderNeighbours();
   return ReaderNeighbours(
@@ -268,8 +397,8 @@ class _ReaderRouteData {
     required this.entryId,
     required this.read,
     required this.collectionId,
+    required this.hasReadingOrder,
     this.previousEntryId,
-    this.nextEntryId,
   });
 
   /// The Entry this resolution is about. Carried rather than read off the
@@ -279,9 +408,17 @@ class _ReaderRouteData {
   final OfflineReaderData read;
   final String? collectionId;
 
-  /// The entries either side of this one in the Collection's order, when it
-  /// has any. Null at the ends, and for a standalone or unplaced Entry — which
-  /// has no neighbours by construction, not by omission.
+  /// The entry before this one in the Collection's order. Null at the start,
+  /// and for a standalone or unplaced Entry — which has no neighbours by
+  /// construction, not by omission.
   final String? previousEntryId;
-  final String? nextEntryId;
+
+  /// Whether this Entry is placed in a Collection at all, and so whether
+  /// *reading on* is a thing that can be asked for here. False for a
+  /// standalone or unplaced Entry.
+  ///
+  /// Deliberately not "is there a next Entry": that is a question about the
+  /// library at the moment it is asked, and this is a question about this
+  /// Entry.
+  final bool hasReadingOrder;
 }
