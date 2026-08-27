@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import 'browser/browser_controller.dart';
+import 'browser/browser_presentation.dart';
 import 'browser/browser_surface_policy.dart';
 import 'capability/foreground_multitasking.dart';
 import 'features/operation_indicator.dart';
@@ -378,6 +379,19 @@ class _ShellState extends ConsumerState<_Shell> {
   /// Set by [_WebReaderAppState]; read here to decide what the shell paints.
   late final ValueNotifier<bool> _keepPainted;
 
+  /// The Browser is showing a website with its chrome hidden, so the tab bar
+  /// goes too. Mirrored into a field and rebuilt on change only: a `Provider`
+  /// read does not deliver the presentation's own notifications, and the shell
+  /// must not rebuild for every unrelated one it sends.
+  late final BrowserPresentation _browserPresentation;
+  bool _browserChromeHidden = false;
+
+  void _onBrowserChromeChanged() {
+    final hidden = _browserPresentation.chromeHidden;
+    if (hidden == _browserChromeHidden || !mounted) return;
+    setState(() => _browserChromeHidden = hidden);
+  }
+
   /// The Browser child is drawn when the user is on that tab, or when an
   /// operation needs it to go on working while they are elsewhere.
   bool get _browserOnstage => _index == 1 || _keepPainted.value;
@@ -408,6 +422,8 @@ class _ShellState extends ConsumerState<_Shell> {
     _tab.value = _index;
     _keepPainted = ref.read(keepBrowserPaintedProvider);
     _keepPainted.addListener(_onKeepPaintedChanged);
+    _browserPresentation = ref.read(browserPresentationProvider)
+      ..addListener(_onBrowserChromeChanged);
     _tabRequest.addListener(_onTabRequested);
     _cleanup = ref.read(cleanupProvider);
     _cleanup.removals.addListener(_onStorageChanged);
@@ -567,6 +583,7 @@ class _ShellState extends ConsumerState<_Shell> {
   @override
   void dispose() {
     _keepPainted.removeListener(_onKeepPaintedChanged);
+    _browserPresentation.removeListener(_onBrowserChromeChanged);
     _queueRunner.removeListener(_onAutomationChanged);
     _sourceCheck.removeListener(_onAutomationChanged);
     _tabRequest.removeListener(_onTabRequested);
@@ -642,6 +659,12 @@ class _ShellState extends ConsumerState<_Shell> {
     final busy = _queueRunner.isRunning || _sourceCheck.isRunning;
     // A real owner has appeared: the start claim has done its job.
     if (busy) _releaseSurfaceClaim();
+    // Work the user can watch outranks reading with the chrome away: the
+    // panel, the tab bar and the toolbar all come back for the duration. It
+    // also keeps the Browser's viewport still while a phase is measuring one
+    // — the only other way to change it mid-run is a tab switch, and the bar
+    // this restores is what the shell lays the Browser out around.
+    if (busy && !_wasBusy) _browserPresentation.setChromeHidden(false);
     // With the capability on, an operation starting is not a reason to move
     // the user. The surface is kept drawn underneath whatever they are looking
     // at, which is the entire product difference.
@@ -719,7 +742,16 @@ class _ShellState extends ConsumerState<_Shell> {
               Offstage(offstage: _index != 0, child: const ShelfScreen()),
             ],
           ),
-          bottomNavigationBar: _BottomNav(index: _index, onSelect: _select),
+          // The tab bar goes with the Browser's own toolbar while a website
+          // is being read with the chrome hidden: half a chrome is not the
+          // screen space that was asked for, and the Browser draws the one
+          // control that brings both back. Only ever on the Browser tab — the
+          // Library never loses its bar. Null rather than a zero-height box,
+          // so the body keeps the bottom safe-area inset the bar was
+          // consuming and nothing lands under the home indicator.
+          bottomNavigationBar: _index == 1 && _browserChromeHidden
+              ? null
+              : _BottomNav(index: _index, onSelect: _select),
         ),
       ),
     );

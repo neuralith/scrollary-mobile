@@ -138,7 +138,17 @@ class _PanelFrame extends StatelessWidget {
         color: palette.surface,
         border: Border(top: BorderSide(color: palette.divider)),
       ),
-      padding: const EdgeInsets.fromLTRB(16, 12, 16, 14),
+      // The bottom inset is the shell tab bar's when there is one — the
+      // Scaffold has already taken it out of this MediaQuery — and the
+      // device's own when the Browser is hiding its chrome and the bar has
+      // gone with it. Carried here rather than around the panel so an idle
+      // Browser reserves nothing for a panel that is not there.
+      padding: EdgeInsets.fromLTRB(
+        16,
+        12,
+        16,
+        14 + MediaQuery.paddingOf(context).bottom,
+      ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.stretch,

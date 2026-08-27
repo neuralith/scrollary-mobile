@@ -64,6 +64,36 @@ void main() {
       expect(p.surface, BrowserSurface.home);
     });
 
+    test('the chrome is visible until the user hides it', () {
+      expect(p.chromeHidden, isFalse);
+      p.setChromeHidden(true);
+      expect(p.chromeHidden, isTrue);
+    });
+
+    test('hiding the chrome announces itself, so the shell drops its bar', () {
+      var notified = 0;
+      p.addListener(() => notified++);
+      p.setChromeHidden(true);
+      p.setChromeHidden(true);
+      expect(notified, 1);
+    });
+
+    test('a local surface is never read with the chrome hidden', () {
+      p.setChromeHidden(true);
+      p.openHome();
+      expect(p.chromeHidden, isFalse);
+    });
+
+    test('and coming back to the page does not hide it again', () {
+      // The way out must not disappear a second time on its own: opening a
+      // local surface ends immersive reading, it does not merely suspend it.
+      p.setChromeHidden(true);
+      p.openAddressEditor(draft: 'x');
+      p.closeAddressEditor();
+      expect(p.surface, BrowserSurface.website);
+      expect(p.chromeHidden, isFalse);
+    });
+
     test('a page arriving late updates the snapshot', () {
       p.rememberPage(const PreservedPage(url: 'https://a.example/', title: ''));
       p.rememberPage(

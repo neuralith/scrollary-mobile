@@ -63,6 +63,24 @@ class BrowserPresentation extends ChangeNotifier {
   /// Consumed by the Browser once it builds.
   bool _pendingHomeRequest = false;
 
+  /// True while the user has asked to read the page with nothing around it:
+  /// the Browser's toolbar and the shell's tab bar are out of the tree and the
+  /// WebView has the whole screen.
+  ///
+  /// It lives here rather than in the Browser's state for the same reason the
+  /// surface does — the shell draws the tab bar and cannot see inside the
+  /// Browser otherwise. Only ever true on [BrowserSurface.website]: a local
+  /// surface is not a page being read, and coming back to one is where a user
+  /// who has lost the toolbar expects to find it again.
+  bool _chromeHidden = false;
+  bool get chromeHidden => _chromeHidden && _surface == BrowserSurface.website;
+
+  void setChromeHidden(bool hidden) {
+    if (_chromeHidden == hidden) return;
+    _chromeHidden = hidden;
+    notifyListeners();
+  }
+
   void openHome({PreservedPage? preserving}) {
     if (preserving != null && !preserving.isEmpty) _preserved = preserving;
     _set(BrowserSurface.home);
@@ -114,6 +132,10 @@ class BrowserPresentation extends ChangeNotifier {
   void _set(BrowserSurface next) {
     if (_surface == next) return;
     _surface = next;
+    // Leaving the page ends immersive reading outright, rather than leaving it
+    // armed to reappear the next time the website surface comes back. A
+    // toolbar that vanishes again on its own is how the way out gets lost.
+    if (next != BrowserSurface.website) _chromeHidden = false;
     notifyListeners();
   }
 }

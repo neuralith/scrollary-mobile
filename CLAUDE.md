@@ -461,6 +461,7 @@ flutter test integration_test/update_check_test.dart       -d <udid>
 flutter test integration_test/user_assist_test.dart        -d <udid>
 flutter test integration_test/text_capture_test.dart       -d <udid>
 flutter test integration_test/capture_integrity_test.dart  -d <udid>
+flutter test integration_test/reading_chrome_test.dart     -d <udid>
 ```
 
 Three more answer questions a widget test cannot, and are run when the thing

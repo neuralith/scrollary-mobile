@@ -339,6 +339,9 @@ class _BrowserScreenState extends ConsumerState<BrowserScreen> {
       case PageAction.addToSavedSites:
         await _saveCurrentPage();
       case PageAction.findInPage:
+        // Find sits where the toolbar was, so it ends immersive reading
+        // rather than appearing over a page with no chrome around it.
+        _p.setChromeHidden(false);
         setState(() => _findOpen = true);
       case PageAction.none:
         break;
@@ -381,22 +384,36 @@ class _BrowserScreenState extends ConsumerState<BrowserScreen> {
         .where((t) => t.state == SaveTaskState.queued)
         .length;
 
+    // Reading a website with nothing around it. The state is the
+    // presentation's, because the shell's tab bar goes with the toolbar and
+    // the shell cannot see inside this screen — one flag, so the two halves
+    // of the chrome can never disagree. What is *offered* is this screen's:
+    // Find sits where the toolbar was, and a page that is not a page has
+    // nothing to read.
+    final chromeHidden = presentation.chromeHidden;
+    final canHideChrome =
+        presentation.surface == BrowserSurface.website &&
+        !_findOpen &&
+        _hasRealPage(browser.currentUrl);
+
     return Scaffold(
       backgroundColor: palette.surfaceMuted,
       body: SafeArea(
         bottom: false,
         child: Column(
           children: [
-            BrowserToolbar(
-              browser: browser,
-              homeActive: presentation.isHome,
-              onBack: _goBack,
-              onForward: browser.canGoForward ? browser.goForward : null,
-              onAddress: () => _openAddressEditor(),
-              onReloadOrStop: () =>
-                  browser.isLoading ? browser.stopLoading() : browser.reload(),
-              onHome: _openHome,
-            ),
+            if (!chromeHidden)
+              BrowserToolbar(
+                browser: browser,
+                homeActive: presentation.isHome,
+                onBack: _goBack,
+                onForward: browser.canGoForward ? browser.goForward : null,
+                onAddress: () => _openAddressEditor(),
+                onReloadOrStop: () => browser.isLoading
+                    ? browser.stopLoading()
+                    : browser.reload(),
+                onHome: _openHome,
+              ),
             if (_findOpen)
               FindInPageBar(
                 browser: browser,
@@ -435,13 +452,17 @@ class _BrowserScreenState extends ConsumerState<BrowserScreen> {
                           )
                         : const SizedBox.shrink(),
                   ),
-                  _SaveActions(
+                  BrowserSaveActions(
                     runner: runner,
                     sourceCheck: sourceCheck,
                     pageStatus: _pageEntryState,
                     pageIsQueued: pageIsQueued,
                     captureRestricted: _captureRestricted,
                     waitingSaves: waitingSaves,
+                    chromeHidden: chromeHidden,
+                    canHideChrome: canHideChrome,
+                    onToggleChrome: () =>
+                        _p.setChromeHidden(!presentation.chromeHidden),
                     onSave: () => _showSaveSheet(context),
                     onPageActions: _openPageActions,
                     onViewLibrary: () =>
@@ -519,14 +540,23 @@ class _BrowserScreenState extends ConsumerState<BrowserScreen> {
   }
 }
 
-class _SaveActions extends StatelessWidget {
-  const _SaveActions({
+/// The Browser's floating controls over the page: hide-the-chrome, page
+/// actions, and the save action.
+///
+/// Public only so it can be exercised in a widget test — `BrowserScreen`
+/// itself embeds a real platform WebView and cannot be pumped.
+class BrowserSaveActions extends StatelessWidget {
+  const BrowserSaveActions({
+    super.key,
     required this.runner,
     required this.sourceCheck,
     required this.pageStatus,
     required this.pageIsQueued,
     required this.captureRestricted,
     required this.waitingSaves,
+    required this.chromeHidden,
+    required this.canHideChrome,
+    required this.onToggleChrome,
     required this.onSave,
     required this.onPageActions,
     required this.onViewLibrary,
@@ -538,6 +568,14 @@ class _SaveActions extends StatelessWidget {
   final bool pageIsQueued;
   final bool captureRestricted;
   final int waitingSaves;
+
+  /// True while the toolbar is out of the tree and the page has the screen.
+  final bool chromeHidden;
+
+  /// Whether hiding is on offer at all — a page is on screen and no local
+  /// surface is covering it.
+  final bool canHideChrome;
+  final VoidCallback onToggleChrome;
   final VoidCallback onSave;
   final VoidCallback onPageActions;
   final VoidCallback onViewLibrary;
@@ -557,10 +595,29 @@ class _SaveActions extends StatelessWidget {
         final offersCapture = !captureRestricted;
         final hasCopy = pageStatus?.hasCopy ?? false;
 
+        // With the chrome hidden the page is the whole screen and this is the
+        // only control left. It is never conditional on anything else — a way
+        // back to the toolbar that could itself disappear would be a trap, so
+        // it stays drawn while a run runs, on a restricted host, and on a page
+        // that failed to load.
+        if (chromeHidden) {
+          return Positioned(
+            right: 14,
+            bottom: 16 + MediaQuery.paddingOf(context).bottom,
+            child: _RoundAction(
+              actionKey: const ValueKey('browserShowChrome'),
+              icon: Icons.visibility_outlined,
+              tooltip: 'Show browser controls',
+              dimmed: true,
+              onPressed: onToggleChrome,
+            ),
+          );
+        }
+
         return Positioned(
           left: 14,
           right: 14,
-          bottom: 16,
+          bottom: 16 + MediaQuery.paddingOf(context).bottom,
           child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.end,
@@ -576,7 +633,17 @@ class _SaveActions extends StatelessWidget {
                 mainAxisAlignment: MainAxisAlignment.end,
                 children: [
                   if (!running) ...[
+                    if (canHideChrome) ...[
+                      _RoundAction(
+                        actionKey: const ValueKey('browserHideChrome'),
+                        icon: Icons.visibility_off_outlined,
+                        tooltip: 'Hide browser controls',
+                        onPressed: onToggleChrome,
+                      ),
+                      const SizedBox(width: 8),
+                    ],
                     _RoundAction(
+                      actionKey: const ValueKey('browserPageActions'),
                       icon: Icons.more_horiz,
                       tooltip: 'Page actions',
                       onPressed: onPageActions,
@@ -584,37 +651,34 @@ class _SaveActions extends StatelessWidget {
                     if (offersCapture) const SizedBox(width: 8),
                   ],
                   if (offersCapture)
-                    FloatingActionButton.extended(
-                      key: const ValueKey('browserSaveAction'),
-                      heroTag: 'browserSave',
-                      onPressed: running ? onViewLibrary : onSave,
-                      tooltip: running
-                          ? 'Working — see the library'
-                          : 'Save this page',
-                      backgroundColor: running
-                          ? palette.surface
-                          : palette.primary,
-                      foregroundColor: running
-                          ? palette.inkStrong
-                          : palette.onPrimary,
-                      icon: Icon(
-                        running
-                            ? Icons.downloading
-                            : pageIsQueued
-                            ? Icons.schedule
-                            : hasCopy
-                            ? Icons.download_for_offline
-                            : Icons.download,
-                        size: 20,
-                      ),
-                      label: Text(
-                        running
-                            ? 'Saving'
-                            : pageIsQueued
-                            ? 'Queued'
-                            : hasCopy
-                            ? 'On this device'
-                            : 'Save',
+                    // Icon only: the page is what the user came for, and the
+                    // word beside the glyph bought nothing a tooltip and an
+                    // accessible name do not. The state still reads — the
+                    // glyph and the colour carry it, and the name says it in
+                    // words for anyone who cannot see either.
+                    Tooltip(
+                      message: _saveLabel(running, hasCopy),
+                      child: FloatingActionButton(
+                        key: const ValueKey('browserSaveAction'),
+                        heroTag: 'browserSave',
+                        onPressed: running ? onViewLibrary : onSave,
+                        backgroundColor: running
+                            ? palette.surface
+                            : palette.primary,
+                        foregroundColor: running
+                            ? palette.inkStrong
+                            : palette.onPrimary,
+                        child: Icon(
+                          running
+                              ? Icons.downloading
+                              : pageIsQueued
+                              ? Icons.schedule
+                              : hasCopy
+                              ? Icons.download_for_offline
+                              : Icons.download,
+                          size: 22,
+                          semanticLabel: _saveLabel(running, hasCopy),
+                        ),
                       ),
                     ),
                 ],
@@ -625,6 +689,16 @@ class _SaveActions extends StatelessWidget {
       },
     );
   }
+
+  /// What the control is, in words — the tooltip, and the name assistive
+  /// technology reads now that the button carries no text.
+  String _saveLabel(bool running, bool hasCopy) => running
+      ? 'Working — see the library'
+      : pageIsQueued
+      ? 'Queued — see the library'
+      : hasCopy
+      ? 'On this device — save again'
+      : 'Save this page';
 }
 
 /// Queued V2 saves, waiting for an explicit Start. Tapping leads to the
@@ -661,35 +735,49 @@ class _QueuedSavesChip extends StatelessWidget {
 
 class _RoundAction extends StatelessWidget {
   const _RoundAction({
+    required this.actionKey,
     required this.icon,
     required this.tooltip,
     required this.onPressed,
+    this.dimmed = false,
   });
 
+  final Key actionKey;
   final IconData icon;
   final String tooltip;
   final VoidCallback onPressed;
 
+  /// Drawn back, for the one control that stays over a page being read.
+  final bool dimmed;
+
   @override
   Widget build(BuildContext context) {
     final palette = AppPalette.of(context);
-    return Tooltip(
-      message: tooltip,
-      child: SizedBox.square(
-        dimension: 46,
-        child: Material(
-          color: palette.surface,
-          elevation: 2,
-          shadowColor: Colors.black26,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(16),
-            side: BorderSide(color: palette.border),
-          ),
-          child: InkWell(
-            key: const ValueKey('browserPageActions'),
-            onTap: onPressed,
-            borderRadius: BorderRadius.circular(16),
-            child: Icon(icon, size: 21, color: palette.inkStrong),
+    return Opacity(
+      opacity: dimmed ? 0.72 : 1,
+      child: Tooltip(
+        message: tooltip,
+        child: SizedBox.square(
+          dimension: 46,
+          child: Material(
+            color: palette.surface,
+            elevation: 2,
+            shadowColor: Colors.black26,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(16),
+              side: BorderSide(color: palette.border),
+            ),
+            child: InkWell(
+              key: actionKey,
+              onTap: onPressed,
+              borderRadius: BorderRadius.circular(16),
+              child: Icon(
+                icon,
+                size: 21,
+                color: palette.inkStrong,
+                semanticLabel: tooltip,
+              ),
+            ),
           ),
         ),
       ),
