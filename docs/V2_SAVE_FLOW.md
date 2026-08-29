@@ -201,7 +201,7 @@ V2-D62 so is **what to save**.
 |---|---|
 | **Queue only** | The row is added and, for a count about the Source, the journey is arranged. Nothing starts, and no page is opened. |
 | **Start now** | Added and started, with the Browser in front of the user. One authorisation runs the whole operation — Activity is where a run is *watched*, never a second Start it has to be given. |
-| **Start and keep using Scrollary** | The same start, leaving the user where they are. |
+| **Start and keep using** | The same start, leaving the user where they are. |
 
 **A launch closes the sheet** (V2-D67). The panel pops with a `SaveSheetStart`
 carrying that answer and `BrowserScreen._showSaveSheet` performs the Start, so

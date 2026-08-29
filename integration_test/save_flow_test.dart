@@ -222,7 +222,7 @@ void main() {
     timeout: const Timeout(Duration(minutes: 8)),
   );
 
-  // The defect this case exists for: *Start and keep using Scrollary* took the
+  // The defect this case exists for: *Start and keep using* took the
   // branch that claims the Browser surface **without popping anything**, so the
   // save sheet stayed on screen over the page for the whole run — the one
   // launch whose entire promise is that the user carries straight on. It is

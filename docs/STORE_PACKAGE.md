@@ -364,14 +364,15 @@ The low-confidence and unclear cases are deliberately two lines rather than one:
 forcing "not something we could classify" through the *"this looks like…"*
 template produced a sentence that read as a guess about a guess.
 
-Modes, all three always visible. An **available** mode is one line — its glyph
-and its label, nothing else; a sentence under each of three labels the icons
-already distinguish made the answer harder to find on a sheet that asks three
-other questions above this block. An **unavailable** one is disabled with its
-reason beside it, because a missing option reads as a bug while a greyed one
-with "no readable text was found on this page" beside it reads as an answer:
+Modes, all three always visible, and **every one of them is one line** — its
+glyph and its label, nothing else. A sentence under a label the icon already
+distinguishes made the answer harder to find on a sheet that asks three other
+questions above this block. An **unavailable** mode is disabled rather than
+removed, because a missing option reads as a bug while a greyed one reads as an
+answer; its reason is no longer printed under it, and is carried instead by the
+row's tooltip and by the name a screen reader speaks:
 
-| Mode | Reason when unavailable |
+| Mode | Reason when unavailable (spoken, and on a long press) |
 |---|---|
 | **Images only** | This page does not have enough full-size images to save as an image sequence. |
 | **Text only** | No readable text was found on this page. |

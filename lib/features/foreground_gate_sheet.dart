@@ -152,7 +152,7 @@ class ForegroundStartActions extends StatelessWidget {
     required this.action,
     required this.onChoice,
     this.inBrowserLabel = 'Start in Browser',
-    this.keepUsingAppLabel = 'Start and keep using Scrollary',
+    this.keepUsingAppLabel = 'Start and keep using',
     this.dense = false,
   });
 
@@ -182,7 +182,7 @@ class ForegroundStartActions extends StatelessWidget {
         // actually happen, and last when it is locked — a locked control at the
         // top of a sheet reads as the main action.
         if (ready) ...[
-          _GateAction(
+          GateActionRow(
             optionKey: 'startKeepUsingApp',
             icon: Icons.hourglass_bottom,
             label: keepUsingAppLabel,
@@ -195,7 +195,7 @@ class ForegroundStartActions extends StatelessWidget {
           ),
           const SizedBox(height: 8),
         ],
-        _GateAction(
+        GateActionRow(
           optionKey: 'startInBrowser',
           icon: Icons.public,
           label: inBrowserLabel,
@@ -208,7 +208,7 @@ class ForegroundStartActions extends StatelessWidget {
         ),
         if (gate == StartGate.multitaskingAvailableButOff) ...[
           const SizedBox(height: 8),
-          _GateAction(
+          GateActionRow(
             optionKey: 'startEnableAndKeepUsingApp',
             icon: Icons.hourglass_bottom,
             label: 'Turn on $kKeepWorkingLabel and start',
@@ -221,7 +221,7 @@ class ForegroundStartActions extends StatelessWidget {
         ],
         if (gate == StartGate.multitaskingLocked) ...[
           const SizedBox(height: 8),
-          _GateAction(
+          GateActionRow(
             optionKey: 'startKeepUsingAppLocked',
             icon: Icons.lock_outline,
             label: keepUsingAppLabel,
@@ -317,7 +317,7 @@ class _LeaveSheet extends StatelessWidget {
                 ),
               ],
               const SizedBox(height: 16),
-              _GateAction(
+              GateActionRow(
                 optionKey: 'leaveStay',
                 icon: Icons.public,
                 label: 'Stay in Browser',
@@ -326,7 +326,7 @@ class _LeaveSheet extends StatelessWidget {
                 onTap: () => Navigator.of(context).pop(LeaveChoice.stay),
               ),
               const SizedBox(height: 8),
-              _GateAction(
+              GateActionRow(
                 optionKey: 'leavePauseAndLeave',
                 icon: Icons.pause_circle_outline,
                 label: 'Pause and leave',
@@ -339,7 +339,7 @@ class _LeaveSheet extends StatelessWidget {
               ),
               const SizedBox(height: 8),
               if (free)
-                _GateAction(
+                GateActionRow(
                   optionKey: 'leaveLearnAboutPro',
                   icon: Icons.lock_outline,
                   label: 'What Pro does here',
@@ -387,7 +387,7 @@ class _EnableForNextTimeActionState extends State<_EnableForNextTimeAction> {
   }
 
   @override
-  Widget build(BuildContext context) => _GateAction(
+  Widget build(BuildContext context) => GateActionRow(
     optionKey: 'leaveEnableForNextTime',
     icon: _done ? Icons.check_circle_outline : Icons.hourglass_bottom,
     label: _done
@@ -583,12 +583,19 @@ class _ProFact extends StatelessWidget {
 
 /// One tappable row in either sheet.
 ///
+/// **Public because the save sheet's *Queue only* is one of these.** That row
+/// answers the same question the start rows answer — what happens next — and
+/// drawing it as a plain button made the only answer that starts nothing look
+/// like a different kind of control. It is not a gate row by nature; it is the
+/// shape this app draws a launch answer in.
+///
 /// A locked row is **tappable**, deliberately. A disabled widget cannot
 /// explain itself: a screen reader announces it as unavailable and stops
 /// there, and a finger gets nothing back. This one announces that it needs Pro
 /// and opens the explanation, which is the only useful thing it could do.
-class _GateAction extends StatelessWidget {
-  const _GateAction({
+class GateActionRow extends StatelessWidget {
+  const GateActionRow({
+    super.key,
     required this.optionKey,
     required this.icon,
     required this.label,

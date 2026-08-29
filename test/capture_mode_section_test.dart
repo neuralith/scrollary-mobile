@@ -9,8 +9,9 @@
 ///
 /// Three structural rules are pinned here as well, because they are what the
 /// wording depends on: **all three modes are always on screen** — an
-/// unavailable one is disabled with its reason beside it, and an available one
-/// is its label and its glyph and nothing else — **the heading is the control
+/// unavailable one is disabled rather than removed, and every one of them is
+/// its label and its glyph and nothing else, the reason for a blocked one
+/// carried in its tooltip and its spoken name — **the heading is the control
 /// that closes the block** for a sheet that can reopen it, and **there is no
 /// video mode**, which is why §6.6 is a sentence rather than a fourth option.
 library;
@@ -239,9 +240,9 @@ void main() {
       expect(collapsed, 1);
     });
 
-    testWidgets('keeps an unavailable mode on screen with its reason', (
-      tester,
-    ) async {
+    testWidgets('keeps an unavailable mode on screen, and carries its reason '
+        'without printing it', (tester) async {
+      final handle = tester.ensureSemantics();
       await pumpSection(
         tester,
         measured(
@@ -255,29 +256,57 @@ void main() {
         ),
       );
 
-      // Still three rows: a missing option reads as a bug, a disabled one with
-      // its reason beside it reads as an answer.
+      // Still three rows: a missing option reads as a bug, a disabled one
+      // reads as an answer.
       expect(modeOptions(), findsNWidgets(3));
-      expect(
-        find.text(
-          'This page does not have enough full-size images to save as an '
-          'image sequence.',
-        ),
-        findsOneWidget,
-      );
-      expect(
-        find.text('No readable text was found on this page.'),
-        findsOneWidget,
-      );
-      expect(
-        find.text('No images were found inside the readable text.'),
-        findsOneWidget,
-      );
-      // The reason stands *in place of* the description, never beside it.
+
+      const reasons = {
+        'captureMode_imageSequence':
+            'This page does not have enough full-size images to save as an '
+            'image sequence.',
+        'captureMode_textOnly': 'No readable text was found on this page.',
+        'captureMode_textAndImages':
+            'No images were found inside the readable text.',
+      };
+
+      for (final entry in reasons.entries) {
+        // Not on the sheet: the block stays three single lines, on exactly the
+        // pages that used to grow it by a paragraph.
+        expect(
+          find.text(entry.value),
+          findsNothing,
+          reason: '${entry.key} still prints its reason',
+        );
+        // Still said, in the name spoken before the tap and in the tooltip a
+        // long press brings up.
+        expect(
+          tester
+              .getSemantics(find.byKey(ValueKey(entry.key)))
+              .label
+              .contains(entry.value),
+          isTrue,
+          reason: '${entry.key} no longer speaks its reason',
+        );
+        expect(
+          tester
+              .widget<Tooltip>(
+                find.descendant(
+                  of: find.byKey(ValueKey(entry.key)),
+                  matching: find.byType(Tooltip),
+                ),
+              )
+              .message,
+          entry.value,
+        );
+      }
+
+      // And the description is still nowhere near it: a reason is not a
+      // description, and neither one is printed here.
       expect(
         find.text('Save the readable text. No images are downloaded.'),
         findsNothing,
       );
+      handle.dispose();
     });
 
     testWidgets('lets an available mode be chosen', (tester) async {

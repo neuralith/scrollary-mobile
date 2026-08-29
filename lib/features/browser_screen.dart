@@ -644,21 +644,24 @@ class BrowserSaveActions extends StatelessWidget {
                 mainAxisAlignment: MainAxisAlignment.end,
                 children: [
                   if (!running) ...[
-                    if (canHideChrome) ...[
-                      _RoundAction(
-                        actionKey: const ValueKey('browserHideChrome'),
-                        icon: Icons.visibility_off_outlined,
-                        tooltip: 'Hide browser controls',
-                        onPressed: onToggleChrome,
-                      ),
-                      const SizedBox(width: 8),
-                    ],
+                    // Page actions, then hide, then save: the order runs from
+                    // the least committal control to the one the user came
+                    // for, and the save keeps the corner under the thumb.
                     _RoundAction(
                       actionKey: const ValueKey('browserPageActions'),
                       icon: Icons.more_horiz,
                       tooltip: 'Page actions',
                       onPressed: onPageActions,
                     ),
+                    if (canHideChrome) ...[
+                      const SizedBox(width: 8),
+                      _RoundAction(
+                        actionKey: const ValueKey('browserHideChrome'),
+                        icon: Icons.visibility_off_outlined,
+                        tooltip: 'Hide browser controls',
+                        onPressed: onToggleChrome,
+                      ),
+                    ],
                     if (offersCapture) const SizedBox(width: 8),
                   ],
                   if (offersCapture)

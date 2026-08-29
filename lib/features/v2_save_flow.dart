@@ -439,7 +439,7 @@ final v2SaveStandaloneProvider = Provider<V2SaveStandaloneFn>(
 /// just sent the app to read. *Start now* only ever appeared to work because
 /// `showBrowserSurface` pops every route above the shell on its way past —
 /// which dismissed this sheet as a side effect, and did nothing at all for
-/// *Start and keep using Scrollary*, whose whole promise is that the user
+/// *Start and keep using*, whose whole promise is that the user
 /// carries on where they are.
 ///
 /// So the sheet answers and closes, and [BrowserScreen] — which is still
@@ -814,7 +814,7 @@ class _V2SavePanelState extends ConsumerState<V2SavePanel> {
   /// whole batch has been captured — so the sheet sat over the Browser for the
   /// length of the run. *Start now* escaped that only because
   /// `showBrowserSurface` pops the routes above the shell on its way to the
-  /// Browser; *Start and keep using Scrollary* has no such pop and left the
+  /// Browser; *Start and keep using* has no such pop and left the
   /// user staring at the sheet they had just answered. Both now answer,
   /// dismiss, and let [BrowserScreen] start the queue on the surface that
   /// outlives this route ([SaveSheetStart]).
@@ -995,7 +995,7 @@ class _V2SavePanelState extends ConsumerState<V2SavePanel> {
           gate: gate,
           action: ForegroundGateAction.startEntrySave,
           inBrowserLabel: 'Start now',
-          keepUsingAppLabel: 'Start and keep using Scrollary',
+          keepUsingAppLabel: 'Start and keep using',
           // The rows are the tallest thing on a sheet that now asks three
           // questions above them, and each one's sentence was a variation on
           // the same rule. Said once, below (V2-D65), and still spoken in
@@ -1013,15 +1013,18 @@ class _V2SavePanelState extends ConsumerState<V2SavePanel> {
           },
         ),
         const SizedBox(height: 7),
-        OutlinedButton.icon(
-          key: const ValueKey('saveScopeAddToQueue'),
-          onPressed: () => submit(SaveStartMode.queueOnly),
-          icon: const Icon(Icons.schedule, size: 18),
-          label: const Text(
-            'Queue only',
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-          ),
+        // The same row the starts are drawn as (`GateActionRow`), for the same
+        // reason they are dense here: this is the third answer to one
+        // question, and an outlined button beside two cards read as a
+        // different kind of control rather than as the option that starts
+        // nothing.
+        GateActionRow(
+          optionKey: 'saveScopeAddToQueue',
+          icon: Icons.schedule,
+          label: 'Queue only',
+          sub: 'The work waits in your library until you start it.',
+          dense: true,
+          onTap: () => submit(SaveStartMode.queueOnly),
         ),
         const SizedBox(height: 7),
         // The rule the rows above no longer each repeat, stated once where it

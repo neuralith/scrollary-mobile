@@ -119,7 +119,7 @@ void main() {
 
       final node = tester.getSemantics(lockedOption);
       expect(node.label, contains('Requires Pro'));
-      expect(node.label, contains('Start and keep using Scrollary'));
+      expect(node.label, contains('Start and keep using'));
       expect(
         node.getSemanticsData().hasAction(SemanticsAction.tap),
         isTrue,

@@ -9,14 +9,16 @@
 ///
 /// Three rules the layout carries rather than states:
 ///
-/// * **Every mode is always on screen.** An unavailable one is disabled with
-///   its reason where nothing else is printed, because a missing option reads
-///   as a bug while a greyed one with "no readable text was found on this
-///   page" beside it reads as an answer.
-/// * **An available mode is its label and its glyph, and nothing else.** The
-///   sheet asks three questions above this block; a sentence under each of
-///   three labels the icons already distinguish made the answer harder to
-///   find, not easier. A *reason* is not a description and stays.
+/// * **Every mode is always on screen.** An unavailable one is disabled rather
+///   than removed, because a missing option reads as a bug while a greyed one
+///   reads as an answer.
+/// * **Every mode is one line — its label and its glyph, and nothing else.**
+///   The sheet asks three questions above this block; a sentence under a label
+///   the icon already distinguishes made the answer harder to find, not
+///   easier, and the reasons under the blocked ones grew the block by a
+///   paragraph on exactly the pages with the least to offer. The reason is
+///   still carried by the row: spoken with its name, and shown on a long
+///   press.
 /// * **A mode is only offered when the engine can carry it out.**
 ///   [CaptureCapabilities] is measured on the settled page, so the sheet can
 ///   never offer a mode the save would then refuse. There is no video mode,
@@ -145,9 +147,8 @@ class CaptureModeSection extends StatelessWidget {
             key: ValueKey('captureMode_${mode.name}'),
             icon: _icons[mode]!,
             title: mode.label,
-            // A reason, and only a reason: what an available mode does is its
-            // label and its glyph, and the sheet has three other questions on
-            // it.
+            // A reason, and only a reason — never a description, and never
+            // printed: see [_ModeOption.sub].
             sub: capabilities.allows(mode)
                 ? null
                 : (capabilities.blocked[mode]?.message ??
@@ -311,20 +312,25 @@ class _ModeOption extends StatelessWidget {
   final IconData icon;
   final String title;
 
-  /// Why this mode is not on offer. Null for an available one, which is one
-  /// line: its glyph and its name.
+  /// Why this mode is not on offer. Null for an available one.
+  ///
+  /// **Never printed.** Every option is one line — its glyph and its name —
+  /// so the block stays the same height whatever the page turned out to be.
+  /// The reason is still carried, in the row's tooltip and in the name a
+  /// screen reader speaks, so "why can I not save the text here" still has an
+  /// answer; it is simply no longer three lines of it stacked on the sheet.
   final String? sub;
   final bool selected;
   final VoidCallback onTap;
 
-  /// A disabled option stays on screen with its reason in [sub]. Hiding it
-  /// would answer "why can I not save the text here" with silence.
+  /// A disabled option stays on screen. Hiding it would answer "why can I not
+  /// save the text here" with silence.
   final bool enabled;
 
   @override
   Widget build(BuildContext context) {
     final palette = AppPalette.of(context);
-    return Material(
+    final row = Material(
       color: selected ? palette.primaryContainer : palette.surfaceMuted,
       borderRadius: BorderRadius.circular(14),
       clipBehavior: Clip.antiAlias,
@@ -347,30 +353,14 @@ class _ModeOption extends StatelessWidget {
               ),
               const SizedBox(width: 11),
               Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      title,
-                      style: TextStyle(
-                        fontSize: 14,
-                        fontVariations: wght(500),
-                        fontWeight: FontWeight.w500,
-                        color: enabled ? palette.ink : palette.inkFaint,
-                      ),
-                    ),
-                    if (sub case final reason?) ...[
-                      const SizedBox(height: 2),
-                      Text(
-                        reason,
-                        style: TextStyle(
-                          fontSize: 11.5,
-                          height: 1.4,
-                          color: enabled ? palette.inkMuted : palette.inkFaint,
-                        ),
-                      ),
-                    ],
-                  ],
+                child: Text(
+                  title,
+                  style: TextStyle(
+                    fontSize: 14,
+                    fontVariations: wght(500),
+                    fontWeight: FontWeight.w500,
+                    color: enabled ? palette.ink : palette.inkFaint,
+                  ),
                 ),
               ),
               if (selected)
@@ -379,6 +369,17 @@ class _ModeOption extends StatelessWidget {
           ),
         ),
       ),
+    );
+
+    final reason = sub;
+    if (reason == null) return row;
+    // The reason, off the sheet but not out of the app: spoken with the name
+    // before the tap, and shown on a long press for anyone wondering why the
+    // row is grey.
+    return Semantics(
+      label: '$title. $reason',
+      excludeSemantics: true,
+      child: Tooltip(message: reason, child: row),
     );
   }
 }

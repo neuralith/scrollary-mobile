@@ -627,8 +627,8 @@ WebView, a route or a widget. No screen reads the internal override;
 
 | | Primary | Also offered |
 |---|---|---|
-| Free | **Start in Browser** — fully functional | **Start and keep using Scrollary · PRO**, locked and tappable |
-| Pro, preference on | **Start and keep using Scrollary** | Start in Browser |
+| Free | **Start in Browser** — fully functional | **Start and keep using · PRO**, locked and tappable |
+| Pro, preference on | **Start and keep using** | Start in Browser |
 | Pro, preference off | **Start in Browser** | **Turn on Keep working while I read and start** |
 
 Dismissing the sheet chooses nothing: every queued row stays exactly where it

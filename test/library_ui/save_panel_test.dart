@@ -271,7 +271,7 @@ void main() {
       return collection.id;
     }
 
-    screenTest('*Start and keep using Scrollary* closes the sheet and starts', (
+    screenTest('*Start and keep using* closes the sheet and starts', (
       tester,
     ) async {
       // The bug: this launch left the sheet on screen over the Browser for the
