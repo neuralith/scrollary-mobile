@@ -28,9 +28,10 @@ void main() {
     'JSON.parse(lds[li].textContent':
         'JSON-LD source text — inserting separators would corrupt the JSON',
     'style.textContent =': 'a write, not a read',
-    'var legacy = (a.textContent':
+    'var legacy = (el.textContent':
         'the deliberate second comparison that keeps hints taught before '
-        'elementText existed matching',
+        'elementText existed matching — on `el` rather than `a` since locator '
+        'scoring became shared between links and controls that are pressed',
     '// `Node.textContent` concatenates':
         'the comment explaining why the rest of this list is short',
   };

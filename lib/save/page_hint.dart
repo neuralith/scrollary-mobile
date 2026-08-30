@@ -66,6 +66,7 @@ class DomLocator {
     this.imageSelector,
     this.excludeSelectors = const [],
     this.minImageEdge,
+    this.activate = false,
   });
 
   factory DomLocator.fromJson(Map<String, dynamic> json) => DomLocator(
@@ -83,6 +84,7 @@ class DomLocator {
         .map((e) => e.toString())
         .toList(),
     minImageEdge: (json['minImageEdge'] as num?)?.toInt(),
+    activate: json['activate'] == true,
   );
 
   factory DomLocator.decode(String jsonText) =>
@@ -103,6 +105,17 @@ class DomLocator {
   /// The example destination's path with digit runs generalised, e.g.
   /// `^/guide/some-collection/(\d+)-part$`. Strong and layout-independent.
   final String? hrefPattern;
+
+  /// The control is *pressed*, not followed.
+  ///
+  /// True for a next control that carries no address of its own — a
+  /// `<button>`, a `[role=button]`, an anchor with `href="#"` — which is how
+  /// a client-routed reader publishes its Next. Such a rule cannot be resolved
+  /// to a URL by reading the page; it is applied by activating the element and
+  /// seeing where the page routes itself. Matching therefore has to look past
+  /// `a[href]`, and `hrefPattern` is necessarily absent, so a rule like this
+  /// leans on its label and its selector instead.
+  final bool activate;
 
   // Reader-area rules only.
   final String? imageSelector;
@@ -138,6 +151,7 @@ class DomLocator {
     if (imageSelector != null) 'imageSelector': imageSelector,
     if (excludeSelectors.isNotEmpty) 'excludeSelectors': excludeSelectors,
     if (minImageEdge != null) 'minImageEdge': minImageEdge,
+    if (activate) 'activate': activate,
   };
 
   String encode() => jsonEncode(toJson());

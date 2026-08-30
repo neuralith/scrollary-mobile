@@ -63,6 +63,19 @@ enum WalkStop {
   /// (`HintKind.nextLink`).
   needsUserAssist,
 
+  /// The reading came back on a page the walk has already been on.
+  ///
+  /// The one stop that is about the walk failing to *move*, and the reason it
+  /// is separate from [WalkStop.endOfSource]: a source that names a next
+  /// address and then answers it with the page you were already on is not
+  /// finished, it is going in a circle. Judged on where the reading **landed**,
+  /// because that is the only place the circle is visible — the addresses
+  /// differ, and a candidate-side check (which `resolveNextPage` already does)
+  /// therefore sees nothing wrong with any of them. Without this the walk
+  /// re-resolves the same Entry and hands it to `onEntry` again, which is a
+  /// capture of the same page repeated until a ceiling stops it.
+  noForwardProgress,
+
   /// The next address belongs to another site, or another section of this
   /// one. Following it would silently change what is being downloaded.
   leftTheSource,
@@ -78,6 +91,23 @@ enum WalkStop {
   pageCeiling,
 }
 
+/// What deferred next-address resolution came to.
+///
+/// Three answers, and they are genuinely different: an address to go to, the
+/// end of what the Source publishes, and *the control did not work*. Collapsing
+/// the third into the second is how a run that pressed a dead button reports
+/// itself as a finished collection.
+class NextStep {
+  const NextStep.address(String this.url) : stop = null;
+  const NextStep.ended(WalkStop this.stop) : url = null;
+
+  /// The Source published nothing after this page. The ordinary end.
+  const NextStep.endOfSource() : url = null, stop = WalkStop.endOfSource;
+
+  final String? url;
+  final WalkStop? stop;
+}
+
 /// One page, as the walk read it. Evidence only: nothing here is identity
 /// until [SourceWalk] has reconciled it.
 class WalkedPage {
@@ -86,6 +116,7 @@ class WalkedPage {
     required this.printedNumber,
     required this.title,
     this.nextUrl,
+    this.resolveNext,
     this.stop,
   });
 
@@ -93,7 +124,8 @@ class WalkedPage {
   const WalkedPage.unreadable({required this.url, required WalkStop this.stop})
     : printedNumber = null,
       title = '',
-      nextUrl = null;
+      nextUrl = null,
+      resolveNext = null;
 
   /// Where the reading actually landed — never where it aimed.
   final String url;
@@ -106,8 +138,23 @@ class WalkedPage {
 
   /// The next address, when the page's own links named one confidently.
   /// Null ends the walk with [WalkStop.endOfSource] unless [stop] says
-  /// otherwise.
+  /// otherwise — or defers to [resolveNext], when there is one.
   final String? nextUrl;
+
+  /// The next address, when finding it means *doing something to the page*
+  /// rather than reading it.
+  ///
+  /// A reader whose Next is a `<button>` rather than a link publishes no
+  /// address to read: the address exists only once the control the user
+  /// pointed at has been activated and the page has routed itself. That has to
+  /// happen **after** this page has been handed to `onEntry` — the capture
+  /// reads the page the browser is standing on, and activating the control
+  /// moves it — so it cannot be answered while the page is being read.
+  ///
+  /// Still not an invented address: what comes back is where the page took
+  /// itself, and it goes through the same origin, Source, restriction and
+  /// forward-progress checks as an address that was written in an `href`.
+  final Future<NextStep> Function()? resolveNext;
 
   /// Set when this reading ended the walk instead of contributing to it.
   final WalkStop? stop;
@@ -319,7 +366,23 @@ class LibrarySourceWalk implements SourceWalk {
       // Nothing is written for a page the walk could not read, and everything
       // written before it stays written.
       if (stop != null) return ended(stop);
-      visited.add(normalizeUrl(page.url));
+
+      // **Forward progress, judged where the reading landed.** Every check
+      // above this line is about the address the walk *aimed* at; this is the
+      // only one about the address it arrived at. A client-routed reader that
+      // answers the next chapter with the current one, a redirect back to the
+      // page you were on, a load that failed and left the WebView where it
+      // was — all of them look like an ordinary read, and all of them resolve
+      // to an Entry the walk has already captured. Stopping here is what makes
+      // "never silently re-capture the same Entry" true rather than intended.
+      //
+      // The first reading is exempt: `visited` is seeded with the address the
+      // walk starts from, so landing on it is the walk doing exactly what it
+      // was asked to do rather than a circle.
+      final isFirstReading = pagesRead == 1;
+      if (!visited.add(normalizeUrl(page.url)) && !isFirstReading) {
+        return ended(WalkStop.noForwardProgress);
+      }
 
       if (owesAnEntry) {
         // Judged where the reading LANDED, never where it aimed: a redirect
@@ -356,8 +419,18 @@ class LibrarySourceWalk implements SourceWalk {
       }
 
       // **No address is invented**: the next page is whatever the page's own
-      // links asserted, and nothing at all is an ordinary end.
-      final next = page.nextUrl;
+      // links asserted — or, for a reader whose Next is a control rather than
+      // a link, wherever activating the control the user pointed at took the
+      // page. Asked **here**, after the Entry has been captured, because
+      // activating it moves the browser off the page the capture reads.
+      // Nothing at all is an ordinary end.
+      var next = page.nextUrl;
+      if (next == null && page.resolveNext != null) {
+        final step = await page.resolveNext!();
+        final stopped = step.stop;
+        if (stopped != null) return ended(stopped);
+        next = step.url;
+      }
       if (next == null) return ended(WalkStop.endOfSource);
       final nextKey = normalizeUrl(next);
       if (visited.contains(nextKey)) return ended(WalkStop.endOfSource);

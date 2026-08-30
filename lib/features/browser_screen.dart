@@ -19,6 +19,7 @@ import '../core/connectivity.dart';
 import '../providers.dart';
 import '../ui/palette.dart';
 import 'check_controller.dart';
+import 'selection_overlay.dart';
 import 'v2_save_flow.dart';
 import '../save/queue_runner.dart';
 import '../save/queue_task.dart';
@@ -358,6 +359,7 @@ class _BrowserScreenState extends ConsumerState<BrowserScreen> {
     final presentation = ref.watch(browserPresentationProvider);
     final runner = ref.watch(queueRunnerProvider);
     final sourceCheck = ref.watch(checkControllerProvider);
+    final assist = ref.watch(v2AssistProvider);
 
     // Settings asked for Browser Home from another route; honour it once the
     // Browser is actually on screen.
@@ -442,10 +444,20 @@ class _BrowserScreenState extends ConsumerState<BrowserScreen> {
                         ref.read(shellTabRequestProvider).value = 0,
                   ),
                   // While a run runs, block stray taps from reaching the page.
+                  //
+                  // Except while it is *holding for a tap*: the whole of the
+                  // assist flow is the user pointing at something in the page,
+                  // and a veil over it would swallow the one gesture the run is
+                  // waiting for. The page is in the bridge's element-picking
+                  // mode by then, which swallows the tap itself rather than
+                  // letting it navigate — so nothing here is loosened, the job
+                  // has simply moved to the layer that can tell a teaching tap
+                  // from a stray one.
                   AnimatedBuilder(
-                    animation: Listenable.merge([runner, sourceCheck]),
+                    animation: Listenable.merge([runner, sourceCheck, assist]),
                     builder: (context, _) =>
-                        runner.isRunning || sourceCheck.isRunning
+                        (runner.isRunning || sourceCheck.isRunning) &&
+                            assist.pendingSelection == null
                         ? Positioned.fill(
                             child: AbsorbPointer(
                               child: ColoredBox(color: palette.veil),
@@ -508,6 +520,26 @@ class _BrowserScreenState extends ConsumerState<BrowserScreen> {
                     ),
                 ],
               ),
+            ),
+            // A run holding for the user, asked **here**.
+            //
+            // The save sheet renders the same overlay while it is open, but a
+            // journey outlives it by design: the sheet answers, closes, and the
+            // Browser performs the Start. So the surface the *Needs you* pill
+            // sends people to has to be able to ask as well, or a walk that
+            // stops to ask holds against a controller nothing is drawing.
+            //
+            // Docked below the page rather than over it, for the same reason
+            // the run panel is: the element being pointed at is in the page,
+            // and a sheet across the middle of it hides the control the user
+            // is being asked to find.
+            AnimatedBuilder(
+              animation: assist,
+              builder: (context, _) {
+                final request = assist.pendingSelection;
+                if (request == null) return const SizedBox.shrink();
+                return RuleSelectionOverlay(run: assist, request: request);
+              },
             ),
             // Docked under the WebView, never over it: while this app drives
             // the Browser the user can see what it is doing and end it.
@@ -974,6 +1006,9 @@ class _WebViewHostState extends State<_WebViewHost>
       onLoadStart: (_, url) => widget.browser.onLoadStart(url?.toString()),
       onLoadStop: (_, url) => widget.browser.onLoadStop(url?.toString()),
       onProgressChanged: (_, p) => widget.browser.onProgress(p),
+      // The page moved. Whether that was a person or a save run enumerating it
+      // is not this widget's to know — it is reported and judged one level up.
+      onScrollChanged: (_, _, _) => widget.browser.onScrolled?.call(),
       onUpdateVisitedHistory: (_, url, _) =>
           widget.browser.onUrlChanged(url?.toString()),
       onReceivedError: (_, request, error) async {

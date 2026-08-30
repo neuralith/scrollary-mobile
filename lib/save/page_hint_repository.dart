@@ -52,10 +52,16 @@ class PageHintRepository {
   /// nav container, the label, and the destination's path shape. If only one
   /// survives, the rule is stored anyway but reported as weak rather than
   /// dressed up as stable.
+  /// [activate] states that the control carries no address of its own, so the
+  /// rule is applied by pressing it and watching where the page goes. The
+  /// caller decides that, because deciding it means resolving the element's
+  /// `href` against the page it was tapped on — an `href="#"` is an address
+  /// that goes nowhere, and only the page knows where "here" is.
   Future<UserPageHint> createNextLinkHint({
     required SelectedElement element,
     required String sourceUrl,
     HintScope scope = HintScope.collection,
+    bool activate = false,
   }) async {
     final host = Uri.tryParse(sourceUrl)?.host ?? '';
     final locator = DomLocator(
@@ -67,7 +73,12 @@ class PageHintRepository {
       ariaLabel: element.ariaLabel.isEmpty ? null : element.ariaLabel,
       titleAttr: element.title.isEmpty ? null : element.title,
       imgAlt: element.imgAlt.isEmpty ? null : element.imgAlt,
-      hrefPattern: element.href.isEmpty ? null : hrefPatternFrom(element.href),
+      // A pressed control has no destination to generalise, and the address it
+      // happens to carry (`#`, a `javascript:` URL) describes nothing.
+      hrefPattern: activate || element.href.isEmpty
+          ? null
+          : hrefPatternFrom(element.href),
+      activate: activate,
     );
 
     final rule = UserPageHint(
@@ -78,7 +89,7 @@ class PageHintRepository {
       kind: HintKind.nextLink,
       locator: locator,
       exampleSourceUrl: sourceUrl,
-      exampleTargetUrl: element.href.isEmpty ? null : element.href,
+      exampleTargetUrl: activate || element.href.isEmpty ? null : element.href,
       createdAt: DateTime.now(),
     );
     await _replaceSameScope(rule);

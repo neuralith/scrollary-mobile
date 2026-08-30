@@ -55,6 +55,19 @@ class BrowserController extends ChangeNotifier {
   /// True when something other than the user is moving the page.
   bool get isAutomating => automationOwner != null;
 
+  /// The page's scroll position changed.
+  ///
+  /// Wired to the WebView's own scroll callback by the widget that hosts it,
+  /// and reported **unjudged** — this class does not know whether a scroll
+  /// was a person or a save run, and the WebView cannot tell it. Whoever sets
+  /// this decides, because only the app root knows which operations hold the
+  /// Browser (see `lib/app.dart`).
+  ///
+  /// Nothing here is stored: a scroll is an event, and the only thing that
+  /// wants it is reading progress, which keeps its own state
+  /// (`lib/reading_v2/source_reading.dart`).
+  void Function()? onScrolled;
+
   // --- is the app painting this WebView? -----------------------------------
 
   bool _surfaceIsPainted = true;
@@ -932,10 +945,54 @@ class BrowserController extends ChangeNotifier {
         score: (map['score'] as num?)?.toInt() ?? 0,
         ambiguous: map['ambiguous'] == true,
         matchedSignals: map['matched']?.toString() ?? '',
+        activate: map['activate'] == true,
       );
     } catch (e) {
       return LocatorMatch.failed(e.toString());
     }
+  }
+
+  /// Press the control a saved rule describes, and wait for the page to route
+  /// itself somewhere else.
+  ///
+  /// For a reader whose Next is a `<button>`: there is no address to load, so
+  /// the address is whatever the page navigates to when the control the user
+  /// pointed at is pressed.
+  ///
+  /// Nothing about where it landed is decided here. This returns an address;
+  /// whether that address may be followed is the walk's, and it applies the
+  /// same origin, Source and restriction checks it applies to a plain link.
+  Future<ControlPress> activateLocator(
+    Map<String, dynamic> locator, {
+    Duration settle = const Duration(seconds: 12),
+  }) async {
+    final before = currentUrl;
+    try {
+      final raw = await _call(kCallActivateLocator, args: {'locator': locator});
+      if (raw is! Map) {
+        return const ControlPress.stuck('the page did not answer');
+      }
+      if (raw['ok'] != true) {
+        final why =
+            raw['reason']?.toString() ?? 'the control could not be used';
+        return raw['atEnd'] == true
+            ? ControlPress.atEnd(why)
+            : ControlPress.stuck(why);
+      }
+    } catch (_) {
+      return const ControlPress.stuck('the control could not be pressed');
+    }
+
+    // The page moves itself, so the only honest signal is the address
+    // changing. Polled rather than awaited on a load event, because a
+    // client-routed reader may never fire one.
+    final deadline = DateTime.now().add(settle);
+    while (DateTime.now().isBefore(deadline)) {
+      await Future<void>.delayed(const Duration(milliseconds: 200));
+      final now = currentUrl;
+      if (now.isNotEmpty && now != before) return ControlPress.moved(now);
+    }
+    return const ControlPress.stuck('pressing it did not open anything');
   }
 
   /// Read the page's readable region as a list of candidate blocks.
@@ -1096,27 +1153,65 @@ class SelectedElement {
   final String? imageSelector;
 }
 
+/// What pressing the control a saved rule describes came to.
+///
+/// Three answers, and the difference between the last two is the difference
+/// between *this collection has finished* and *something went wrong*. A site
+/// that switches its Next control off is telling us there is nothing after
+/// this page; a control that is live and changes nothing is a dead end. The
+/// codebase does not let those share an outcome anywhere else, and they must
+/// not share one here.
+class ControlPress {
+  const ControlPress.moved(String this.url)
+    : atEndOfChain = false,
+      refusal = null;
+
+  /// The control is present and switched off: the last entry of the chain.
+  const ControlPress.atEnd(String this.refusal)
+    : url = null,
+      atEndOfChain = true;
+
+  /// Nothing matched, several controls tied, or pressing it opened nothing.
+  const ControlPress.stuck(String this.refusal)
+    : url = null,
+      atEndOfChain = false;
+
+  /// Where the page took itself, when it went anywhere.
+  final String? url;
+  final bool atEndOfChain;
+  final String? refusal;
+
+  bool get moved => url != null;
+}
+
 class LocatorMatch {
   const LocatorMatch({
     required this.href,
     required this.score,
     this.ambiguous = false,
     this.matchedSignals = '',
+    this.activate = false,
   }) : failureReason = null;
 
   const LocatorMatch.failed(this.failureReason)
     : href = '',
       score = 0,
       ambiguous = false,
-      matchedSignals = '';
+      matchedSignals = '',
+      activate = false;
 
   final String href;
   final int score;
   final bool ambiguous;
   final String matchedSignals;
+
+  /// The rule describes a control that is pressed rather than followed, so
+  /// [href] is empty by nature and its emptiness is not a failure.
+  final bool activate;
+
   final String? failureReason;
 
-  bool get isMatch => failureReason == null && href.isNotEmpty;
+  bool get isMatch => failureReason == null && (activate || href.isNotEmpty);
 }
 
 /// A cross-host navigation the page started, waiting on the user.

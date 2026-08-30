@@ -8,11 +8,13 @@ PageProbe probe({
   String url = 'https://x.example/guide/foo/10',
   String? headNext,
   List<PageLink> links = const [],
+  List<PageLink> controls = const [],
 }) => PageProbe(
   url: url,
   title: 'Entry 10',
   headNextHref: headNext,
   links: links,
+  controls: controls,
 );
 
 void main() {
@@ -331,6 +333,152 @@ void main() {
           ),
         ),
         isNotNull,
+      );
+    });
+  });
+
+  // ─── the sequence continues, but nothing on it is followable ───────────
+  //
+  // A reader that routes itself in script publishes no `href` for its Next.
+  // To a resolver that can only read links that is indistinguishable from the
+  // end of the collection, and the two are opposite answers: one is finished,
+  // the other is a page plainly offering a next entry the app cannot follow by
+  // reading it. Getting this wrong stops a run at entry 41 of 43 and reports it
+  // as everything the site publishes.
+
+  group('a next control that carries no address', () {
+    const nextButton = PageLink(
+      href: '',
+      ariaLabel: 'Next entry',
+      className: 'reader-nav__btn',
+    );
+
+    test('a page with no links but a next-labelled control asks rather than '
+        'declaring the end', () {
+      final result = resolveNextPage(
+        probe(controls: const [nextButton]),
+        currentUrl: current,
+        visitedNormalized: {},
+      );
+
+      expect(result.decision, NextDecision.askUser);
+      expect(result.hasNext, isFalse);
+      expect(
+        result.reason,
+        contains('not a link'),
+        reason:
+            'the prompt has to say what it could not do, or "point at the '
+            'control" is a request with no explanation attached',
+      );
+    });
+
+    test('a page with neither a link nor such a control is the end', () {
+      final result = resolveNextPage(
+        probe(
+          links: const [
+            PageLink(href: 'https://x.example/guide/foo', text: 'All entries'),
+          ],
+        ),
+        currentUrl: current,
+        visitedNormalized: {},
+      );
+
+      expect(
+        result.decision,
+        NextDecision.endOfChain,
+        reason:
+            'prompting at the genuine end of a finished collection is a '
+            'worse failure than the one this discriminator fixes',
+      );
+    });
+
+    test('a control that is not next-ish is not a reason to ask', () {
+      final result = resolveNextPage(
+        probe(
+          controls: const [
+            PageLink(href: '', ariaLabel: 'Share'),
+            PageLink(href: '', text: 'Report a problem'),
+          ],
+        ),
+        currentUrl: current,
+        visitedNormalized: {},
+      );
+
+      expect(result.decision, NextDecision.endOfChain);
+    });
+
+    test('a followable link is still followed, control or no control', () {
+      final result = resolveNextPage(
+        probe(
+          headNext: 'https://x.example/guide/foo/11',
+          controls: const [nextButton],
+        ),
+        currentUrl: current,
+        visitedNormalized: {},
+      );
+
+      expect(result.decision, NextDecision.proceed);
+      expect(result.chosen!.href, 'https://x.example/guide/foo/11');
+    });
+
+    test('a run that may not ask is not made to ask by one', () {
+      final result = resolveNextPage(
+        probe(controls: const [nextButton]),
+        currentUrl: current,
+        visitedNormalized: {},
+        allowUserAssist: false,
+      );
+
+      expect(result.decision, NextDecision.endOfChain);
+    });
+  });
+
+  group('following an address, or pressing a control', () {
+    test('a control with no address is pressed', () {
+      expect(nextControlMustBePressed(href: '', currentUrl: current), isTrue);
+    });
+
+    test('an anchor going nowhere is pressed, not followed', () {
+      expect(
+        nextControlMustBePressed(href: '#', currentUrl: current),
+        isTrue,
+        reason:
+            'a client-routed reader writes href="#" and handles the click '
+            'itself; loading it would reload the page it is on',
+      );
+      expect(
+        nextControlMustBePressed(
+          href: 'javascript:void(0)',
+          currentUrl: current,
+        ),
+        isTrue,
+      );
+    });
+
+    test('a real address is followed', () {
+      expect(
+        nextControlMustBePressed(
+          href: 'https://x.example/guide/foo/11',
+          currentUrl: current,
+        ),
+        isFalse,
+      );
+      expect(
+        nextControlMustBePressed(href: '/guide/foo/11', currentUrl: current),
+        isFalse,
+      );
+    });
+
+    test('an address that is wrong for another reason is still an address', () {
+      expect(
+        nextControlMustBePressed(
+          href: 'https://elsewhere.example/guide/foo/11',
+          currentUrl: current,
+        ),
+        isFalse,
+        reason:
+            'leaving the site is a refusal, not a reason to start pressing '
+            'the control instead',
       );
     });
   });

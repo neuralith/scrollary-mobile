@@ -24,6 +24,7 @@ import '../ui/status_style.dart';
 import 'collection_actions.dart';
 import 'collection_models.dart';
 import 'entry_offline.dart';
+import 'entry_sort_control.dart';
 import 'library_widgets.dart';
 import 'new_entries_bar.dart';
 import 'placement_actions.dart';
@@ -163,6 +164,9 @@ class _CollectionDetail extends ConsumerWidget {
                 SectionLabel(
                   '${libraryEntryLabels.Many.toUpperCase()} · '
                   '${view.entries.length}',
+                  // On the heading, because the order is a property of the
+                  // list under it and is changed while looking at it.
+                  trailing: EntrySortButton(view: view),
                 ),
                 const Divider(height: 1),
                 for (final entry in view.entries) ...[

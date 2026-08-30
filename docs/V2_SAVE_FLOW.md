@@ -57,18 +57,27 @@ of announcing it.
 | Address on a known Source | `RecognisedSource` | entryPage / unknownPage | "Adds to *Collection*"; **Add & download this entry**; **Add & download…**; Follow | Entry + Location under that Collection, through `EntryReconciler` |
 | Unknown site | `Unrecognised` | entryPage | **Add to a Collection…** → the picker: an existing Collection (this site becomes another Source of it) or **New collection**, which goes straight to the sheet that names it and asks the count | Collection?/Source/Entry/Location in one transaction |
 | Known Source's own listing | `RecognisedSource` | collectionIndex | "there is no entry here to add"; **Check *Collection* for new entries**; Follow | nothing — the check writes what it finds |
-| Unknown site, ordinary page | `Unrecognised` | unknownPage | **Save as a standalone entry**; **Add to a Collection…**; and, when the address could be a listing, **Add this site as a collection's source** | standalone Entry + Location (I7), or — for the third — Collection?/Source and **no Entry** |
+| Unknown site, ordinary page | `Unrecognised` | unknownPage | **Add to a Collection…** — the same picker; and, when the address could be a listing, **Add this site as a collection's source** | Collection?/Source/Entry/Location in one transaction, or — for the second — Collection?/Source and **no Entry** |
 
 Rules that bind every row:
 
-- **A serialized page never becomes standalone silently.** Standalone is
-  offered, chosen, and never a fallback for "recognition could not tell".
+- **A page that is not in the library yet is a question about the library
+  first** (V2-D69). The only answers the sheet offers for one are *start a
+  Collection for this* and *add it to a Collection you have, which gains this
+  site as another source*. There is no loose save: the flow never writes an
+  Entry outside a Collection, and a Collection is not a claim that the content
+  is a series — *AI Training* is as good a Collection as *Quiet Harbour*.
+- **What to take off the page is asked after that answer, never before it.**
+  *Images only* / *Text only* / *Text and images* belong to the download sheet
+  the picker's answer turns this one into — the same surface that asks the
+  count and carries the launch. The first sheet shows them only for a page the
+  library already holds, where there is no library question left to ask.
 - **The index page is never an Entry.** A listing is where a Source lives; it
   is not a unit of reading and no `Entry 0` is invented for it. Whether an
   address *is* a listing is the library's answer or the user's — never the
   URL's.
 - **Folder is organisation, and the save flow does not ask for it.** A new
-  Collection and a standalone Entry are created in the root Folder; moving one
+  Collection is created in the root Folder; moving one
   is a Library action (`library_ui/folder_actions.dart`,
   `library_ui/collection_actions.dart`). Folder never stands in for Collection
   identity, and putting the question on the way in would be a third answer to
@@ -83,7 +92,8 @@ Rules that bind every row:
 - **It is one sheet** (V2-D62): an identity line, the range block, the capture
   line and the launch, in that order. There is no *Download this entry* /
   *Download entries…* pair, and nothing opens after it. A listing has no range
-  at all, and a standalone Entry keeps its single download because it has no
+  at all, and an Entry the library holds outside any Collection — legacy data,
+  or one promoted from history — keeps its single download because it has no
   Collection order to count along.
 - **A Collection the user is starting is named on that same sheet** (V2-D57).
   The picker is still where *which Collection* is answered — the ones the

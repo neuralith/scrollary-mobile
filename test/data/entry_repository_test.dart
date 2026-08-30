@@ -267,6 +267,106 @@ void main() {
     });
   });
 
+  group('the publish date a reading established', () {
+    test('is stored on the Location, and stays out of the outbox', () async {
+      final seeded = await h.seedLibrary();
+      final before = await h.outboxCount();
+      final published = DateTime.utc(2026, 3, 14);
+
+      final violation = await h.entries.recordLocationPublishedAt(
+        seeded.location.id,
+        published,
+      );
+
+      expect(violation, isNull);
+      final row = await h.entries.locationById(seeded.location.id);
+      // Instants, not objects: drift stores a unix timestamp and reads it
+      // back in local time, so the round trip is never the same `DateTime`.
+      expect(row!.publishedAt!.isAtSameMomentAs(published), isTrue);
+      expect(
+        await h.outboxCount(),
+        before,
+        reason:
+            'published_at is not in contracts/evidence.yaml, so nothing may '
+            'try to push it',
+      );
+      expect(
+        row.updatedAt,
+        seeded.location.updatedAt,
+        reason:
+            'the row clock is the last-writer-wins clock; moving it for a '
+            'field that never syncs would let this device beat a legitimate '
+            'remote update',
+      );
+    });
+
+    test('leaves every other column exactly as it was', () async {
+      final seeded = await h.seedLibrary();
+      await h.entries.recordLocationPublishedAt(
+        seeded.location.id,
+        DateTime.utc(2026, 3, 14),
+      );
+      final row = await h.entries.locationById(seeded.location.id);
+      expect(
+        (
+          row!.url,
+          row.urlKey,
+          row.sourceLabel,
+          row.sourceNumber,
+          row.discoveredAt,
+          row.lifecycle,
+        ),
+        (
+          seeded.location.url,
+          seeded.location.urlKey,
+          seeded.location.sourceLabel,
+          seeded.location.sourceNumber,
+          seeded.location.discoveredAt,
+          seeded.location.lifecycle,
+        ),
+      );
+    });
+
+    test(
+      'a later reading corrects it; an unchanged one writes nothing',
+      () async {
+        final seeded = await h.seedLibrary();
+        final first = DateTime.utc(2026, 3, 14);
+        final corrected = DateTime.utc(2026, 3, 15);
+
+        await h.entries.recordLocationPublishedAt(seeded.location.id, first);
+        await h.entries.recordLocationPublishedAt(seeded.location.id, first);
+        expect(
+          (await h.entries.locationById(
+            seeded.location.id,
+          ))!.publishedAt!.isAtSameMomentAs(first),
+          isTrue,
+        );
+
+        await h.entries.recordLocationPublishedAt(
+          seeded.location.id,
+          corrected,
+        );
+        expect(
+          (await h.entries.locationById(
+            seeded.location.id,
+          ))!.publishedAt!.isAtSameMomentAs(corrected),
+          isTrue,
+          reason: 'the last reading of the page wins where a site corrects it',
+        );
+      },
+    );
+
+    test('an unknown Location is refused rather than created', () async {
+      await h.seedLibrary();
+      final violation = await h.entries.recordLocationPublishedAt(
+        'no-such-location',
+        DateTime.utc(2026, 3, 14),
+      );
+      expect(violation, unknownRow);
+    });
+  });
+
   group('placing from what a Source printed', () {
     test('places the Entry without claiming the user did', () async {
       final seeded = await h.seedLibrary();

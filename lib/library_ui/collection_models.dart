@@ -18,6 +18,7 @@ import '../domain/entry.dart';
 import '../domain/reading_state.dart';
 import '../library/entry_labels.dart';
 import '../library/entry_presentation.dart';
+import '../library/entry_sort.dart';
 
 /// The vocabulary this UI speaks about Entries.
 ///
@@ -38,6 +39,9 @@ class EntryRowView {
     required this.label,
     this.progress = 0,
     this.sourceLabel,
+    this.sourceNumber,
+    this.publishedAt,
+    this.addedAt,
     this.collectionName,
     this.subtitle,
   });
@@ -47,6 +51,9 @@ class EntryRowView {
     required ReadStatus status,
     required bool availableOffline,
     String? sourceLabel,
+    double? sourceNumber,
+    DateTime? publishedAt,
+    DateTime? addedAt,
     String? collectionName,
     double progress = 0,
     EntryContext context = EntryContext.withinCollection,
@@ -67,6 +74,9 @@ class EntryRowView {
       subtitle: shown.secondary,
       progress: progress,
       sourceLabel: sourceLabel,
+      sourceNumber: sourceNumber,
+      publishedAt: publishedAt,
+      addedAt: addedAt,
       collectionName: collectionName,
     );
   }
@@ -89,6 +99,22 @@ class EntryRowView {
   /// What a site printed for this Entry, kept as evidence. Not what the row
   /// draws; what *Entry details* shows.
   final String? sourceLabel;
+
+  /// The number a site printed for this Entry, from its earliest active
+  /// Location. Evidence, exactly like [sourceLabel] — **never an `ordinal`**
+  /// (V2-D15). It is read here for one purpose: so a Collection the app was
+  /// not willing to number can still be *drawn* in the order its own site
+  /// printed. Nothing on this row can write it back.
+  final double? sourceNumber;
+
+  /// When the source said this Entry was published, where one said so. Null
+  /// for every Entry nobody has downloaded yet and for every site that prints
+  /// no date, which is ordinary and permanent.
+  final DateTime? publishedAt;
+
+  /// When this Entry reached the library: its earliest active Location's
+  /// `discovered_at`. Null only for an Entry that has no address at all.
+  final DateTime? addedAt;
 
   /// The Collection this Entry belongs to, when it belongs to one. Held for
   /// the details surface and for the surfaces that have to name it.
@@ -115,6 +141,20 @@ class EntryRowView {
   /// A position the app could not establish is a real, visible state — not an
   /// error, and not something to guess a number for (V2-D16).
   bool get needsPlacement => row.placement == Placement.unplaced.name;
+
+  /// Everything a sort is allowed to know about this row.
+  ///
+  /// `ordinal ?? sourceNumber` is resolved here, once, and the precedence is
+  /// the only one that could be right: an `ordinal` is the position the
+  /// library established and a `sourceNumber` is what one site printed, so
+  /// where both exist the library's own answer wins. Reading the second one
+  /// does not make it the first — see `library/entry_sort.dart`.
+  EntrySortFacts get sortFacts => EntrySortFacts(
+    number: row.ordinal ?? sourceNumber,
+    publishedAt: publishedAt,
+    addedAt: addedAt,
+    label: label,
+  );
 
   String get statusLabel => switch (status) {
     ReadStatus.unread => 'Unread',
@@ -149,29 +189,65 @@ String entryRowLabel(
 /// The list is split for presentation only: unplaced Entries are shown last,
 /// under their own heading, so the sequence above them stays true (O-B). Both
 /// halves are the same rows, drawn the same way, in the same list.
+///
+/// **The split is about the numeric sequence, so it appears only when the list
+/// is in it.** "Where this sits in the collection is not known" is a statement
+/// about an `ordinal`, and it is worth making while the rows above are ordered
+/// by one. Under a date sort nothing on screen is claiming a position at all:
+/// every Entry has the date being sorted on, or sorts last for lacking it, and
+/// holding some of them back under a heading about placement would be
+/// answering a question the list is not asking. They merge into the one list,
+/// still carrying their placement badge, still one tap from being placed.
 class CollectionView {
   const CollectionView({
     required this.collection,
     required this.entries,
     required this.needsPlacement,
+    this.sort = const EntrySort(EntrySortField.number),
+    this.available = const [EntrySortField.number],
   });
 
   factory CollectionView.from({
     required CollectionRow collection,
     required List<EntryRowView> entries,
+    EntrySort? sort,
+    List<EntrySortField>? available,
   }) {
+    final offered =
+        available ??
+        availableEntrySortFields([for (final e in entries) e.sortFacts]);
+    final applied =
+        sort ??
+        defaultEntrySort(
+          basis: OrderingBasis.values.byName(collection.orderingBasis),
+          available: offered,
+        );
+    int bySort(EntryRowView a, EntryRowView b) =>
+        compareEntriesBySort(applied, a.sortFacts, b.sortFacts);
+
+    if (applied.field != EntrySortField.number) {
+      return CollectionView(
+        collection: collection,
+        entries: [...entries]..sort(bySort),
+        needsPlacement: const [],
+        sort: applied,
+        available: offered,
+      );
+    }
     final placed = [
       for (final e in entries)
         if (!e.needsPlacement) e,
-    ]..sort(_bySequence);
+    ]..sort(bySort);
     final unplaced = [
       for (final e in entries)
         if (e.needsPlacement) e,
-    ]..sort((a, b) => a.label.toLowerCase().compareTo(b.label.toLowerCase()));
+    ]..sort(bySort);
     return CollectionView(
       collection: collection,
       entries: placed,
       needsPlacement: unplaced,
+      sort: applied,
+      available: offered,
     );
   }
 
@@ -180,8 +256,17 @@ class CollectionView {
   /// Entries with a position, in it.
   final List<EntryRowView> entries;
 
-  /// Entries whose position in this Collection is not known.
+  /// Entries whose position in this Collection is not known. Empty under a
+  /// date sort, where placement is not what the list is ordered by.
   final List<EntryRowView> needsPlacement;
+
+  /// The order these lists are in — the user's remembered choice where there
+  /// is one, and otherwise the one this Collection's own data earns.
+  final EntrySort sort;
+
+  /// The orders this Collection could be put in, in menu order. Never empty in
+  /// practice, and the control draws exactly this.
+  final List<EntrySortField> available;
 
   String get name => collection.name;
 
@@ -203,19 +288,4 @@ class CollectionView {
     final extent = libraryEntryLabels.count(total);
     return unread == 0 ? extent : '$extent · $unread unread';
   }
-}
-
-/// Ordinal first, nulls after the numbered ones, then the user's order, then
-/// the label. A placed Entry without an ordinal is possible; it is not sorted
-/// as though it were position zero.
-int _bySequence(EntryRowView a, EntryRowView b) {
-  final x = a.row.ordinal;
-  final y = b.row.ordinal;
-  if (x != null && y != null && x != y) return x.compareTo(y);
-  if (x != null && y == null) return -1;
-  if (x == null && y != null) return 1;
-  if (a.row.sortKey != b.row.sortKey) {
-    return a.row.sortKey.compareTo(b.row.sortKey);
-  }
-  return a.label.toLowerCase().compareTo(b.label.toLowerCase());
 }

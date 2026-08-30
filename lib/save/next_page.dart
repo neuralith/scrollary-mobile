@@ -285,6 +285,48 @@ String? matchNextText(PageLink link) {
   return null;
 }
 
+/// Must this control be *pressed* rather than followed?
+///
+/// True when it carries no address the app could load: no `href` at all, a
+/// `javascript:` one, or — the case that looks like an address and is not — an
+/// `href` that resolves to the page it sits on, which is how `href="#"`
+/// reaches here. Resolved against the page rather than read off the string,
+/// because only the page knows where "here" is.
+///
+/// Shared by the two halves of teaching a rule: the controller that writes the
+/// rule from a tap, and the walk that has to decide whether to load an address
+/// or press a control. One answer, one place.
+bool nextControlMustBePressed({
+  required String href,
+  required String currentUrl,
+}) {
+  if (href.trim().isEmpty) return true;
+  final check = validateNextUrl(
+    candidate: href,
+    currentUrl: currentUrl,
+    visited: const {},
+  );
+  if (check.isAccepted) return false;
+  return check.rejection == NextUrlRejection.sameAsCurrent ||
+      check.rejection == NextUrlRejection.unsupportedScheme ||
+      check.rejection == NextUrlRejection.unparseable;
+}
+
+/// Does this page show a next-entry control that carries no address?
+///
+/// The question that tells *the sequence ended* apart from *the site publishes
+/// its Next as a script-driven button*. Both look identical to a resolver that
+/// can only read `href`s — no candidate, no next page — and they are opposite
+/// answers: one is the honest end of a collection, the other is a page that
+/// plainly offers a next entry the app simply cannot follow by reading it.
+///
+/// Judged with exactly the hints a link is judged by, over the controls the
+/// probe measured. Nothing site-specific: a `<button>` labelled "Next" is a
+/// `<button>` labelled "Next" everywhere.
+bool offersUnfollowableNext(PageProbe probe) => probe.controls.any(
+  (c) => c.href.trim().isEmpty && matchNextText(c) != null,
+);
+
 /// Run the chain, validate, and decide whether to proceed or ask the user.
 ///
 /// The rule: proceed on a high-confidence candidate, or on a medium-confidence
@@ -330,6 +372,22 @@ NextPageResult resolveNextPage(
   }
 
   if (viable.isEmpty) {
+    // A page with no followable candidate has not necessarily ended. If it is
+    // *showing* a next-entry control that carries no address, the sequence
+    // continues and only the means of following it is missing — which is
+    // precisely what the user can supply by pointing at it. Reporting this as
+    // the end of the collection is how a reader stops at chapter 41 of 43 and
+    // calls it finished.
+    if (allowUserAssist && offersUnfollowableNext(probe)) {
+      return NextPageResult(
+        decision: NextDecision.askUser,
+        considered: considered,
+        rejection: firstRejection,
+        reason:
+            'the page offers a next-entry control that is not a link, so its '
+            'address cannot be read',
+      );
+    }
     return NextPageResult(
       decision: NextDecision.endOfChain,
       considered: considered,

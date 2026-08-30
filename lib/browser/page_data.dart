@@ -390,6 +390,7 @@ class PageProbe {
     this.scrollY = 0,
     this.images = const [],
     this.links = const [],
+    this.controls = const [],
     this.headNextHref,
     this.atBottom = false,
     this.imagesTruncated = false,
@@ -415,6 +416,9 @@ class PageProbe {
         .map((e) => PageImage.fromJson(Map<String, dynamic>.from(e as Map)))
         .toList(),
     links: (json['links'] as List<dynamic>? ?? const [])
+        .map((e) => PageLink.fromJson(Map<String, dynamic>.from(e as Map)))
+        .toList(),
+    controls: (json['controls'] as List<dynamic>? ?? const [])
         .map((e) => PageLink.fromJson(Map<String, dynamic>.from(e as Map)))
         .toList(),
     headNextHref: _str(json['headNextHref']),
@@ -473,6 +477,18 @@ class PageProbe {
       : viewportWidth * viewportHeight;
   final List<PageImage> images;
   final List<PageLink> links;
+
+  /// Elements that act as controls but carry no address — `<button>`,
+  /// `[role=button]`, an anchor with no `href`.
+  ///
+  /// Described with the same fields a link is described with, because the
+  /// question asked of them is the same one: does this look like the control
+  /// that opens the next entry? They are reported separately because the
+  /// answer is used for the opposite purpose — a link that looks like Next is
+  /// a candidate to follow, and a *control* that looks like Next is the
+  /// evidence that the sequence has not ended even though nothing followable
+  /// was found.
+  final List<PageLink> controls;
 
   /// `<link rel="next">` from the document head, if present.
   final String? headNextHref;

@@ -199,18 +199,36 @@ class UiHarness {
 
   /// A Location belongs to a Source exactly when its Entry belongs to a
   /// Collection (I7), so [sourceId] is required for an Entry inside one.
+  ///
+  /// [sourceNumber] is what a site printed, and it is **not** an ordinal
+  /// (V2-D15): a test that seeds one is seeding evidence, and the Entry it
+  /// belongs to stays exactly as placed or unplaced as it was.
+  /// [publishedAt] is written through the local-only writer a capture uses.
   Future<LocationRow> location(
     String entryId,
     String url, {
     String? sourceId,
+    String sourceLabel = '',
+    double? sourceNumber,
+    DateTime? publishedAt,
   }) async {
     final (row, violation) = await entries.addLocation(
       entryId: entryId,
       sourceId: sourceId,
       url: url,
       urlKey: url,
+      sourceLabel: sourceLabel,
+      sourceNumber: sourceNumber,
     );
     expect(violation, isNull);
+    if (publishedAt != null) {
+      final refused = await entries.recordLocationPublishedAt(
+        row!.id,
+        publishedAt,
+      );
+      expect(refused, isNull);
+      return (await entries.locationById(row.id))!;
+    }
     return row!;
   }
 

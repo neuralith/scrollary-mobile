@@ -166,6 +166,21 @@ class Locations extends Table {
   TextColumn get urlKey => text().unique()();
   TextColumn get sourceLabel => text().withDefault(const Constant(''))();
   RealColumn get sourceNumber => real().nullable()();
+
+  /// The date the source said this page was published, when it said one.
+  ///
+  /// Evidence about a page, exactly like [sourceLabel] and [sourceNumber]
+  /// beside it, so it lives on the Location rather than the Entry: two Sources
+  /// of one Collection can publish the same Entry on different days, and the
+  /// Entry has no one answer.
+  ///
+  /// **Local-only, deliberately.** It is absent from `contracts/evidence.yaml`
+  /// and from the change feed, so nothing writes it to the outbox and nothing
+  /// reads it from a pull. The contract is frozen at Gate B and changes only
+  /// through `contracts/README.md`'s protocol; until it does, this is a fact
+  /// this device read for itself. Null is ordinary and permanent for a page
+  /// nobody has downloaded, and for every page whose site prints no date.
+  DateTimeColumn get publishedAt => dateTime().nullable()();
   DateTimeColumn get discoveredAt => dateTime()();
   TextColumn get discoveryBasis => text().withDefault(const Constant(''))();
   TextColumn get lifecycle => text().withDefault(const Constant('active'))();

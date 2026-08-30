@@ -23,14 +23,17 @@ class ScriptedBrowser extends FakeBrowser {
   bool scrollMoves = true;
 
   int y = 0;
-  int probeCount = 0;
 
   @override
   Future<PageProbe> probe({
     bool withLinks = false,
     bool withSignals = true,
   }) async {
+    // `probeCount` and `onProbe` are [FakeBrowser]'s, so a fixture that scripts
+    // its probes is still countable and still hookable the one way every other
+    // fixture is.
     probeCount++;
+    onProbe?.call(probeCount);
     if (withLinks || withSignals) fullSignalProbes++;
     return probeBuilder(y, probeCount);
   }

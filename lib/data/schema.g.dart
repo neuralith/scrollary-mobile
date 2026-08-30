@@ -2614,6 +2614,17 @@ class $LocationsTable extends Locations
     type: DriftSqlType.double,
     requiredDuringInsert: false,
   );
+  static const VerificationMeta _publishedAtMeta = const VerificationMeta(
+    'publishedAt',
+  );
+  @override
+  late final GeneratedColumn<DateTime> publishedAt = GeneratedColumn<DateTime>(
+    'published_at',
+    aliasedName,
+    true,
+    type: DriftSqlType.dateTime,
+    requiredDuringInsert: false,
+  );
   static const VerificationMeta _discoveredAtMeta = const VerificationMeta(
     'discoveredAt',
   );
@@ -2681,6 +2692,7 @@ class $LocationsTable extends Locations
     urlKey,
     sourceLabel,
     sourceNumber,
+    publishedAt,
     discoveredAt,
     discoveryBasis,
     lifecycle,
@@ -2755,6 +2767,15 @@ class $LocationsTable extends Locations
         sourceNumber.isAcceptableOrUnknown(
           data['source_number']!,
           _sourceNumberMeta,
+        ),
+      );
+    }
+    if (data.containsKey('published_at')) {
+      context.handle(
+        _publishedAtMeta,
+        publishedAt.isAcceptableOrUnknown(
+          data['published_at']!,
+          _publishedAtMeta,
         ),
       );
     }
@@ -2839,6 +2860,10 @@ class $LocationsTable extends Locations
         DriftSqlType.double,
         data['${effectivePrefix}source_number'],
       ),
+      publishedAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.dateTime,
+        data['${effectivePrefix}published_at'],
+      ),
       discoveredAt: attachedDatabase.typeMapping.read(
         DriftSqlType.dateTime,
         data['${effectivePrefix}discovered_at'],
@@ -2877,6 +2902,21 @@ class LocationRow extends DataClass implements Insertable<LocationRow> {
   final String urlKey;
   final String sourceLabel;
   final double? sourceNumber;
+
+  /// The date the source said this page was published, when it said one.
+  ///
+  /// Evidence about a page, exactly like [sourceLabel] and [sourceNumber]
+  /// beside it, so it lives on the Location rather than the Entry: two Sources
+  /// of one Collection can publish the same Entry on different days, and the
+  /// Entry has no one answer.
+  ///
+  /// **Local-only, deliberately.** It is absent from `contracts/evidence.yaml`
+  /// and from the change feed, so nothing writes it to the outbox and nothing
+  /// reads it from a pull. The contract is frozen at Gate B and changes only
+  /// through `contracts/README.md`'s protocol; until it does, this is a fact
+  /// this device read for itself. Null is ordinary and permanent for a page
+  /// nobody has downloaded, and for every page whose site prints no date.
+  final DateTime? publishedAt;
   final DateTime discoveredAt;
   final String discoveryBasis;
   final String lifecycle;
@@ -2891,6 +2931,7 @@ class LocationRow extends DataClass implements Insertable<LocationRow> {
     required this.urlKey,
     required this.sourceLabel,
     this.sourceNumber,
+    this.publishedAt,
     required this.discoveredAt,
     required this.discoveryBasis,
     required this.lifecycle,
@@ -2913,6 +2954,9 @@ class LocationRow extends DataClass implements Insertable<LocationRow> {
     map['source_label'] = Variable<String>(sourceLabel);
     if (!nullToAbsent || sourceNumber != null) {
       map['source_number'] = Variable<double>(sourceNumber);
+    }
+    if (!nullToAbsent || publishedAt != null) {
+      map['published_at'] = Variable<DateTime>(publishedAt);
     }
     map['discovered_at'] = Variable<DateTime>(discoveredAt);
     map['discovery_basis'] = Variable<String>(discoveryBasis);
@@ -2940,6 +2984,9 @@ class LocationRow extends DataClass implements Insertable<LocationRow> {
       sourceNumber: sourceNumber == null && nullToAbsent
           ? const Value.absent()
           : Value(sourceNumber),
+      publishedAt: publishedAt == null && nullToAbsent
+          ? const Value.absent()
+          : Value(publishedAt),
       discoveredAt: Value(discoveredAt),
       discoveryBasis: Value(discoveryBasis),
       lifecycle: Value(lifecycle),
@@ -2964,6 +3011,7 @@ class LocationRow extends DataClass implements Insertable<LocationRow> {
       urlKey: serializer.fromJson<String>(json['urlKey']),
       sourceLabel: serializer.fromJson<String>(json['sourceLabel']),
       sourceNumber: serializer.fromJson<double?>(json['sourceNumber']),
+      publishedAt: serializer.fromJson<DateTime?>(json['publishedAt']),
       discoveredAt: serializer.fromJson<DateTime>(json['discoveredAt']),
       discoveryBasis: serializer.fromJson<String>(json['discoveryBasis']),
       lifecycle: serializer.fromJson<String>(json['lifecycle']),
@@ -2983,6 +3031,7 @@ class LocationRow extends DataClass implements Insertable<LocationRow> {
       'urlKey': serializer.toJson<String>(urlKey),
       'sourceLabel': serializer.toJson<String>(sourceLabel),
       'sourceNumber': serializer.toJson<double?>(sourceNumber),
+      'publishedAt': serializer.toJson<DateTime?>(publishedAt),
       'discoveredAt': serializer.toJson<DateTime>(discoveredAt),
       'discoveryBasis': serializer.toJson<String>(discoveryBasis),
       'lifecycle': serializer.toJson<String>(lifecycle),
@@ -3000,6 +3049,7 @@ class LocationRow extends DataClass implements Insertable<LocationRow> {
     String? urlKey,
     String? sourceLabel,
     Value<double?> sourceNumber = const Value.absent(),
+    Value<DateTime?> publishedAt = const Value.absent(),
     DateTime? discoveredAt,
     String? discoveryBasis,
     String? lifecycle,
@@ -3014,6 +3064,7 @@ class LocationRow extends DataClass implements Insertable<LocationRow> {
     urlKey: urlKey ?? this.urlKey,
     sourceLabel: sourceLabel ?? this.sourceLabel,
     sourceNumber: sourceNumber.present ? sourceNumber.value : this.sourceNumber,
+    publishedAt: publishedAt.present ? publishedAt.value : this.publishedAt,
     discoveredAt: discoveredAt ?? this.discoveredAt,
     discoveryBasis: discoveryBasis ?? this.discoveryBasis,
     lifecycle: lifecycle ?? this.lifecycle,
@@ -3034,6 +3085,9 @@ class LocationRow extends DataClass implements Insertable<LocationRow> {
       sourceNumber: data.sourceNumber.present
           ? data.sourceNumber.value
           : this.sourceNumber,
+      publishedAt: data.publishedAt.present
+          ? data.publishedAt.value
+          : this.publishedAt,
       discoveredAt: data.discoveredAt.present
           ? data.discoveredAt.value
           : this.discoveredAt,
@@ -3057,6 +3111,7 @@ class LocationRow extends DataClass implements Insertable<LocationRow> {
           ..write('urlKey: $urlKey, ')
           ..write('sourceLabel: $sourceLabel, ')
           ..write('sourceNumber: $sourceNumber, ')
+          ..write('publishedAt: $publishedAt, ')
           ..write('discoveredAt: $discoveredAt, ')
           ..write('discoveryBasis: $discoveryBasis, ')
           ..write('lifecycle: $lifecycle, ')
@@ -3076,6 +3131,7 @@ class LocationRow extends DataClass implements Insertable<LocationRow> {
     urlKey,
     sourceLabel,
     sourceNumber,
+    publishedAt,
     discoveredAt,
     discoveryBasis,
     lifecycle,
@@ -3094,6 +3150,7 @@ class LocationRow extends DataClass implements Insertable<LocationRow> {
           other.urlKey == this.urlKey &&
           other.sourceLabel == this.sourceLabel &&
           other.sourceNumber == this.sourceNumber &&
+          other.publishedAt == this.publishedAt &&
           other.discoveredAt == this.discoveredAt &&
           other.discoveryBasis == this.discoveryBasis &&
           other.lifecycle == this.lifecycle &&
@@ -3110,6 +3167,7 @@ class LocationsCompanion extends UpdateCompanion<LocationRow> {
   final Value<String> urlKey;
   final Value<String> sourceLabel;
   final Value<double?> sourceNumber;
+  final Value<DateTime?> publishedAt;
   final Value<DateTime> discoveredAt;
   final Value<String> discoveryBasis;
   final Value<String> lifecycle;
@@ -3125,6 +3183,7 @@ class LocationsCompanion extends UpdateCompanion<LocationRow> {
     this.urlKey = const Value.absent(),
     this.sourceLabel = const Value.absent(),
     this.sourceNumber = const Value.absent(),
+    this.publishedAt = const Value.absent(),
     this.discoveredAt = const Value.absent(),
     this.discoveryBasis = const Value.absent(),
     this.lifecycle = const Value.absent(),
@@ -3141,6 +3200,7 @@ class LocationsCompanion extends UpdateCompanion<LocationRow> {
     required String urlKey,
     this.sourceLabel = const Value.absent(),
     this.sourceNumber = const Value.absent(),
+    this.publishedAt = const Value.absent(),
     required DateTime discoveredAt,
     this.discoveryBasis = const Value.absent(),
     this.lifecycle = const Value.absent(),
@@ -3162,6 +3222,7 @@ class LocationsCompanion extends UpdateCompanion<LocationRow> {
     Expression<String>? urlKey,
     Expression<String>? sourceLabel,
     Expression<double>? sourceNumber,
+    Expression<DateTime>? publishedAt,
     Expression<DateTime>? discoveredAt,
     Expression<String>? discoveryBasis,
     Expression<String>? lifecycle,
@@ -3178,6 +3239,7 @@ class LocationsCompanion extends UpdateCompanion<LocationRow> {
       if (urlKey != null) 'url_key': urlKey,
       if (sourceLabel != null) 'source_label': sourceLabel,
       if (sourceNumber != null) 'source_number': sourceNumber,
+      if (publishedAt != null) 'published_at': publishedAt,
       if (discoveredAt != null) 'discovered_at': discoveredAt,
       if (discoveryBasis != null) 'discovery_basis': discoveryBasis,
       if (lifecycle != null) 'lifecycle': lifecycle,
@@ -3196,6 +3258,7 @@ class LocationsCompanion extends UpdateCompanion<LocationRow> {
     Value<String>? urlKey,
     Value<String>? sourceLabel,
     Value<double?>? sourceNumber,
+    Value<DateTime?>? publishedAt,
     Value<DateTime>? discoveredAt,
     Value<String>? discoveryBasis,
     Value<String>? lifecycle,
@@ -3212,6 +3275,7 @@ class LocationsCompanion extends UpdateCompanion<LocationRow> {
       urlKey: urlKey ?? this.urlKey,
       sourceLabel: sourceLabel ?? this.sourceLabel,
       sourceNumber: sourceNumber ?? this.sourceNumber,
+      publishedAt: publishedAt ?? this.publishedAt,
       discoveredAt: discoveredAt ?? this.discoveredAt,
       discoveryBasis: discoveryBasis ?? this.discoveryBasis,
       lifecycle: lifecycle ?? this.lifecycle,
@@ -3248,6 +3312,9 @@ class LocationsCompanion extends UpdateCompanion<LocationRow> {
     if (sourceNumber.present) {
       map['source_number'] = Variable<double>(sourceNumber.value);
     }
+    if (publishedAt.present) {
+      map['published_at'] = Variable<DateTime>(publishedAt.value);
+    }
     if (discoveredAt.present) {
       map['discovered_at'] = Variable<DateTime>(discoveredAt.value);
     }
@@ -3280,6 +3347,7 @@ class LocationsCompanion extends UpdateCompanion<LocationRow> {
           ..write('urlKey: $urlKey, ')
           ..write('sourceLabel: $sourceLabel, ')
           ..write('sourceNumber: $sourceNumber, ')
+          ..write('publishedAt: $publishedAt, ')
           ..write('discoveredAt: $discoveredAt, ')
           ..write('discoveryBasis: $discoveryBasis, ')
           ..write('lifecycle: $lifecycle, ')
@@ -11333,6 +11401,7 @@ typedef $$LocationsTableCreateCompanionBuilder =
       required String urlKey,
       Value<String> sourceLabel,
       Value<double?> sourceNumber,
+      Value<DateTime?> publishedAt,
       required DateTime discoveredAt,
       Value<String> discoveryBasis,
       Value<String> lifecycle,
@@ -11350,6 +11419,7 @@ typedef $$LocationsTableUpdateCompanionBuilder =
       Value<String> urlKey,
       Value<String> sourceLabel,
       Value<double?> sourceNumber,
+      Value<DateTime?> publishedAt,
       Value<DateTime> discoveredAt,
       Value<String> discoveryBasis,
       Value<String> lifecycle,
@@ -11404,6 +11474,11 @@ class $$LocationsTableFilterComposer
 
   ColumnFilters<double> get sourceNumber => $composableBuilder(
     column: $table.sourceNumber,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<DateTime> get publishedAt => $composableBuilder(
+    column: $table.publishedAt,
     builder: (column) => ColumnFilters(column),
   );
 
@@ -11482,6 +11557,11 @@ class $$LocationsTableOrderingComposer
     builder: (column) => ColumnOrderings(column),
   );
 
+  ColumnOrderings<DateTime> get publishedAt => $composableBuilder(
+    column: $table.publishedAt,
+    builder: (column) => ColumnOrderings(column),
+  );
+
   ColumnOrderings<DateTime> get discoveredAt => $composableBuilder(
     column: $table.discoveredAt,
     builder: (column) => ColumnOrderings(column),
@@ -11545,6 +11625,11 @@ class $$LocationsTableAnnotationComposer
     builder: (column) => column,
   );
 
+  GeneratedColumn<DateTime> get publishedAt => $composableBuilder(
+    column: $table.publishedAt,
+    builder: (column) => column,
+  );
+
   GeneratedColumn<DateTime> get discoveredAt => $composableBuilder(
     column: $table.discoveredAt,
     builder: (column) => column,
@@ -11604,6 +11689,7 @@ class $$LocationsTableTableManager
                 Value<String> urlKey = const Value.absent(),
                 Value<String> sourceLabel = const Value.absent(),
                 Value<double?> sourceNumber = const Value.absent(),
+                Value<DateTime?> publishedAt = const Value.absent(),
                 Value<DateTime> discoveredAt = const Value.absent(),
                 Value<String> discoveryBasis = const Value.absent(),
                 Value<String> lifecycle = const Value.absent(),
@@ -11619,6 +11705,7 @@ class $$LocationsTableTableManager
                 urlKey: urlKey,
                 sourceLabel: sourceLabel,
                 sourceNumber: sourceNumber,
+                publishedAt: publishedAt,
                 discoveredAt: discoveredAt,
                 discoveryBasis: discoveryBasis,
                 lifecycle: lifecycle,
@@ -11636,6 +11723,7 @@ class $$LocationsTableTableManager
                 required String urlKey,
                 Value<String> sourceLabel = const Value.absent(),
                 Value<double?> sourceNumber = const Value.absent(),
+                Value<DateTime?> publishedAt = const Value.absent(),
                 required DateTime discoveredAt,
                 Value<String> discoveryBasis = const Value.absent(),
                 Value<String> lifecycle = const Value.absent(),
@@ -11651,6 +11739,7 @@ class $$LocationsTableTableManager
                 urlKey: urlKey,
                 sourceLabel: sourceLabel,
                 sourceNumber: sourceNumber,
+                publishedAt: publishedAt,
                 discoveredAt: discoveredAt,
                 discoveryBasis: discoveryBasis,
                 lifecycle: lifecycle,

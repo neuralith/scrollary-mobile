@@ -40,6 +40,8 @@ import '../sync/scheduler.dart';
 import '../sync/session.dart';
 import '../sync/transport.dart';
 import '../data/measurement_repository.dart';
+import '../reading_v2/next_entry.dart';
+import '../reading_v2/source_completion.dart';
 import '../reading_v2/source_reading.dart';
 import 'check_controller.dart';
 import 'v2_save_flow.dart' show V2AssistController;
@@ -94,6 +96,22 @@ class V2Services {
   /// build the same thing to hand it back.
   late final SourceReadingMeter sourceReading = SourceReadingMeter(
     MeasurementRepository(library),
+  );
+
+  /// What reading on to the next Entry **at its Source** says about the one
+  /// just left (`lib/reading_v2/source_completion.dart`).
+  ///
+  /// Derived for the same reason [sourceReading] is: it is the repositories
+  /// this object already holds, plus the one resolver that answers what
+  /// follows an Entry — the same one the reader asks.
+  late final SourceForwardCompletion sourceCompletion = SourceForwardCompletion(
+    entries: ui.entries,
+    reading: ui.reading,
+    nextEntry: NextEntryResolver(
+      entries: ui.entries,
+      collections: ui.collections,
+      offlineCopies: ui.offline,
+    ),
   );
 
   /// Set by the app root once its router exists; consumed by the
@@ -438,6 +456,10 @@ Future<void> recordCompletedVisit(
   // history has no Entry to be a fraction of (I11).
   final location = result is RecognisedLocation ? result : null;
   final sourceId = location?.location.sourceId;
+  // The visit being left, read **before** the meter is pointed at the new
+  // page: a visit is only knowable while it is still the current one, and the
+  // page it was of is already gone.
+  final leaving = v2.sourceReading.visit;
   if (location != null && sourceId != null) {
     v2.sourceReading.watch(
       entryId: location.entry.id,
@@ -446,6 +468,15 @@ Future<void> recordCompletedVisit(
     );
   } else {
     v2.sourceReading.clear();
+  }
+  // Reading on to the next Entry, at its Source. A corroborating signal and
+  // never the signal on its own — the service refuses everything that is not
+  // a finished reading at a natural pace onto the Collection's own next Entry.
+  if (location != null) {
+    await v2.sourceCompletion.arrivedAt(
+      entryId: location.entry.id,
+      leaving: leaving,
+    );
   }
   if (await v2.recogniser.recordAccess(result) != null) return;
   await v2.history.recordVisit(

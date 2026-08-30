@@ -821,6 +821,17 @@ window.__wr = window.__wr || (function () {
         out.links = as.slice(0, 500).map(function (a) {
           return linkInfo(a, m.originY);
         });
+        // Controls that carry no address of their own. Measured, never judged:
+        // whether any of them looks like a next-entry control is
+        // `save/next_page.dart`'s, against the same text hints it uses for
+        // links. What they answer is the one question a page of links cannot:
+        // whether "no next link" means the sequence ended or means the site
+        // publishes its Next as a script-driven button.
+        var ctrls = Array.prototype.slice.call(document.querySelectorAll(
+          'button, [role="button"], a:not([href])'));
+        out.controls = ctrls.slice(0, 200).map(function (c) {
+          return linkInfo(c, m.originY);
+        });
         out.pageHints = pageHints();
       }
       return out;
@@ -1012,78 +1023,164 @@ window.__wr = window.__wr || (function () {
       return out;
     },
 
-    // Score every link against a saved locator's independent signals and
-    // return the best, or null when nothing scores well enough.
-    applyLocator: function (loc) {
+    // Score one element against a saved locator's independent signals.
+    //
+    // Every signal is independent and additive, which is the whole point of a
+    // redundant locator: a site that renames its classes still matches on the
+    // label, and one that rewrites its labels still matches on the selector.
+    scoreForLocator: function (el, loc, pattern) {
+      var score = 0, why = [];
+
+      if (loc.rel && (el.getAttribute('rel') || '').toLowerCase().indexOf(loc.rel) >= 0) {
+        score += 5; why.push('rel');
+      }
+      if (loc.cssSelector) {
+        try { if (el.matches(loc.cssSelector)) { score += 4; why.push('selector'); } } catch (e) {}
+      }
+      if (pattern && el.href) {
+        try {
+          var path = new URL(el.href, document.baseURI).pathname;
+          if (pattern.test(path)) { score += 4; why.push('hrefPattern'); }
+        } catch (e) {}
+      }
+      if (loc.linkText) {
+        // Both readings are compared, because a hint the user taught before
+        // `elementText` existed holds the glued text this element no longer
+        // produces. Nothing is rewritten on disk to fix that: the stored hint
+        // is the user's, and the second comparison is what keeps it working.
+        var want = loc.linkText.toLowerCase();
+        var t = elementText(el).toLowerCase();
+        var legacy = (el.textContent || '').replace(/\s+/g, ' ').trim().toLowerCase();
+        if ((t && t === want) || (legacy && legacy === want)) {
+          score += 3; why.push('text');
+        } else if (loc.activate) {
+          // A control that prints the number it leads to — "Next · Ch. 42" —
+          // never matches itself again on the page after it. The digits are
+          // the part that is *supposed* to change, so they are generalised
+          // away and the rest of the label still identifies the control. Worth
+          // less than an exact match, and only for a rule that is pressed:
+          // a link has its href shape for this.
+          var blur = function (v) { return v.replace(/\d+/g, '#'); };
+          if (t && blur(t) === blur(want)) { score += 2; why.push('text~'); }
+        }
+      }
+      if (loc.ariaLabel) {
+        var al = (el.getAttribute('aria-label') || '').trim().toLowerCase();
+        if (al && al === loc.ariaLabel.toLowerCase()) { score += 3; why.push('aria'); }
+      }
+      if (loc.titleAttr) {
+        var ti = (el.getAttribute('title') || '').trim().toLowerCase();
+        if (ti && ti === loc.titleAttr.toLowerCase()) { score += 2; why.push('title'); }
+      }
+      if (loc.imgAlt) {
+        var im = el.querySelector('img');
+        if (im && (im.alt || '').trim().toLowerCase() === loc.imgAlt.toLowerCase()) {
+          score += 2; why.push('imgAlt');
+        }
+      }
+      if (loc.containerSelector) {
+        try {
+          if (el.closest(loc.containerSelector)) { score += 2; why.push('container'); }
+        } catch (e) {}
+      }
+      return { score: score, why: why };
+    },
+
+    // The best element for a saved locator, and whether anything tied with it.
+    //
+    // Which elements are even considered is the one thing `activate` changes:
+    // a rule that is *followed* can only ever mean an `a[href]`, and a rule
+    // that is *pressed* is by definition on something that has no href — a
+    // button, a role=button, an anchor the page handles itself.
+    bestForLocator: function (loc) {
       loc = loc || {};
-      var links = Array.prototype.slice.call(document.querySelectorAll('a[href]'));
-      var best = null, bestScore = 0, hits = 0, bestWhy = [];
+      var els = Array.prototype.slice.call(document.querySelectorAll(
+        loc.activate ? 'a, button, [role="button"]' : 'a[href]'));
       var pattern = null;
       if (loc.hrefPattern) {
         try { pattern = new RegExp(loc.hrefPattern); } catch (e) { pattern = null; }
       }
 
-      for (var i = 0; i < links.length; i++) {
-        var a = links[i];
-        var score = 0, why = [];
-
-        if (loc.rel && (a.getAttribute('rel') || '').toLowerCase().indexOf(loc.rel) >= 0) {
-          score += 5; why.push('rel');
-        }
-        if (loc.cssSelector) {
-          try { if (a.matches(loc.cssSelector)) { score += 4; why.push('selector'); } } catch (e) {}
-        }
-        if (pattern) {
-          try {
-            var path = new URL(a.href, document.baseURI).pathname;
-            if (pattern.test(path)) { score += 4; why.push('hrefPattern'); }
-          } catch (e) {}
-        }
-        if (loc.linkText) {
-          // Both readings are compared, because a hint the user taught before
-          // `elementText` existed holds the glued text this element no longer
-          // produces. Nothing is rewritten on disk to fix that: the stored hint
-          // is the user's, and the second comparison is what keeps it working.
-          var want = loc.linkText.toLowerCase();
-          var t = elementText(a).toLowerCase();
-          var legacy = (a.textContent || '').replace(/\s+/g, ' ').trim().toLowerCase();
-          if ((t && t === want) || (legacy && legacy === want)) {
-            score += 3; why.push('text');
-          }
-        }
-        if (loc.ariaLabel) {
-          var al = (a.getAttribute('aria-label') || '').trim().toLowerCase();
-          if (al && al === loc.ariaLabel.toLowerCase()) { score += 3; why.push('aria'); }
-        }
-        if (loc.titleAttr) {
-          var ti = (a.getAttribute('title') || '').trim().toLowerCase();
-          if (ti && ti === loc.titleAttr.toLowerCase()) { score += 2; why.push('title'); }
-        }
-        if (loc.imgAlt) {
-          var im = a.querySelector('img');
-          if (im && (im.alt || '').trim().toLowerCase() === loc.imgAlt.toLowerCase()) {
-            score += 2; why.push('imgAlt');
-          }
-        }
-        if (loc.containerSelector) {
-          try {
-            if (a.closest(loc.containerSelector)) { score += 2; why.push('container'); }
-          } catch (e) {}
-        }
-
-        if (score > bestScore) { bestScore = score; best = a; hits = 1; bestWhy = why; }
-        else if (score === bestScore && score > 0) { hits++; }
+      var best = null, bestScore = 0, hits = 0, bestWhy = [];
+      for (var i = 0; i < els.length; i++) {
+        var r = this.scoreForLocator(els[i], loc, pattern);
+        if (r.score > bestScore) { bestScore = r.score; best = els[i]; hits = 1; bestWhy = r.why; }
+        else if (r.score === bestScore && r.score > 0) { hits++; }
       }
-      if (!best || bestScore < 4) {
-        return { ok: false, score: bestScore, reason: 'no element matched the saved rule' };
+      return { best: best, score: bestScore, hits: hits, why: bestWhy };
+    },
+
+    // Resolve a saved locator to the address it leads to, or report why not.
+    applyLocator: function (loc) {
+      var r = this.bestForLocator(loc);
+      if (!r.best || r.score < 4) {
+        return { ok: false, score: r.score, reason: 'no element matched the saved rule' };
       }
       return {
         ok: true,
-        href: best.href,
-        score: bestScore,
-        ambiguous: hits > 1,
-        matched: bestWhy.join('+')
+        href: r.best.href || '',
+        score: r.score,
+        ambiguous: r.hits > 1,
+        matched: r.why.join('+'),
+        activate: !!(loc || {}).activate
       };
+    },
+
+    // Press the control a saved locator describes, and report where the page
+    // was before it did.
+    //
+    // The one place this script makes a page navigate itself, and it exists
+    // because a client-routed reader publishes its next chapter nowhere else.
+    // Three refusals guard it, and all three are refusals rather than
+    // best-efforts:
+    //
+    // * nothing matched well enough — the rule has stopped describing this
+    //   page, and pressing the closest thing to it is how a run ends up in a
+    //   site's comment box;
+    // * **more than one element tied** — Prev and Next are siblings that share
+    //   a class, so an ambiguous match is as likely to walk backwards as
+    //   forwards. A link rule may report ambiguity and carry on because the
+    //   address it produces is checked afterwards; a press has no address to
+    //   check until it has already happened;
+    // * the element is not on this document — an ad in a cross-origin frame is
+    //   not reachable from here at all, which is the property being relied on.
+    //
+    // Where it landed is never assumed: the caller watches the address itself.
+    activateLocator: function (loc) {
+      var r = this.bestForLocator(loc);
+      if (!r.best || r.score < 4) {
+        return { ok: false, score: r.score, reason: 'no control matched the saved rule' };
+      }
+      if (r.hits > 1) {
+        return {
+          ok: false,
+          score: r.score,
+          reason: 'the saved rule matched more than one control, so pressing '
+                + 'one of them could go backwards'
+        };
+      }
+      // A control the site has switched off is the site saying there is
+      // nothing after this page. That is the end of the chain, and it is a
+      // different answer from a control that was pressed and did nothing —
+      // reporting the last entry of a collection as "it went in a circle"
+      // tells the user something went wrong when nothing did.
+      if (r.best.disabled === true ||
+          (r.best.getAttribute('aria-disabled') || '') === 'true') {
+        return {
+          ok: false,
+          atEnd: true,
+          score: r.score,
+          reason: 'the next control is switched off, so this is the last one'
+        };
+      }
+      var before = location.href;
+      try { r.best.scrollIntoView({ block: 'center' }); } catch (e) {}
+      try {
+        r.best.click();
+      } catch (e) {
+        return { ok: false, reason: 'the control could not be pressed' };
+      }
+      return { ok: true, before: before, score: r.score, matched: r.why.join('+') };
     },
 
     // Images inside a user-selected reader container.
@@ -1176,6 +1273,8 @@ const String kCallFetchBase64 = 'return await window.__wr.fetchAsBase64(url);';
 const String kCallStartSelection = 'return window.__wr.startSelection(mode);';
 const String kCallStopSelection = 'return window.__wr.stopSelection();';
 const String kCallApplyLocator = 'return window.__wr.applyLocator(locator);';
+const String kCallActivateLocator =
+    'return window.__wr.activateLocator(locator);';
 const String kCallApplyReaderRule = 'return window.__wr.applyReaderRule(rule);';
 const String kCallExtractDocument =
     'return window.__wr.extractDocument({blockCap: blockCap});';

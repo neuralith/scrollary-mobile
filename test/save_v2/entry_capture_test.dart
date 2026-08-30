@@ -461,6 +461,91 @@ void main() {
     });
   });
 
+  group('the publish date a capture read', () {
+    test('reaches the Location, not just the manifest', () async {
+      final seeded = await h.repos.seedLibrary();
+      final published = DateTime.utc(2026, 2, 9);
+      final result = await h
+          .captureWith(FakePageCaptureSource.images(publishedAt: published))
+          .capture(
+            entryId: seeded.entry.id,
+            locationUrl: seeded.location.url,
+            locationId: seeded.location.id,
+            captureMode: null,
+          );
+
+      expect(result.status, EntryCaptureStatus.captured);
+      expect(
+        result.manifest!.publishedAt!.isAtSameMomentAs(published),
+        isTrue,
+        reason: 'the manifest still carries it, exactly as before',
+      );
+      final location = await h.repos.entries.locationById(seeded.location.id);
+      expect(
+        location!.publishedAt!.isAtSameMomentAs(published),
+        isTrue,
+        reason:
+            'and library state carries it too, so a Collection can be ordered '
+            'by it without opening files',
+      );
+    });
+
+    test('a site that prints no date leaves the column alone', () async {
+      final seeded = await h.repos.seedLibrary();
+      final result = await h
+          .captureWith(FakePageCaptureSource.images())
+          .capture(
+            entryId: seeded.entry.id,
+            locationUrl: seeded.location.url,
+            locationId: seeded.location.id,
+            captureMode: null,
+          );
+
+      expect(result.status, EntryCaptureStatus.captured);
+      final location = await h.repos.entries.locationById(seeded.location.id);
+      expect(location!.publishedAt, isNull);
+    });
+
+    test('a capture with no Location to attach it to still succeeds', () async {
+      final seeded = await h.repos.seedLibrary();
+      final result = await h
+          .captureWith(
+            FakePageCaptureSource.images(publishedAt: DateTime.utc(2026, 2, 9)),
+          )
+          .capture(
+            entryId: seeded.entry.id,
+            locationUrl: seeded.location.url,
+            captureMode: null,
+          );
+
+      expect(
+        result.status,
+        EntryCaptureStatus.captured,
+        reason:
+            'ordering is not a reason to fail a download that has already '
+            'committed its bytes',
+      );
+      final location = await h.repos.entries.locationById(seeded.location.id);
+      expect(location!.publishedAt, isNull);
+    });
+
+    test('a failed capture writes no date', () async {
+      final seeded = await h.repos.seedLibrary();
+      final result = await h
+          .captureWith(FakePageCaptureSource.failing('the page never loaded'))
+          .capture(
+            entryId: seeded.entry.id,
+            locationUrl: seeded.location.url,
+            locationId: seeded.location.id,
+            captureMode: null,
+          );
+
+      expect(result.status, EntryCaptureStatus.failed);
+      final location = await h.repos.entries.locationById(seeded.location.id);
+      expect(location!.publishedAt, isNull);
+    });
+  });
+
   group('provenance resolution', () {
     test('reads the Source through the Location, and the name through the '
         'Collection', () async {

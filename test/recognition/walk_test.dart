@@ -340,6 +340,177 @@ void main() {
     );
   });
 
+  // ─── going in a circle ────────────────────────────────────────────────
+  //
+  // The failure these cover was found on a real reader: a client-routed site
+  // answered every next address with the page the walk was already on. Nothing
+  // upstream noticed — each address was new, each read succeeded — and the walk
+  // resolved the same Entry over and over and handed it to `onEntry` every
+  // time, which on a capturing walk is the same download repeated until a
+  // ceiling stopped it.
+
+  test('a next address that lands back on the same page stops the walk '
+      'instead of resolving that page again', () async {
+    final it = await library(held: [101]);
+    final one = partUrl(kHostA, '101');
+    final two = partUrl(kHostA, '102');
+    // Both addresses answer with part 101, which goes on naming 102 as next.
+    final alwaysPartOne = WalkedPage(
+      url: one,
+      printedNumber: 101,
+      title: 'Part 101',
+      nextUrl: two,
+    );
+    final pages = FakeForwardPages({
+      normalizeUrl(one): alwaysPartOne,
+      normalizeUrl(two): alwaysPartOne,
+    });
+
+    final captured = <String>[];
+    final outcome = await walkOver(pages).forward(
+      fromLocationId: it.from.id,
+      wanted: 20,
+      shouldContinue: alwaysContinue,
+      onEntry: (entry) async {
+        captured.add(entry.url);
+        return true;
+      },
+    );
+
+    expect(outcome.stop, WalkStop.noForwardProgress);
+    expect(
+      outcome.endedNaturally,
+      isFalse,
+      reason:
+          'going in a circle is not the same answer as "there were only '
+          'six" — the user is told the walk stopped, not that the source ran '
+          'out',
+    );
+    expect(
+      captured,
+      isEmpty,
+      reason:
+          'the entry the walk started on is what the count counts from, '
+          'and it is never handed over a second time',
+    );
+    expect(outcome.pagesRead, 2, reason: 'one read, one repeat, then stop');
+    expect(
+      [for (final e in await entriesOf(it.collection)) e.ordinal],
+      [101],
+      reason: 'and nothing was written for the page it went round to',
+    );
+  });
+
+  test('a walk that keeps moving is untouched by the progress guard', () async {
+    final it = await library(held: [101]);
+    final pages = FakeForwardPages.chain(host: kHostA, parts: [101, 102, 103]);
+
+    final outcome = await walkOver(pages).forward(
+      fromLocationId: it.from.id,
+      wanted: 5,
+      shouldContinue: alwaysContinue,
+    );
+
+    expect(outcome.stop, WalkStop.endOfSource);
+    expect([for (final e in outcome.entries) e.printedNumber], [102, 103]);
+  });
+
+  // ─── a next address that only exists once the control is pressed ──────
+
+  test('a page whose next address is resolved after it was read carries the '
+      'walk on', () async {
+    final it = await library(held: [101]);
+    final pages = FakeForwardPages({
+      normalizeUrl(partUrl(kHostA, '101')): WalkedPage(
+        url: partUrl(kHostA, '101'),
+        printedNumber: 101,
+        title: 'Part 101',
+        resolveNext: () async => NextStep.address(partUrl(kHostA, '102')),
+      ),
+      normalizeUrl(partUrl(kHostA, '102')): WalkedPage(
+        url: partUrl(kHostA, '102'),
+        printedNumber: 102,
+        title: 'Part 102',
+      ),
+    });
+
+    final order = <String>[];
+    final outcome = await walkOver(pages).forward(
+      fromLocationId: it.from.id,
+      wanted: 5,
+      shouldContinue: alwaysContinue,
+      onEntry: (entry) async {
+        order.add('captured ${entry.printedNumber}');
+        return true;
+      },
+    );
+
+    expect(outcome.stop, WalkStop.endOfSource);
+    expect([for (final e in outcome.entries) e.printedNumber], [102]);
+    expect(order, ['captured 102.0']);
+  });
+
+  test('the deferred resolution is asked only after the entry on that page '
+      'has been captured', () async {
+    // The ordering the whole seam exists for: pressing the control moves the
+    // browser off the page, so it must not happen while the capture is still
+    // reading it.
+    final it = await library(held: [101]);
+    final order = <String>[];
+    final pages = FakeForwardPages({
+      normalizeUrl(partUrl(kHostA, '101')): WalkedPage(
+        url: partUrl(kHostA, '101'),
+        printedNumber: 101,
+        title: 'Part 101',
+        nextUrl: partUrl(kHostA, '102'),
+      ),
+      normalizeUrl(partUrl(kHostA, '102')): WalkedPage(
+        url: partUrl(kHostA, '102'),
+        printedNumber: 102,
+        title: 'Part 102',
+        resolveNext: () async {
+          order.add('pressed');
+          return const NextStep.endOfSource();
+        },
+      ),
+    });
+
+    await walkOver(pages).forward(
+      fromLocationId: it.from.id,
+      wanted: 5,
+      shouldContinue: alwaysContinue,
+      onEntry: (entry) async {
+        order.add('captured ${entry.printedNumber}');
+        return true;
+      },
+    );
+
+    expect(order, ['captured 102.0', 'pressed']);
+  });
+
+  test('a control that leads nowhere ends the walk as a failure to move, not '
+      'as the end of the source', () async {
+    final it = await library(held: [101]);
+    final pages = FakeForwardPages({
+      normalizeUrl(partUrl(kHostA, '101')): WalkedPage(
+        url: partUrl(kHostA, '101'),
+        printedNumber: 101,
+        title: 'Part 101',
+        resolveNext: () async =>
+            const NextStep.ended(WalkStop.noForwardProgress),
+      ),
+    });
+
+    final outcome = await walkOver(pages).forward(
+      fromLocationId: it.from.id,
+      wanted: 5,
+      shouldContinue: alwaysContinue,
+    );
+
+    expect(outcome.stop, WalkStop.noForwardProgress);
+    expect(outcome.endedNaturally, isFalse);
+  });
+
   test('a next control only the user can identify is a stop, not a '
       'guess', () async {
     final it = await library(held: [101]);

@@ -29,13 +29,52 @@ PageProbe page({
   required int viewport,
   required int scrollY,
   String url = 'https://alpha.example/works/quiet-harbour/part-1',
+  List<PageImage> images = const [],
+  bool imagesTruncated = false,
 }) => PageProbe(
   url: url,
   title: '',
   documentHeight: document,
   viewportHeight: viewport,
   scrollY: scrollY,
+  images: images,
+  imagesTruncated: imagesTruncated,
 );
+
+/// One content image, as the bridge reports one: an intrinsic size, and a
+/// laid-out box at a place in the document.
+///
+/// [renderedHeight] is deliberately separate from the intrinsic height —
+/// that difference is what a band is built from, and getting it wrong is
+/// exactly the mistake the band code exists not to make.
+PageImage panel({
+  required int index,
+  required int top,
+  int renderedHeight = 1500,
+  int width = 800,
+  int height = 1200,
+  bool hidden = false,
+  bool chrome = false,
+}) => PageImage(
+  domIndex: index,
+  src: 'https://alpha.example/img/$index.png',
+  complete: true,
+  naturalWidth: width,
+  naturalHeight: height,
+  renderedWidth: width,
+  renderedHeight: renderedHeight,
+  documentTop: top,
+  hidden: hidden,
+  inPageChrome: chrome,
+);
+
+/// A vertical strip of [count] panels, the shape an image-based Entry has:
+/// one under the next, all the same width, ending well before the document
+/// does because the site goes on with comments and a footer.
+List<PageImage> strip({int count = 6, int from = 500, int pitch = 1500}) => [
+  for (var i = 0; i < count; i++)
+    panel(index: i, top: from + i * pitch, renderedHeight: pitch),
+];
 
 void main() {
   group('what a page reports about its own geometry', () {
@@ -73,6 +112,141 @@ void main() {
       expect(
         sourceReadingFraction(page(document: 0, viewport: 0, scrollY: 0)),
         isNull,
+      );
+    });
+  });
+
+  group('the readable region of an image-based page', () {
+    // Six panels, 1500 tall, starting 500 down: the entry ends at 9500 and
+    // the site goes on for another 2500 of comments and footer.
+    final panels = strip();
+
+    PageProbe imagePage(int scrollY) =>
+        page(document: 12000, viewport: 1000, scrollY: scrollY, images: panels);
+
+    test('the band is the panels, not the document', () {
+      final band = imageContentBand(imagePage(0));
+      expect(band, isNotNull);
+      expect(band!.top, 500);
+      expect(band.bottom, 9500);
+      expect(band.imageCount, 6);
+    });
+
+    test('reaching the end of the content is 100%, whatever the site puts '
+        'after it', () {
+      // The bottom of the viewport is level with the bottom of the last
+      // panel. There are 2500 pixels of page left and none of them are the
+      // entry.
+      expect(sourceReadingFraction(imagePage(8500)), 1);
+      expect(
+        (8500 + 1000) / 12000,
+        closeTo(0.79, 0.01),
+        reason: 'what measuring the document would have claimed instead',
+      );
+    });
+
+    test('the band is measured from, not just to', () {
+      // 4000 down: 4500 of the 9000-pixel band is behind the viewport bottom.
+      expect(sourceReadingFraction(imagePage(4000)), 0.5);
+    });
+
+    test('the top of the page is 0%, never a share of the header', () {
+      expect(sourceReadingFraction(imagePage(0)), closeTo(0.0556, 0.001));
+    });
+
+    test('a page the probe could not enumerate has no knowable end', () {
+      expect(
+        imageContentBand(
+          page(
+            document: 12000,
+            viewport: 1000,
+            scrollY: 0,
+            images: panels,
+            imagesTruncated: true,
+          ),
+        ),
+        isNull,
+        reason:
+            'the last image seen is not known to be the last image there is',
+      );
+    });
+
+    test('a panel with no laid-out box yet establishes nothing', () {
+      final unplaced = [
+        ...strip(count: 5),
+        panel(index: 5, top: 8000, renderedHeight: 0),
+      ];
+      expect(
+        imageContentBand(
+          page(document: 12000, viewport: 1000, scrollY: 0, images: unplaced),
+        ),
+        isNull,
+      );
+    });
+
+    test('a grid is not a reading order', () {
+      // Two columns: every pair shares a top, so no image follows another.
+      final grid = [
+        for (var row = 0; row < 4; row++) ...[
+          panel(index: row * 2, top: 500 + row * 1500, renderedHeight: 1400),
+          panel(
+            index: row * 2 + 1,
+            top: 500 + row * 1500,
+            renderedHeight: 1400,
+          ),
+        ],
+      ];
+      expect(
+        imageContentBand(
+          page(document: 12000, viewport: 1000, scrollY: 0, images: grid),
+        ),
+        isNull,
+      );
+    });
+
+    test('two photographs a long way apart are not a band', () {
+      final scattered = [
+        panel(index: 0, top: 500, renderedHeight: 600),
+        panel(index: 1, top: 4000, renderedHeight: 600),
+        panel(index: 2, top: 8000, renderedHeight: 600),
+      ];
+      expect(
+        imageContentBand(
+          page(document: 12000, viewport: 1000, scrollY: 0, images: scattered),
+        ),
+        isNull,
+        reason: 'the region is mostly not image, so it is not the content',
+      );
+    });
+
+    test('too few images to show a pattern falls back to the document', () {
+      final two = strip(count: 2);
+      expect(
+        imageContentBand(
+          page(document: 12000, viewport: 1000, scrollY: 0, images: two),
+        ),
+        isNull,
+      );
+      expect(
+        sourceReadingFraction(
+          page(document: 12000, viewport: 1000, scrollY: 5000, images: two),
+        ),
+        0.5,
+        reason: 'the whole document, exactly as before',
+      );
+    });
+
+    test('page chrome is not the entry', () {
+      final withChrome = [
+        panel(index: 99, top: 0, renderedHeight: 1500, chrome: true),
+        ...strip(),
+      ];
+      expect(imageContentBand(imagePage(0))!.top, 500);
+      expect(
+        imageContentBand(
+          page(document: 12000, viewport: 1000, scrollY: 0, images: withChrome),
+        )!.top,
+        500,
       );
     });
   });
@@ -175,6 +349,81 @@ void main() {
         isNull,
       );
       expect(await measurements.of(it.entryId, it.sourceId), isNull);
+    });
+
+    test('a scroll performed for a download is not a reading', () async {
+      final it = await reading();
+      meter.watch(entryId: it.entryId, sourceId: it.sourceId, url: it.url);
+      await meter.record(
+        page(document: 4000, viewport: 1000, scrollY: 500, url: it.url),
+      );
+
+      // A capture takes the Browser and scrolls the page to the bottom to
+      // enumerate it, then leaves it there.
+      meter.noteAutomationScroll();
+
+      expect(
+        await meter.record(
+          page(document: 4000, viewport: 1000, scrollY: 3000, url: it.url),
+        ),
+        isNull,
+      );
+      expect(
+        (await measurements.of(it.entryId, it.sourceId))?.fraction,
+        0.375,
+        reason:
+            'the reading stands where the reader left it — downloading an '
+            'Entry must never be what marks it read',
+      );
+    });
+
+    test('the seal lifts when the reader moves the page themselves', () async {
+      final it = await reading();
+      meter.watch(entryId: it.entryId, sourceId: it.sourceId, url: it.url);
+      meter.noteAutomationScroll();
+      meter.noteUserScroll();
+
+      expect(
+        await meter.record(
+          page(document: 4000, viewport: 1000, scrollY: 1000, url: it.url),
+        ),
+        0.5,
+      );
+    });
+
+    test('watching another page starts a visit that knows nothing', () async {
+      final it = await reading();
+      meter.watch(entryId: it.entryId, sourceId: it.sourceId, url: it.url);
+      meter.noteAutomationScroll();
+      meter.noteUserScroll();
+      meter.noteUserScroll();
+      expect(meter.visit!.scrollEvents, 2);
+
+      meter.watch(entryId: it.entryId, sourceId: it.sourceId, url: it.url);
+      final fresh = meter.visit!;
+      expect(fresh.scrollEvents, 0);
+      expect(fresh.fraction, isNull);
+      expect(fresh.automationMoved, isFalse);
+      expect(fresh.viewportsCovered, 0);
+    });
+
+    test('a visit carries how much reading it represents', () async {
+      final it = await reading();
+      meter.watch(entryId: it.entryId, sourceId: it.sourceId, url: it.url);
+      // Six panels of 1500 over a 1000 viewport: nine screens of content, read
+      // to the end.
+      await meter.record(
+        page(
+          document: 12000,
+          viewport: 1000,
+          scrollY: 8500,
+          url: it.url,
+          images: strip(),
+        ),
+      );
+      final visit = meter.visit!;
+      expect(visit.fraction, 1);
+      expect(visit.viewportsCovered, 9);
     });
 
     test('an unrecognised page has no entry to be a fraction of', () async {

@@ -360,6 +360,48 @@ class EntryRepository {
     });
   }
 
+  /// Records the publish date a reading of this address established.
+  ///
+  /// Its own writer rather than another parameter on [updateLocationEvidence],
+  /// because that method's contract is that **everything it names goes to the
+  /// outbox** — the `fields` map and the columns are built from the same
+  /// arguments so the two cannot drift apart. `published_at` is not in
+  /// `contracts/evidence.yaml`, so it cannot go there, and adding a silent
+  /// exception inside that method is how the guarantee would quietly stop
+  /// being true.
+  ///
+  /// Local-only, and the precedent is [retractLocation] directly below: a
+  /// Location write that stays on this device. Two consequences worth stating:
+  ///
+  /// * **`updated_at` is not touched.** It is the row's last-writer-wins clock
+  ///   (V2-D6), and moving it for a field that never syncs would let this
+  ///   device's row beat a legitimate remote update and discard it.
+  /// * **It never clears.** [publishedAt] is non-null by signature, so a site
+  ///   that stops printing a date leaves the one already read standing.
+  ///
+  /// The last reading wins where a site corrects itself. Writes nothing when
+  /// the stored date already names the same instant, so a re-capture of an
+  /// unchanged page is not a database write. Compared with
+  /// [DateTime.isAtSameMomentAs] rather than `==`, because drift stores a
+  /// `DateTime` as a unix timestamp and hands it back in local time: the row's
+  /// value is never `identical` to the UTC one a page was parsed into, and
+  /// `==` would rewrite the same date on every capture.
+  Future<InvariantViolation?> recordLocationPublishedAt(
+    String locationId,
+    DateTime publishedAt,
+  ) async {
+    return _db.transaction(() async {
+      final row = await locationById(locationId);
+      if (row == null) return unknownRow;
+      if (row.publishedAt?.isAtSameMomentAs(publishedAt) ?? false) {
+        return null;
+      }
+      await (_db.update(_db.locations)..where((l) => l.id.equals(locationId)))
+          .write(LocationsCompanion(publishedAt: Value(publishedAt)));
+      return null;
+    });
+  }
+
   /// Source-scoped retraction (I15). Evidence, not a user removal: it writes
   /// the lifecycle locally and DOES NOT sync — no outbox row, no tombstone
   /// (V2_SYNC.md §5). [readingSourceId] names the Source whose own reading

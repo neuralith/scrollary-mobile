@@ -96,6 +96,7 @@ class FakeBrowser extends BrowserController {
       scrollY: page.scrollY,
       images: window,
       links: page.links,
+      controls: page.controls,
       headNextHref: page.headNextHref,
       atBottom: page.atBottom,
       imagesTruncated: to < all.length,
@@ -108,11 +109,29 @@ class FakeBrowser extends BrowserController {
     );
   }
 
+  /// Called before each [probe], with how many have been asked for so far.
+  ///
+  /// A seam for a page that is not finished arriving: a client-routed reader
+  /// serves its shell first and mounts its controls afterwards, so a fixture
+  /// for that has to be able to answer the second probe differently from the
+  /// first.
+  void Function(int probeCount)? onProbe;
+
+  /// How many probes have been asked for since this fake was made.
+  int probeCount = 0;
+
   @override
   Future<PageProbe> probe({
     bool withLinks = false,
     bool withSignals = true,
-  }) async => _slice(_page(), 0);
+  }) async {
+    // Counted before the callback, and never inside its argument list: `?.`
+    // short-circuits the whole selector chain, so `onProbe?.call(++probeCount)`
+    // does not increment at all when nothing is listening.
+    probeCount++;
+    onProbe?.call(probeCount);
+    return _slice(_page(), 0);
+  }
 
   @override
   Future<PageProbe> probeImageSlice(int imageOffset) async {
@@ -145,9 +164,53 @@ class FakeBrowser extends BrowserController {
   @override
   Future<String?> cookieHeaderFor(String url) async => null;
 
+  /// What a saved locator resolves to on the page the fake is standing on.
+  ///
+  /// A callback rather than a map, because a locator is a bag of signals and
+  /// the interesting cases are about *what it matched* — a control with no
+  /// href, two siblings that tie, a rule that matches a different link than
+  /// the finger did.
+  LocatorMatch? Function(Map<String, dynamic> locator, String url)?
+  onApplyLocator;
+
+  /// Every locator [applyLocator] was asked about, in order.
+  final List<Map<String, dynamic>> locatorsApplied = [];
+
   @override
-  Future<LocatorMatch?> applyLocator(Map<String, dynamic> locator) async =>
-      null;
+  Future<LocatorMatch?> applyLocator(Map<String, dynamic> locator) async {
+    locatorsApplied.add(locator);
+    return onApplyLocator?.call(locator, _url);
+  }
+
+  /// Where pressing the control a locator describes takes the page, or null
+  /// when the press achieves nothing — a dead control, or one that ties.
+  String? Function(Map<String, dynamic> locator, String url)? onActivateLocator;
+
+  /// True when the page's next control is present and switched off, which is
+  /// the site saying this is the last entry.
+  bool nextControlIsDisabled = false;
+
+  final List<Map<String, dynamic>> locatorsActivated = [];
+
+  @override
+  Future<ControlPress> activateLocator(
+    Map<String, dynamic> locator, {
+    Duration settle = const Duration(seconds: 12),
+  }) async {
+    locatorsActivated.add(locator);
+    if (nextControlIsDisabled) {
+      return const ControlPress.atEnd('the next control is switched off');
+    }
+    final landed = onActivateLocator?.call(locator, _url);
+    // The real controller returns the address only once the page has actually
+    // moved, so a press that lands where it started is no answer at all.
+    if (landed == null || landed == _url) {
+      return const ControlPress.stuck('pressing it did not open anything');
+    }
+    _url = landed;
+    notifyListeners();
+    return ControlPress.moved(landed);
+  }
 
   @override
   Future<List<PageImage>?> applyReaderRule(Map<String, dynamic> rule) async =>
@@ -156,11 +219,25 @@ class FakeBrowser extends BrowserController {
   @override
   Future<InPageBytes?> fetchAsBase64(String url) async => null;
 
-  @override
-  Future<void> startSelection({String mode = 'link'}) async {}
+  /// The picker modes the run asked for, in order.
+  final List<String> selectionModes = [];
+  bool _selecting = false;
 
   @override
-  Future<void> stopSelection() async {}
+  bool get isSelecting => _selecting;
+
+  @override
+  Future<void> startSelection({String mode = 'link'}) async {
+    selectionModes.add(mode);
+    _selecting = true;
+    notifyListeners();
+  }
+
+  @override
+  Future<void> stopSelection() async {
+    _selecting = false;
+    notifyListeners();
+  }
 }
 
 /// A settled entry page: [imageUrls] all loaded, one optional rel=next
@@ -171,6 +248,10 @@ PageProbe entryProbe({
   required List<String> imageUrls,
   String? nextHref,
   List<PageLink> extraLinks = const [],
+
+  /// Elements that act as controls and carry no address — the shape of a
+  /// reader that routes itself in script.
+  List<PageLink> controls = const [],
   int width = 800,
   int height = 1200,
 }) {
@@ -201,5 +282,6 @@ PageProbe entryProbe({
         PageLink(href: nextHref, rel: 'next', text: 'Next Entry'),
       ...extraLinks,
     ],
+    controls: controls,
   );
 }

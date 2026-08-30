@@ -117,6 +117,7 @@ class FakePageCaptureSource implements PageCaptureSource {
     this.landedUrl,
     this.title = 'Part 101',
     this.dimensionsVerified = true,
+    this.publishedAt,
   }) : _kind = _Kind.images,
        _failure = null,
        hintAlsoFails = false;
@@ -126,6 +127,7 @@ class FakePageCaptureSource implements PageCaptureSource {
     this.landedUrl,
     this.title = 'Part 101',
   }) : _kind = _Kind.document,
+       publishedAt = null,
        pageCount = 0,
        dimensionsVerified = true,
        hintAlsoFails = false,
@@ -135,6 +137,7 @@ class FakePageCaptureSource implements PageCaptureSource {
   FakePageCaptureSource.failing(String failure)
     : _kind = _Kind.failed,
       _failure = failure,
+      publishedAt = null,
       pageCount = 0,
       status = SaveStatus.failed,
       landedUrl = null,
@@ -150,7 +153,8 @@ class FakePageCaptureSource implements PageCaptureSource {
     this.pageCount = 2,
     this.hintAlsoFails = false,
     this.title = 'Part 101',
-  }) : _kind = _Kind.needsAssist,
+  }) : publishedAt = null,
+       _kind = _Kind.needsAssist,
        _failure = 'Only 0 content images found (need 3)',
        status = SaveStatus.complete,
        landedUrl = null,
@@ -161,6 +165,7 @@ class FakePageCaptureSource implements PageCaptureSource {
   FakePageCaptureSource.refusing()
     : _kind = _Kind.refused,
       _failure = null,
+      publishedAt = null,
       pageCount = 0,
       status = SaveStatus.failed,
       landedUrl = null,
@@ -177,6 +182,9 @@ class FakePageCaptureSource implements PageCaptureSource {
   final String? landedUrl;
   final String title;
   final bool dimensionsVerified;
+
+  /// The date this page says it was published, when the site prints one.
+  final DateTime? publishedAt;
 
   /// A reader-area rule that still matches nothing, which is the other half of
   /// what `needsReaderAreaAssist` covers.
@@ -271,6 +279,7 @@ class FakePageCaptureSource implements PageCaptureSource {
       assets: assets,
       contentKind: 'unknownWebContent',
       contentKindConfidence: 'low',
+      publishedAt: publishedAt,
     );
   }
 

@@ -389,6 +389,22 @@ class EntryCaptureService {
       return EntryCaptureResult.failed(e.toString());
     }
 
+    // 6. The publish date this reading established, into library state.
+    //
+    //    The manifest already carries it, but a manifest is inside a package
+    //    on one device: an Entry whose copy is freed would lose the date, and
+    //    nothing that lists Entries can read one without opening files. The
+    //    Location is where the rest of this page's evidence already lives.
+    //
+    //    Best-effort by construction, and after the commit on purpose: the
+    //    capture has succeeded by this point, and a Collection sorting itself
+    //    by date is not a reason to fail a download. A standalone capture with
+    //    no Location, and a site that prints no date, both simply skip it.
+    final publishedAt = outcome.publishedAt;
+    if (locationId != null && publishedAt != null) {
+      await entries.recordLocationPublishedAt(locationId, publishedAt);
+    }
+
     final byteSize = await fileStore.entryByteSize(contentPath);
     final copy = await offlineCopies.recordCopy(
       entryId: entryId,

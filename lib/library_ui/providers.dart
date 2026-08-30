@@ -22,9 +22,13 @@ import '../data/entry_repository.dart';
 import '../data/folder_repository.dart';
 import '../data/offline_copy_repository.dart';
 import '../data/reading_state_repository.dart';
+import '../data/local_settings.dart';
 import '../data/schema.dart';
+import '../domain/collection.dart';
 import '../domain/reading_state.dart';
 import '../library/entry_presentation.dart';
+import '../library/entry_sort.dart';
+import '../library/entry_sort_preference.dart';
 import '../save/queue_repository.dart';
 import '../save/queue_task.dart';
 import '../storage/file_store.dart';
@@ -97,6 +101,18 @@ final offlineCopyRepoProvider = Provider<OfflineCopyRepository>(
 
 final saveQueueRepoProvider = Provider<SaveQueueRepository>(
   (ref) => ref.watch(libraryUiServicesProvider).queue,
+);
+
+/// What order each Collection's Entries are drawn in, as the user left it.
+///
+/// Over the `settings` table, exactly like the capture and finished-cleanup
+/// preferences in `lib/providers.dart` — and defined here rather than there
+/// because this file is the library UX's own composition and is the only
+/// thing that reads it.
+final entrySortPreferenceProvider = Provider<EntrySortPreferenceStore>(
+  (ref) => EntrySortPreferenceStore(
+    LocalSettingsStore(ref.watch(libraryDatabaseProvider)),
+  ),
 );
 
 final fileStoreProvider = Provider<FileStore>(
@@ -172,12 +188,23 @@ final shelfProvider = StreamProvider.family<ShelfView?, String>((
 
 /// One Collection and its **one** Entry list. Null means the Collection is
 /// gone.
+///
+/// The settings table is merged into the tick stream because [_libraryTicks]
+/// deliberately does not watch it, so a list re-sorted from the control would
+/// otherwise not redraw until something else in the library changed. The
+/// stream is only the *trigger*; the value is read inside the load, so which
+/// of the two streams emitted first cannot decide what order the first frame
+/// is drawn in.
 final collectionViewProvider = StreamProvider.family<CollectionView?, String>((
   ref,
   collectionId,
 ) {
   final db = ref.watch(libraryDatabaseProvider);
-  return _libraryTicks(db).asyncMap((_) => _loadCollection(db, collectionId));
+  final sorts = ref.watch(entrySortPreferenceProvider);
+  return _mergeTicks([
+    _libraryTicks(db),
+    sorts.watch(collectionId),
+  ]).asyncMap((_) => _loadCollection(db, collectionId, sorts));
 });
 
 /// One Collection's Sources, in the order they were first seen.
@@ -369,7 +396,7 @@ Future<ShelfView?> _loadShelf(LibraryDatabase db, String folderId) async {
       unread[collectionId] = (unread[collectionId] ?? 0) + 1;
     }
   }
-  final labels = await _sourceLabels(db, [
+  final facts = await _locationFacts(db, [
     for (final list in standaloneByFolder.values)
       for (final e in list) e.id,
   ]);
@@ -395,7 +422,7 @@ Future<ShelfView?> _loadShelf(LibraryDatabase db, String folderId) async {
           row: e,
           status: status[e.id] ?? ReadStatus.unread,
           availableOffline: offline.contains(e.id),
-          sourceLabel: labels[e.id],
+          sourceLabel: facts[e.id]?.label,
           progress: progress[e.id] ?? 0,
           // The shelf spans the library, so a row here has to name itself.
           // These are standalone Entries and have no Collection above them
@@ -412,6 +439,7 @@ Future<ShelfView?> _loadShelf(LibraryDatabase db, String folderId) async {
 Future<CollectionView?> _loadCollection(
   LibraryDatabase db,
   String collectionId,
+  EntrySortPreferenceStore sorts,
 ) async {
   final collection = await (db.select(
     db.collections,
@@ -423,25 +451,42 @@ Future<CollectionView?> _loadCollection(
   )..where((e) => e.collectionId.equals(collectionId))).get();
   final status = await _statusByEntry(db);
   final offline = await _entriesWithAnActiveCopy(db);
-  final labels = await _sourceLabels(db, [for (final e in rows) e.id]);
+  final facts = await _locationFacts(db, [for (final e in rows) e.id]);
   final progress = await _progressByEntry(db);
 
+  final entries = [
+    for (final row in rows)
+      EntryRowView.from(
+        row: row,
+        status: status[row.id] ?? ReadStatus.unread,
+        availableOffline: offline.contains(row.id),
+        sourceLabel: facts[row.id]?.label,
+        sourceNumber: facts[row.id]?.sourceNumber,
+        publishedAt: facts[row.id]?.publishedAt,
+        addedAt: facts[row.id]?.addedAt,
+        progress: progress[row.id] ?? 0,
+        // The Collection's own screen: its name is at the top of the page,
+        // so a row that repeated it would be saying it for the twelfth time.
+        context: EntryContext.withinCollection,
+        collectionName: collection.name,
+      ),
+  ];
+  // What the Collection can be sorted by is a fact about the Entries in it,
+  // so it is settled here and handed down: the control lists exactly what the
+  // list was built from, and a remembered choice the data no longer supports
+  // resolves back to the default rather than drawing an empty order.
+  final available = availableEntrySortFields([
+    for (final entry in entries) entry.sortFacts,
+  ]);
   return CollectionView.from(
     collection: collection,
-    entries: [
-      for (final row in rows)
-        EntryRowView.from(
-          row: row,
-          status: status[row.id] ?? ReadStatus.unread,
-          availableOffline: offline.contains(row.id),
-          sourceLabel: labels[row.id],
-          progress: progress[row.id] ?? 0,
-          // The Collection's own screen: its name is at the top of the page,
-          // so a row that repeated it would be saying it for the twelfth time.
-          context: EntryContext.withinCollection,
-          collectionName: collection.name,
-        ),
-    ],
+    entries: entries,
+    available: available,
+    sort: resolveEntrySort(
+      stored: await sorts.of(collectionId),
+      basis: OrderingBasis.values.byName(collection.orderingBasis),
+      available: available,
+    ),
   );
 }
 
@@ -483,9 +528,36 @@ Future<Set<String>> _entriesWithAnActiveCopy(LibraryDatabase db) async {
   return {for (final row in rows) row.entryId};
 }
 
-/// The earliest active Location's own label per Entry — evidence of what one
-/// site printed, used only when the Entry has no title of its own.
-Future<Map<String, String>> _sourceLabels(
+/// What an Entry's own addresses say about it: the label and number one site
+/// printed, the date one said it was published, and when the first of them
+/// reached this library.
+///
+/// One pass over `locations` for all four, because they come from the same
+/// rows and asking twice would double the query on the hottest read the
+/// Collection screen does.
+///
+/// **Earliest active Location first, then first answer wins.** The ordering is
+/// `discovered_at` ascending, so [addedAt] is the earliest — the moment this
+/// Entry entered the library, which is what "date added" means. The other
+/// three take the first row that *has* one rather than the first row: a site
+/// that printed no label is not evidence that no site did, and an Entry
+/// carries a second address precisely because the first one did not answer
+/// everything.
+class _EntryLocationFacts {
+  const _EntryLocationFacts({
+    this.label,
+    this.sourceNumber,
+    this.publishedAt,
+    this.addedAt,
+  });
+
+  final String? label;
+  final double? sourceNumber;
+  final DateTime? publishedAt;
+  final DateTime? addedAt;
+}
+
+Future<Map<String, _EntryLocationFacts>> _locationFacts(
   LibraryDatabase db,
   List<String> entryIds,
 ) async {
@@ -498,11 +570,29 @@ Future<Map<String, String>> _sourceLabels(
             ..orderBy([(l) => OrderingTerm.asc(l.discoveredAt)]))
           .get();
   final labels = <String, String>{};
+  final numbers = <String, double>{};
+  final published = <String, DateTime>{};
+  final added = <String, DateTime>{};
   for (final row in rows) {
-    if (row.sourceLabel.trim().isEmpty) continue;
-    labels.putIfAbsent(row.entryId, () => row.sourceLabel.trim());
+    final label = row.sourceLabel.trim();
+    if (label.isNotEmpty) labels.putIfAbsent(row.entryId, () => label);
+    final number = row.sourceNumber;
+    if (number != null) numbers.putIfAbsent(row.entryId, () => number);
+    final publishedAt = row.publishedAt;
+    if (publishedAt != null) {
+      published.putIfAbsent(row.entryId, () => publishedAt);
+    }
+    added.putIfAbsent(row.entryId, () => row.discoveredAt);
   }
-  return labels;
+  return {
+    for (final id in {for (final row in rows) row.entryId})
+      id: _EntryLocationFacts(
+        label: labels[id],
+        sourceNumber: numbers[id],
+        publishedAt: published[id],
+        addedAt: added[id],
+      ),
+  };
 }
 
 /// Every Source of one Collection, with the Collection's preference resolved

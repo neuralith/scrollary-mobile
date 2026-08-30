@@ -6,8 +6,10 @@
 /// ask for, not what a row is written as — so the assertions are about the
 /// question, which is the part that was lost.
 ///
-/// Two rules show up as tests rather than as comments: a serialized page is
-/// never standalone by default, and a listing never becomes an Entry.
+/// Two rules show up as tests rather than as comments: a page the library
+/// does not hold yet is only ever asked which Collection it belongs to — the
+/// capture options come after that answer, and there is no loose save at all
+/// (V2-D69) — and a listing never becomes an Entry.
 library;
 
 import 'package:flutter/material.dart';
@@ -81,7 +83,6 @@ void main() {
   late UiHarness h;
   late FakeBrowser browser;
   late List<_AddCall> adds;
-  late List<String> standalones;
 
   /// What the stand-in domain reports as the Collection the save went to, for
   /// a call that did not name one. The real orchestration answers this from
@@ -96,7 +97,6 @@ void main() {
     h = UiHarness();
     browser = FakeBrowser();
     adds = [];
-    standalones = [];
     reportedCollectionId = 'made-up-collection';
     capability = ForegroundMultitasking();
   });
@@ -135,21 +135,6 @@ void main() {
       collectionId: collectionId ?? reportedCollectionId,
       entryId: limits == null ? null : 'made-up-entry',
       queued: limits?.maxEntries ?? 0,
-    );
-  }
-
-  Future<AddToLibraryReport> fakeStandalone(
-    WidgetRef ref, {
-    required String url,
-    required String pageTitle,
-    CaptureMode? captureMode,
-    bool captureModeIsUserSet = false,
-  }) async {
-    standalones.add(url);
-    return const AddToLibraryReport(
-      sentence: 'Saved on its own.',
-      entryId: 'made-up-entry',
-      queued: 1,
     );
   }
 
@@ -212,7 +197,6 @@ void main() {
           browserProvider.overrideWithValue(browser),
           saveQueueStarterProvider.overrideWithValue(h.starter),
           v2AddAndDownloadProvider.overrideWithValue(fakeAdd),
-          v2SaveStandaloneProvider.overrideWithValue(fakeStandalone),
           foregroundMultitaskingProvider.overrideWithValue(capability),
         ],
         child: MaterialApp(
@@ -552,11 +536,6 @@ void main() {
       await pumpUntil(tester, key('saveScopeThisEntry'));
       expect(key('saveScopeFromHere'), findsOneWidget);
       expect(find.text('Adds to Alpha.'), findsOneWidget);
-      expect(
-        key('v2SaveStandalone'),
-        findsNothing,
-        reason: 'the library knows where this belongs',
-      );
 
       await launch(tester, key('saveScopeAddToQueue'));
 
@@ -599,32 +578,59 @@ void main() {
 
       await pumpUntil(tester, key('v2CheckCollection'));
       expect(key('v2AddAndDownloadEntry'), findsNothing);
-      expect(key('v2SaveStandalone'), findsNothing);
     });
   });
 
   // ─── rows 3–5: a site the library knows nothing about ───────────────────
 
   group('an unknown site', () {
-    screenTest('an entry page leads with the collection, standalone second', (
+    screenTest('an entry page asks only which collection it belongs to', (
       tester,
     ) async {
       await h.root();
       await openPanel(tester, _entryUrl, _entryTitle);
 
       await pumpUntil(tester, key('v2AddToCollection'));
-      expect(key('v2SaveStandalone'), findsOneWidget);
       expect(
         tester.widget(key('v2AddToCollection')),
         isA<FilledButton>(),
-        reason: 'a serialized page never becomes standalone by default',
+        reason: 'the library question is the whole of this sheet',
       );
-      expect(tester.widget(key('v2SaveStandalone')), isA<TextButton>());
       expect(
         find.textContaining('another source'),
         findsOneWidget,
         reason: 'joining a collection and starting one are different acts',
       );
+      expect(
+        find.text('What to save'),
+        findsNothing,
+        reason:
+            'what to take off the page is asked once there is a collection '
+            'to take it into (V2-D69)',
+      );
+      expect(key('captureMode_imageSequence'), findsNothing);
+    });
+
+    screenTest('the capture options arrive with the sheet the picker hands '
+        'back', (tester) async {
+      final root = await h.root();
+      final collection = await h.collection('Alpha', folderId: root.id);
+      await openPanel(tester, _entryUrl, _entryTitle);
+      await pumpUntil(tester, key('v2AddToCollection'));
+
+      await tapAndPump(tester, key('v2AddToCollection'));
+      await pumpUntil(tester, key('collectionPickerClearFilter'));
+      await tapAndPump(tester, key('collectionPickerClearFilter'));
+      await pumpUntil(tester, key('collectionOption-${collection.id}'));
+      await tapAndPump(tester, key('collectionOption-${collection.id}'));
+
+      await pumpUntil(tester, key('saveScopeAddToQueue'));
+      expect(
+        find.text('What to save'),
+        findsOneWidget,
+        reason: 'the download sheet is where the capture options live',
+      );
+      expect(key('captureMode_imageSequence'), findsOneWidget);
     });
 
     screenTest('picking a collection then a count reaches the domain once', (
@@ -651,7 +657,6 @@ void main() {
       expect(adds.single.newCollectionName, isNull);
       expect(adds.single.limits!.maxEntries, 1);
       expect(adds.single.discoverMissing, isFalse);
-      expect(standalones, isEmpty);
     });
 
     screenTest('starting a collection is one sheet: the name, the count and '
@@ -705,7 +710,6 @@ void main() {
       expect(adds.single.collectionId, isNull);
       expect(adds.single.limits!.maxEntries, 4);
       expect(adds.single.discoverMissing, isTrue);
-      expect(standalones, isEmpty);
     });
 
     screenTest('a blank name on that sheet starts nothing at all', (
@@ -762,10 +766,9 @@ void main() {
 
       // On a site the library knows nothing about, "this is a listing" is not
       // a claim the app can make — the same address shape describes an about
-      // page. So all three answers are offered and none is assumed: the loose
-      // save, a Collection to put it in, and the site itself.
+      // page. So both answers are offered and neither is assumed: a Collection
+      // to put this page in, and the site itself as a Collection's source.
       await pumpUntil(tester, key('v2AddCollection'));
-      expect(key('v2SaveStandalone'), findsOneWidget);
       expect(key('v2AddToCollection'), findsOneWidget);
 
       await tapAndPump(tester, key('v2AddCollection'));
@@ -788,19 +791,25 @@ void main() {
       await pumpUntil(tester, key('v2CheckAfterAdd'));
     });
 
-    screenTest('an ordinary page leads with standalone', (tester) async {
+    screenTest('an ordinary page leads with the collection too, and offers '
+        'no loose save', (tester) async {
       await h.root();
       await openPanel(tester, _plainUrl, _plainTitle);
 
-      await pumpUntil(tester, key('v2SaveStandalone'));
-      expect(tester.widget(key('v2SaveStandalone')), isA<FilledButton>());
-      expect(tester.widget(key('v2AddToCollection')), isA<TextButton>());
-
-      await tapAndPump(tester, key('v2SaveStandalone'));
-
-      expect(standalones, [_plainUrl]);
+      await pumpUntil(tester, key('v2AddToCollection'));
+      expect(
+        tester.widget(key('v2AddToCollection')),
+        isA<FilledButton>(),
+        reason:
+            'a page the app could not classify still goes into a collection; '
+            'there is no third kind of library item (V2-D69)',
+      );
+      expect(
+        find.text('What to save'),
+        findsNothing,
+        reason: 'nothing is captured until the library answer is given',
+      );
       expect(adds, isEmpty);
-      expect(find.text('Saved on its own.'), findsOneWidget);
     });
   });
 
@@ -1117,18 +1126,18 @@ void main() {
       );
     });
 
-    screenTest('a standalone save redefines no collection', (tester) async {
-      // The rule: an Entry-specific choice must not silently become a
-      // standing instruction about a work it has nothing to do with.
+    screenTest('a page with no collection yet is never asked the question', (
+      tester,
+    ) async {
+      // The rule: the question belongs to a work, so it is not asked — and
+      // no answer to it can be written — before the work is known.
       final collectionId = await seedKnownEntry();
       await h.root();
       await openPanel(tester, _plainUrl, _plainTitle);
-      await pumpUntil(tester, key('v2SaveStandalone'));
+      await pumpUntil(tester, key('v2AddToCollection'));
 
-      await tapAndPump(tester, key('captureMode_imageSequence'));
-      await tapAndPump(tester, key('v2SaveStandalone'));
-
-      expect(standalones, [_plainUrl]);
+      expect(find.text('What to save'), findsNothing);
+      expect(key('captureModeRemembered'), findsNothing);
       expect(
         await CapturePreferenceStore(LocalSettingsStore(h.db)).of(collectionId),
         isNull,

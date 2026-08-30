@@ -208,46 +208,6 @@ Future<AddToLibraryReport> v2AddAndDownload(
   );
 }
 
-/// Save the page as a standalone Entry — the deliberate fallback, unchanged
-/// behaviour.
-///
-/// A serialized page never lands here by accident: standalone is offered,
-/// chosen, and is never what "recognition could not tell" falls back to
-/// (V2_SAVE_FLOW.md §3).
-Future<AddToLibraryReport> v2SaveStandalone(
-  WidgetRef ref, {
-  required String url,
-  required String pageTitle,
-  CaptureMode? captureMode,
-  bool captureModeIsUserSet = false,
-}) async {
-  final message = await v2SavePage(
-    ref,
-    url: url,
-    pageTitle: pageTitle,
-    captureMode: captureMode,
-    captureModeIsUserSet: captureModeIsUserSet,
-  );
-  final status = await v2PageStatusFor(ref, url);
-  final result = status.result;
-  final collectionId = result is RecognisedLocation
-      ? result.collection?.id
-      : null;
-  if (message != null) {
-    return AddToLibraryReport(
-      sentence: message,
-      collectionId: collectionId,
-      entryId: status.entryId,
-    );
-  }
-  return AddToLibraryReport(
-    sentence: 'Saved to your library. $_oneQueued',
-    collectionId: collectionId,
-    entryId: status.entryId,
-    queued: 1,
-  );
-}
-
 /// Adopt a standalone Entry into a Collection.
 Future<AddToLibraryReport> v2AdoptStandalone(
   WidgetRef ref, {
@@ -506,7 +466,6 @@ Future<_Queueing> _queueJourney(
 }
 
 const String _startFirst = 'nothing is downloaded until you press Start.';
-const String _oneQueued = '1 entry queued — $_startFirst';
 
 String _entries(int count) => count == 1 ? 'entry' : 'entries';
 

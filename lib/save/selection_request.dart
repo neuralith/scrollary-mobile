@@ -4,6 +4,17 @@ import '../browser/browser_controller.dart';
 import 'next_page.dart';
 import 'page_hint.dart';
 
+/// Judge a tapped element before any rule is written from it.
+///
+/// The tap is a strong signal about *which element the user means* and no
+/// signal at all about whether following it is safe: a person aiming at a
+/// small control on a phone hits an advert, a share button, the previous
+/// entry, or a link off the site. Returns the sentence to show when the pick
+/// cannot be used, or null when it can — a refusal keeps the prompt open with
+/// that sentence on it rather than ending the run, because the user has not
+/// given up, they have missed.
+typedef SelectionValidator = Future<String?> Function(SelectedElement element);
+
 /// Anything that can hold a run while the user points at a page element.
 ///
 /// Implemented by the save run and by the update checker, so the one

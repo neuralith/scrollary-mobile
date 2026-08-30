@@ -20,6 +20,7 @@ import '../recognition/reconcile.dart';
 import '../save/capture_mode.dart';
 import '../save/capture_policy.dart';
 import '../save/entry_capture.dart';
+import '../save/next_page.dart';
 import '../save/page_hint.dart';
 import '../save/page_hint_repository.dart';
 import '../save/queue_task.dart';
@@ -205,10 +206,23 @@ class RecognitionIndexOf {
 /// * **Scope is the user's choice**, defaulting to the narrowest one — this
 ///   collection on this host.
 ///
-/// Only reader-area holds exist on this side. A V2 capture is one page per
-/// queue row, so there is no next-entry traversal here for a next-link rule
-/// to serve; `PageHintRepository` still stores and matches both kinds,
-/// because a hint taught in V1 outlives the run that asked for it.
+/// It holds for **both** kinds of rule. A capture that cannot find the reading
+/// area asks for `HintKind.readerArea`; a forward walk that cannot tell which
+/// control opens the next entry asks for `HintKind.nextLink`
+/// (`features/browser_forward_pages.dart`). The kind decides three things and
+/// nothing else decides them: which picker mode the page is put into, which
+/// rule is written from the tap, and what the overlay says. Everything
+/// else — the hold, the scope, the cancel, the retry — is one path, because a
+/// person teaching the app where something is should not meet two different
+/// flows depending on which half of the run needed to know.
+///
+/// A fourth rule joins V1's three, and it is the one a next-link hold needs
+/// most: **a tap is validated before it is believed.** What the user hit may
+/// be an advert, the previous entry, a link off the site, or a control with no
+/// address at all. The caller that asked supplies the judgement — only it
+/// knows where the walk has been and which Source it is on — and a refusal
+/// leaves the prompt open with the reason on it, so missing a small control
+/// costs a second tap rather than the run.
 class V2AssistController extends ChangeNotifier implements SelectionHost {
   V2AssistController({required this.browser, required this.hints});
 
@@ -220,20 +234,39 @@ class V2AssistController extends ChangeNotifier implements SelectionHost {
 
   SelectionRequest? _pending;
   Completer<SelectionOutcome>? _answer;
+  SelectionValidator? _validate;
 
   @override
   SelectionRequest? get pendingSelection => _pending;
 
   /// Hold until the user answers. Returns what they decided.
-  Future<SelectionOutcome> ask(SelectionRequest request) async {
+  ///
+  /// [validate] judges the tap before a rule is written from it. It belongs to
+  /// the caller because only the caller knows what would make a pick
+  /// unusable — which Source the walk is on, where it has already been — and a
+  /// hold with no validator simply believes what it is given, which is what a
+  /// reader-area hold has always done.
+  Future<SelectionOutcome> ask(
+    SelectionRequest request, {
+    SelectionValidator? validate,
+  }) async {
     _pending = request;
+    _validate = validate;
     _answer = Completer<SelectionOutcome>();
     notifyListeners();
-    await browser.startSelection(mode: 'reader');
+    // The picker mode follows the kind: 'link' snaps the tap to the nearest
+    // control, 'reader' keeps the element that was actually under the finger.
+    await browser.startSelection(
+      mode: request.kind == HintKind.nextLink ? 'link' : 'reader',
+    );
     return _answer!.future;
   }
 
   /// The user picked an element in the page.
+  ///
+  /// Refused picks do not end the hold. The prompt stays up carrying the
+  /// reason, the page stays in selection mode, and the user tries again —
+  /// which is the whole difference between "you missed" and "the run is over".
   @override
   Future<void> submitSelection(
     SelectedElement element, {
@@ -241,11 +274,35 @@ class V2AssistController extends ChangeNotifier implements SelectionHost {
   }) async {
     final request = _pending;
     if (request == null) return;
-    final rule = await hints.createReaderAreaHint(
-      element: element,
-      sourceUrl: request.sourceUrl,
-      scope: scope,
-    );
+
+    final refusal = await _validate?.call(element);
+    if (refusal != null) {
+      // Still holding, still in selection mode, and no rule was written.
+      if (_pending == null) return;
+      _pending = request.withError(refusal);
+      notifyListeners();
+      return;
+    }
+
+    final rule = switch (request.kind) {
+      HintKind.nextLink => await hints.createNextLinkHint(
+        element: element,
+        sourceUrl: request.sourceUrl,
+        scope: scope,
+        // A control with no address of its own is applied by pressing it, not
+        // by loading it. Decided against the page the tap happened on, because
+        // `href="#"` is only recognisable as "nowhere" from there.
+        activate: nextControlMustBePressed(
+          href: element.href,
+          currentUrl: request.sourceUrl,
+        ),
+      ),
+      HintKind.readerArea => await hints.createReaderAreaHint(
+        element: element,
+        sourceUrl: request.sourceUrl,
+        scope: scope,
+      ),
+    };
     await _settle(SelectionOutcome.rule(rule, element));
   }
 
@@ -262,6 +319,7 @@ class V2AssistController extends ChangeNotifier implements SelectionHost {
     if (_pending == null) return;
     await browser.stopSelection();
     _pending = null;
+    _validate = null;
     _answer?.complete(outcome);
     _answer = null;
     notifyListeners();
@@ -418,19 +476,6 @@ final v2AddAndDownloadProvider = Provider<V2AddAndDownloadFn>(
   (ref) => v2AddAndDownload,
 );
 
-typedef V2SaveStandaloneFn =
-    Future<AddToLibraryReport> Function(
-      WidgetRef ref, {
-      required String url,
-      required String pageTitle,
-      CaptureMode? captureMode,
-      bool captureModeIsUserSet,
-    });
-
-final v2SaveStandaloneProvider = Provider<V2SaveStandaloneFn>(
-  (ref) => v2SaveStandalone,
-);
-
 /// What the sheet asks the Browser to do **once it has closed itself**.
 ///
 /// The save sheet is a modal route over the Browser, and a start it performs
@@ -460,9 +505,10 @@ class SaveSheetStart {
 /// order the decision matrix in docs/V2_SAVE_FLOW.md §3 sets out. Three rules
 /// bind every branch of it:
 ///
-/// * **A serialized page never becomes standalone silently.** Standalone is
-///   offered and chosen; it is never the fallback for "recognition could not
-///   tell".
+/// * **A page the library does not hold yet is a question about the library
+///   first.** The only answers offered are a Collection to start and a
+///   Collection to join; *what to take off the page* belongs to the sheet
+///   that follows, once there is something to take it into (V2-D69).
 /// * **A listing is never an Entry.** The index of a collection is where a
 ///   Source lives, so adding one writes no Entry and queues no download; the
 ///   Entries are found by a check the user starts.
@@ -1176,18 +1222,6 @@ class _V2SavePanelState extends ConsumerState<V2SavePanel> {
     );
   }
 
-  Future<void> _saveStandalone() {
-    return _run(
-      () => ref.read(v2SaveStandaloneProvider)(
-        ref,
-        url: widget.url,
-        pageTitle: widget.pageTitle,
-        captureMode: _mode,
-        captureModeIsUserSet: _modeIsUserSet,
-      ),
-    );
-  }
-
   /// The queue's own Start, for a row that is already waiting.
   ///
   /// Nobody has been asked where they would like to wait, so no answer travels
@@ -1315,11 +1349,15 @@ class _V2SavePanelState extends ConsumerState<V2SavePanel> {
       // question it has. Everywhere else it is.
       // Where there is a range, *what to save* is drawn under it, because the
       // range is the decision the user came to make and the mode is usually
-      // already settled (V2-D65). Where there is not — a standalone Entry, a
-      // page whose Collection nobody has chosen yet — it is drawn here, above
-      // whatever single action there is.
-      if (_scope == null &&
-          !(result is Unrecognised && shape == PageKind.collectionIndex)) ...[
+      // already settled (V2-D65). Where there is not — an Entry the library
+      // holds outside any Collection — it is drawn here, above the single
+      // action there is.
+      //
+      // A page the library does not hold at all asks **neither** here: the
+      // only question this sheet has for it is which Collection it belongs
+      // to, and what to take off it is asked on the sheet the picker's answer
+      // turns this into (V2-D69).
+      if (_scope == null && result is! Unrecognised) ...[
         ..._captureBlock(),
         const SizedBox(height: 10),
       ],
@@ -1460,6 +1498,11 @@ class _V2SavePanelState extends ConsumerState<V2SavePanel> {
 
   /// A site the library knows nothing about. What is offered depends on what
   /// the page said it is — and the user answers, either way.
+  ///
+  /// **Every answer here is about the library** (V2-D69). There is no loose
+  /// save: a page that is not in the library yet is put in a Collection —
+  /// a new one, or one that gains this site as another source — and the
+  /// capture options are asked on the sheet that follows.
   List<Widget> _unknownActions(
     AppPalette palette, {
     required PageKind shape,
@@ -1467,8 +1510,7 @@ class _V2SavePanelState extends ConsumerState<V2SavePanel> {
   }) {
     final added = _added;
     return switch (shape) {
-      // An entry of something. Collection first, standalone demoted to the
-      // deliberate choice it is.
+      // An entry of something. The Collection is the whole question.
       PageKind.entryPage => [
         // The picker is still first — the Collections already held must be
         // visible before another is started (V2-D45, V2-D57) — and what it
@@ -1481,12 +1523,6 @@ class _V2SavePanelState extends ConsumerState<V2SavePanel> {
           ),
         if (_scope == null) _adoptionNote(palette),
         if (canDownload && _scope != null) ..._scopeAndLaunch(),
-        if (canDownload && _scope == null)
-          TextButton(
-            key: const ValueKey('v2SaveStandalone'),
-            onPressed: _saveStandalone,
-            child: const Text('Save as a standalone entry'),
-          ),
       ],
       // The listing itself. A Source, no Entry, and the check offered after.
       PageKind.collectionIndex => [
@@ -1507,22 +1543,19 @@ class _V2SavePanelState extends ConsumerState<V2SavePanel> {
           ),
         ],
       ],
-      // The page did not say. Standalone is the honest answer, and every
-      // other answer is offered rather than assumed — including the one the
-      // app cannot tell from an about page on a site it knows nothing about.
+      // The page did not say what it is. That is not a reason to invent a
+      // third kind of library item: it still goes into a Collection the user
+      // names or picks, and the other answer — this address is a listing —
+      // is offered rather than assumed, because the app cannot tell it from
+      // an about page on a site it knows nothing about.
       PageKind.unknownPage => [
         if (canDownload && _scope == null)
           FilledButton(
-            key: const ValueKey('v2SaveStandalone'),
-            onPressed: _saveStandalone,
-            child: const Text('Save as a standalone entry'),
-          ),
-        if (canDownload && _scope == null)
-          TextButton(
             key: const ValueKey('v2AddToCollection'),
             onPressed: () => _chooseCollection(indexOnly: false),
             child: const Text('Add to a Collection…'),
           ),
+        if (_scope == null) _adoptionNote(palette),
         if (canDownload && _scope != null) ..._scopeAndLaunch(),
         if (_scope == null && (_shape?.couldBeListing ?? false)) ...[
           _note(

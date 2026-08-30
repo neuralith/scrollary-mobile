@@ -209,6 +209,10 @@ String? journeyEndNote(WalkStop stop, {int pagesRead = 0}) => switch (stop) {
   WalkStop.endOfSource =>
     'No next entry found — that is everything this site publishes after it.',
   WalkStop.unreadable => 'The next page did not load, so it stopped there.',
+  WalkStop.noForwardProgress =>
+    'Going to the next entry led back to the page Scrollary was already on, '
+        'so it stopped rather than download the same entry again. Open the '
+        'next entry yourself and ask from there.',
   WalkStop.needsUserAssist =>
     'Scrollary could not tell which control leads to the next entry on this '
         'site. Point at it once and it will remember.',

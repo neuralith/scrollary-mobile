@@ -10,35 +10,32 @@
 //
 // ## The state of this on the V2 branch, stated plainly
 //
-// **The judgement survived the port; the host did not.** `resolveNextPage`,
-// `collectNextCandidates`, `validateNextUrl`, `PageHintRepository` and
-// `BrowserController.selections` are all still here and still ported verbatim.
-// What no longer exists is anything that *asks*: V1's `SaveRunController` held
-// `pendingSelection`, drove `BrowserController` into element-picking mode, and
-// resumed the run from `submitSelection`. V2's `QueueRunner` has no such state,
-// `EntryCaptureService` has no selection path, and
-// `operation_indicator.dart`'s `_needsUser` is hard-wired to `false` with a
-// comment saying exactly this — "user-assisted selection has no host on the V2
-// capture path … kept as a hook because the wiring above it is device-tested,
-// and because restoring user assist restores this with it."
+// **The host exists now.** `V2AssistController` holds for both kinds of rule:
+// a capture that cannot find the reading area asks for `HintKind.readerArea`,
+// and a forward walk that cannot tell which control opens the next entry asks
+// for `HintKind.nextLink` (`features/browser_forward_pages.dart`, V2-D70).
+// `operation_indicator.dart`'s `_needsUser` reads that hold rather than being
+// hard-wired false, and `BrowserScreen` draws the overlay, so a run that stops
+// to ask is answerable from the surface the *Needs you* pill sends people to.
 //
-// So this file is in two halves:
+// So this file is in two halves, and the line between them has moved:
 //
-// * **What runs today** — the two cases that establish the *premise*: on a
-//   device, against the real DOM, the ambiguous and unlabelled fixture pages
-//   really do defeat automatic detection, and the unambiguous one really does
-//   not need help. These are the assertions that would silently rot if the
-//   fixture or the detector drifted while the overlay was away, and they are
-//   the ones that make restoring the host a small job rather than an
-//   archaeology exercise.
-// * **What is written and skipped** — the four cases that need a host to ask
-//   through. They are written against the seam the V2 flow will use, so
-//   restoring the overlay is a matter of deleting the `skip:` and pointing
-//   three calls at whatever holds the pending selection. Each names precisely
-//   what it is waiting for.
+// * **What runs today** — the cases that establish the *premise*: on a device,
+//   against the real DOM, the ambiguous and unlabelled fixture pages really do
+//   defeat automatic detection, the unambiguous one really does not need help,
+//   and a taught rule really does resolve the ambiguity outright.
+// * **What is written and skipped** — four cases that drive the hold through a
+//   **single-page capture** (`queueSaveOf` + `startQueue`). That path asks only
+//   for the reading area; a next-link hold happens on a forward *walk*, which
+//   this file has no fixture journey for. They are kept because what they
+//   assert is right and because the fixture site already has the pages for it;
+//   what they need is a walk to run against, not a host to ask through.
 //
-// Nothing here was weakened to go green. The skipped cases assert exactly what
-// V1's did.
+// The next-link hold itself is covered deterministically end to end in
+// `test/save_v2/next_control_assist_test.dart`: when the user is asked, what
+// a tap is judged against, that the rule is proved on the page it was taught
+// on, and that a control with no address is pressed rather than followed.
+//
 import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
@@ -54,10 +51,11 @@ import 'support/v2_harness.dart';
 /// `testWidgets`'s `skip` takes only a bool, so the reason lives here and is
 /// named from each `skip:` site.
 const String kNoAssistHost =
-    'V2 has no host for a user-assisted selection: QueueRunner holds no '
-    'pendingSelection, EntryCaptureService has no selection path, and '
-    'operation_indicator.dart hard-wires _needsUser to false. Un-skip with the '
-    'lane that re-hosts the overlay.';
+    'These drive the hold through a single-page capture, which only ever asks '
+    'for the reading area. A next-link hold happens on a forward walk, and '
+    'this file has no fixture journey to run one against. Un-skip with the '
+    'lane that adds one; the hold itself is covered in '
+    'test/save_v2/next_control_assist_test.dart.';
 
 void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
@@ -245,10 +243,12 @@ void main() {
     timeout: const Timeout(Duration(minutes: 5)),
   );
 
-  // ============================================= waiting for a host
+  // ======================================= waiting for a fixture walk
   //
-  // Everything below asserts what V1's suite asserted, against the seam a V2
-  // host will expose. Each is skipped for the one reason in [kNoAssistHost].
+  // Everything below asserts what V1's suite asserted, against the seam the V2
+  // host now exposes. Each is skipped for the one reason in [kNoAssistHost]:
+  // the hold they drive is reached through a single-page capture, which asks
+  // only about the reading area.
 
   testWidgets(
     'ambiguous page: the run asks, the answer is saved, the run continues',

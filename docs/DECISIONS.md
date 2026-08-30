@@ -1523,3 +1523,94 @@ itself is an answer and a silent one is a bug. STORE_PACKAGE.md §6.3 moved with
 it, and the descriptions still exist — `CaptureMode.description` is printed by
 the Collection's own capture-mode menu, which is a standing choice about a work
 rather than a control on the way past.
+
+### V2-D69 · Saving a page the library does not hold is one question: which Collection
+
+The save sheet used to put three answers in front of a page it had never seen
+before — *Save as a standalone entry*, *Add to a Collection…*, and, on an
+address that could be a listing, *Add this site as a collection's source* —
+and, above them, the *What to save* block asking whether to keep the images,
+the text, or both. Two decisions of different kinds on one surface, and the
+loose save was the fastest of them: one tap wrote an Entry belonging to
+nothing.
+
+**There is no standalone save.** A page that is not in the library yet is put
+into a Collection — one the user starts, or one they already have, which gains
+this site as another source. That is the whole of the first sheet. A
+Collection is not a claim that the content is serialized: *AI Training* is as
+good a Collection as *Quiet Harbour*, so nothing branches on whether the page
+looks episodic, and the unknown-page row offers the same picker the entry-page
+row does.
+
+**And it is asked before the capture options, not beside them.** *Images only*
+/ *Text only* / *Text and images* are a question about what to download; they
+have no subject until there is a Collection to download into, and asking them
+first put the two decisions on the same surface in the wrong order. The first
+sheet now shows them only for a page the library already holds, where the
+library question is already answered. Everywhere else they arrive with the
+range block and the launch on the sheet the picker's answer hands back
+(V2-D62) — one surface, still, and no extra step: the picker was always the
+first modal on this path.
+
+**What this does not change.** Entries that already sit outside a Collection
+are still first-class library items — legacy saves, and the promotions history
+makes — and everything that reads, syncs, stores and adopts them is untouched
+(I7, `library_ui/collection_actions.dart`'s *Move into a Collection*). What is
+gone is the flow that created new ones.
+
+### V2-D70
+
+**A multi-entry run stops when it stops moving, and asks when the page says
+the sequence continues.**
+
+Two failures, found together on a real reader, with one cause between them:
+everything that decided whether a walk could go on was reading the address the
+walk *aimed at*, and nothing was reading the one it *arrived at*.
+
+**Going in a circle read as making progress.** `LibrarySourceWalk` validated
+each next candidate against its visited set, which is the right check and the
+wrong half of the problem: a client-routed reader answered the next address
+with the page already on screen. Every candidate was new, every read
+succeeded, and the walk resolved the same Entry and handed it to `onEntry`
+again — a capturing walk therefore downloaded one entry repeatedly until a
+ceiling stopped it. The landed address is now checked against the same visited
+set, and a repeat ends the walk with `WalkStop.noForwardProgress`. It is its
+own stop and not `endOfSource` because *the collection finished* and *we
+stopped moving* are opposite things to tell someone.
+
+**A next control that is not a link read as the end of the collection.**
+`resolveNextPage` can only read `href`s, so a reader whose Next is a
+script-driven `<button>` produced no candidate — indistinguishable from a
+finished sequence, and reported as one. The probe now measures the page's
+addressless controls (`button`, `[role=button]`, an anchor with no `href`)
+alongside its links, and a page offering a next-labelled *control* while
+offering no followable link asks the user instead of declaring the end.
+A page with neither still ends silently: prompting at the true end of a
+finished collection is a worse failure than the one this fixes.
+
+**So a taught rule can be pressed as well as followed.** A control with no
+address cannot be described by an `href` pattern and cannot be resolved by
+reading the page, so `DomLocator.activate` marks a rule that is *applied by
+pressing the element and taking the address the page routes itself to*. That
+is still the page's own assertion — no address is constructed — and it passes
+every check a plain link passes: origin, Source, the restricted-capture
+policy, and forward progress. Because a press has no address to check
+*before* it happens, two guards sit in front of it that a link does not need:
+an ambiguous match is refused outright rather than pressed (Prev and Next are
+siblings that share a class), and a press that does not move the page is a
+dead end rather than an end of chain.
+
+**And the user's tap is a candidate, not a decision.** The hold now carries a
+validator, so a tap that lands on an advert, the previous entry, a sign-in
+page, another work on the same site, or a stretch of page with nothing to
+recognise it by is refused *with the reason on screen and the prompt still
+open* — missing a small control on a phone costs a second tap, not the run.
+What is written from an accepted tap is then re-applied to the very page it
+was taught on before it is used, and a rule that cannot find that element
+again is deleted rather than kept: a rule that survives would answer this page
+wrongly and confidently on every later run.
+
+The scope of a taught rule is unchanged (`HintScope`, narrowest first): host
+plus collection fingerprint by default, which is the Source, widening to a
+path pattern or the whole host only on the user's explicit choice. Nothing is
+persisted about a site that a person did not teach by tapping.

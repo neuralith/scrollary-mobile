@@ -87,7 +87,9 @@ expected to carry one.
 | Change what a Collection is saved as | Library → collection menu → **What to save** | Free | `library_ui/collection_actions.dart` | `test/v2_check_flow_test.dart` | — |
 | Queue work without starting it | save sheet → **Queue only** | Free | `features/v2_save_flow.dart` | `test/library_ui/save_panel_test.dart` | — |
 | Start what I queued, from where I am | Activity · Browser panel | **Free** | `library_ui/entry_offline.dart` | `test/activity_screen_test.dart` | — |
-| Point at the next-entry control when the app can't find it | Browser → assist overlay | Free | `features/selection_overlay.dart` | `integration_test/user_assist_test.dart` | **yes** |
+| Point at the next-entry control when the app can't find it | Browser → assist overlay | Free | `features/browser_forward_pages.dart` · `features/selection_overlay.dart` | `test/save_v2/next_control_assist_test.dart` · `integration_test/user_assist_test.dart` | **yes** |
+| Point at a next control the site handles in script, with no address on it | Browser → assist overlay | Free | `save/page_hint.dart` (`DomLocator.activate`) | `test/save_v2/next_control_assist_test.dart` | The rule is applied by pressing the control; an ambiguous match is refused rather than pressed |
+| Not have the same entry downloaded over and over | any multi-entry run | Free | `recognition/walk.dart` (`WalkStop.noForwardProgress`) | `test/recognition/walk_test.dart` | Judged on the landed address, so a source that circles is stopped rather than followed |
 | Find my archived Collections | Library → **Show archived** | Free | `library_ui/shelf_screen.dart` | `test/library_ui/shelf_test.dart` | — |
 | Dismiss a discovered entry I don't want | entry menu → **Remove from library** | Free | `library_ui/collection_actions.dart` | `test/library_ui/collection_test.dart` | — |
 | Read a serialized collection as a sequence | Library → collection | Free | `library/entry_presentation.dart` | `test/library_ui/entry_presentation_test.dart` | — |

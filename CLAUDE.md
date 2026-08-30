@@ -74,15 +74,39 @@ in [docs/DECISIONS.md](docs/DECISIONS.md).
   Entry at its Source records a `Measurement` scoped to that Source when the
   page has a position to be at, on a device that has downloaded nothing;
   reading an OfflineCopy keeps its anchor. Neither needs the other, and
-  neither is a download (V2-D54).
+  neither is a download (V2-D54). Three rules go with it. **A fraction is of
+  the reading, not of the page**: where the page's own geometry establishes a
+  band of stacked content images (`imageContentBand` — the same candidate
+  filter capture uses, plus a single-column and a density check, and never a
+  selector or a host), the fraction is measured against that band, so reaching
+  the last panel is 100% however far the site carries on with comments below
+  it. A page whose band cannot be established honestly falls back to the whole
+  document. **A scroll a machine performed is never a reading**: capture leaves
+  the page at the bottom, so the meter is sealed when an operation takes the
+  Browser and unsealed only when the user scrolls it themselves — the app root
+  is the one place that can tell those apart (`lib/app.dart`), and the WebView's
+  own scroll callback is what feeds it. **Reading on to the next Entry at its
+  Source corroborates completion, it never establishes it**
+  (`lib/reading_v2/source_completion.dart`): the Entry left behind is marked
+  read only when the move is forward by the Collection's own order — asked of
+  `NextEntryResolver`, never re-derived — *and* the reading reached
+  `CompletionPolicy`'s threshold *and* it was read at a natural pace
+  (`NaturalPacePolicy`: a dwell floor, a per-viewport floor, and real scrolling).
+  A fast tap through writes nothing.
 - **The save flow** (`lib/features/v2_save_flow.dart`, `lib/recognition/adopt.dart`,
   `lib/save/save_scope.dart`) — a page becomes library through the matrix in
   [docs/V2_SAVE_FLOW.md](docs/V2_SAVE_FLOW.md): what the page *is* comes from
   `readPageShape`, which Collection it belongs to is the **user's answer**
   (V2-D45) and never a title match, and how much to download is the typed
-  count V1 asked for, on the same `SaveLimits` bound (V2-D46). A page that
-  belongs to serialized content is never written as a loose Entry without
-  being asked (V2-D44); standalone stays first-class and stays chosen.
+  count V1 asked for, on the same `SaveLimits` bound (V2-D46). A page the
+  library does not hold yet is asked **one** question — which Collection is
+  this: a new one, or one you already have, which gains this site as another
+  source — and is never offered a loose save (V2-D69); the capture options
+  belong to the sheet that answer hands back, never to the one that asks it.
+  A Collection is not a claim that the content is a series, so nothing in the
+  flow branches on whether a page looks episodic (V2-D44). Entries that
+  already sit outside a Collection stay first-class everywhere else (I7);
+  only the flow that made new ones is gone.
   **A count means captures, not discoveries** — what the walk resolved is
   what gets captured (V2-D51) — the launch is one decision with three values
   and nothing asks again after it (V2-D52), and a Collection remembers what
@@ -113,8 +137,8 @@ in [docs/DECISIONS.md](docs/DECISIONS.md).
   in that order and on one surface. There is no *Download this entry* /
   *Download entries…* pair and no scope sheet after this one; the picker stays
   the only modal on the unknown-site path. A listing has no range, and a
-  standalone Entry keeps its single download because it has no Collection order
-  to count along. Two ranges, not three — *Entries already in your library* is
+  an Entry held outside any Collection keeps its single download because it
+  has no Collection order to count along. Two ranges, not three — *Entries already in your library* is
   the planner's, not the save sheet's — and **the sheet's own probe never
   vetoes a remembered mode on an image count** (V2-D65): it measures a page
   that has not been scrolled, where "not enough images" means "not yet". Only

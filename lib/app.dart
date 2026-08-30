@@ -23,6 +23,7 @@ import 'features/check_controller.dart';
 import 'features/v2_reader_route.dart';
 import 'library_ui/collection_screen.dart';
 import 'library_ui/shelf_screen.dart';
+import 'reading_v2/source_reading.dart';
 import 'save/queue_runner.dart';
 import 'sync/scheduler.dart';
 import 'capability/foreground_gate.dart';
@@ -136,6 +137,10 @@ class _WebReaderAppState extends ConsumerState<WebReaderApp>
   late final ForegroundMultitasking _capability;
   late final ValueNotifier<bool> _pendingSurfaceClaim;
 
+  /// Where a reading at a Source is recorded. Held rather than read from the
+  /// provider each time: the scroll callback runs on every frame of a drag.
+  late final SourceReadingMeter _sourceReading;
+
   /// When metadata sync takes an opportunity. The app root drives it because
   /// the app root is what knows whether the app is in front — the scheduler
   /// reaches for no platform signal of its own (V2-D20).
@@ -164,6 +169,11 @@ class _WebReaderAppState extends ConsumerState<WebReaderApp>
     // `showBrowserSurfaceWith` owns the pop and the tab together, which is
     // exactly why it exists (`features/open_in_browser.dart`).
     v2.openSource = (url) async => showBrowserAt(_router, ref, url);
+    _sourceReading = v2.sourceReading;
+    // The page moved. The WebView reports every scroll, ours included, so this
+    // is where a person's scrolling is told from an operation's — the app root
+    // is the one place that knows which operations hold the Browser.
+    _browser.onScrolled = _onPageScrolled;
     _capability = ref.read(foregroundMultitaskingProvider);
     _sync = v2.sync.scheduler;
     _pendingSurfaceClaim = ref.read(pendingSurfaceClaimProvider);
@@ -209,30 +219,97 @@ class _WebReaderAppState extends ConsumerState<WebReaderApp>
 
   /// Record where the page currently on screen has been read to.
   ///
-  /// Called at the moments the app already has and nothing is invented in
-  /// between: the meter refuses a probe of a page it is not watching, a page
-  /// with no position to be at, and a reading that has not got further than
-  /// the one already recorded.
+  /// Called at the moments the app has and nothing is invented in between: the
+  /// meter refuses a probe of a page it is not watching, a page with no
+  /// position to be at, and a reading that has not got further than the one
+  /// already recorded.
+  ///
+  /// Those moments are the reader settling after a scroll, the Browser being
+  /// left, and the app going away. The scroll one was added because the two
+  /// leaving moments miss the one that matters most: following the site's own
+  /// way on to the next Entry never leaves the Browser at all, and the page
+  /// the reading was of is gone by the time the app hears about it.
   ///
   /// **Never while automation owns the Browser.** A capture scrolls the page
   /// to the bottom to enumerate it, and recording that as a reading would
   /// mark an Entry read by downloading it — exactly the conflation
   /// PRODUCT.md §2.3 forbids.
   Future<void> _measureSourceReading() async {
-    final meter = ref.read(v2ServicesProvider).sourceReading;
+    _measureDebounce?.cancel();
+    _measureDebounce = null;
+    final meter = _sourceReading;
     if (!meter.isWatching) return;
-    if (_queueRunner.isRunning || _sourceCheck.isRunning) return;
-    if (!_browser.isAttached || _browser.isAutomating) return;
+    if (_somethingIsDrivingTheBrowser) return;
+    if (!_browser.isAttached) return;
     try {
-      await meter.record(await _browser.probe());
+      _lastMeasuredAt = DateTime.now();
+      // Geometry and images, without the content, media and access signals —
+      // the same light probe the scroll loop takes, because that is all a
+      // position and a content band are read from.
+      await meter.record(await _browser.probe(withSignals: false));
     } catch (_) {
       // A WebView mid-teardown, a page that will not answer: a measurement
       // that could not be taken is not an error anybody needs to see.
     }
   }
 
+  /// True while a save run, a check or anything else is driving the Browser.
+  ///
+  /// The latched copy exists so the *transition* into automation can be seen;
+  /// [_somethingIsDrivingTheBrowser] is what anything asking about **now**
+  /// reads, because `automationOwner` is a plain field that notifies nobody.
+  bool _automationOwnsBrowser = false;
+
+  bool get _somethingIsDrivingTheBrowser =>
+      _automationOwnsBrowser ||
+      _queueRunner.isRunning ||
+      _sourceCheck.isRunning ||
+      _browser.isAutomating;
+
+  Timer? _measureDebounce;
+  DateTime? _lastMeasuredAt;
+
+  /// How long the page has to be still before its position is read.
+  ///
+  /// Short, because the position at the moment the reader taps the site's own
+  /// *next* link is the one the completion decision is made from, and that tap
+  /// follows the last scroll closely.
+  static const Duration _scrollSettle = Duration(milliseconds: 300);
+
+  /// …and how long a continuous scroll may run without being measured at all,
+  /// so a reader who never pauses is still measured on the way down.
+  static const Duration _scrollMeasureInterval = Duration(seconds: 2);
+
+  /// The page scrolled. Decide whose scroll it was, then measure once it
+  /// settles.
+  void _onPageScrolled() {
+    final meter = _sourceReading;
+    if (!meter.isWatching) return;
+    // A scroll an operation performed says nothing about a reading. It seals
+    // the meter rather than lifting the seal: the position the page is left in
+    // is the operation's, and it stays that way until a person moves it.
+    if (_somethingIsDrivingTheBrowser) {
+      meter.noteAutomationScroll();
+      return;
+    }
+    meter.noteUserScroll();
+
+    final last = _lastMeasuredAt;
+    if (last != null &&
+        DateTime.now().difference(last) >= _scrollMeasureInterval) {
+      unawaited(_measureSourceReading());
+      return;
+    }
+    _measureDebounce?.cancel();
+    _measureDebounce = Timer(_scrollSettle, () {
+      unawaited(_measureSourceReading());
+    });
+  }
+
   @override
   void dispose() {
+    _measureDebounce?.cancel();
+    _browser.onScrolled = null;
     for (final source in [_queueRunner, _sourceCheck, _capability, _browser]) {
       source.removeListener(_recomputeSurface);
     }
@@ -272,11 +349,19 @@ class _WebReaderAppState extends ConsumerState<WebReaderApp>
   /// keeps scrolling on both platforms, and on Android it goes on calling
   /// itself visible (docs/FOREGROUND_MULTITASKING.md §3.1).
   void _recomputeSurface() {
-    final owns =
+    final automating =
         _queueRunner.isRunning ||
         _sourceCheck.isRunning ||
-        _browser.isAutomating ||
-        _pendingSurfaceClaim.value;
+        _browser.isAutomating;
+    if (automating != _automationOwnsBrowser) {
+      _automationOwnsBrowser = automating;
+      // Taking the Browser seals the meter: capture scrolls a page to the
+      // bottom to enumerate it and leaves it there, and a measurement taken
+      // afterwards would mark an Entry read *by downloading it*. The seal
+      // lifts when the user scrolls the page themselves.
+      if (automating) _sourceReading.noteAutomationScroll();
+    }
+    final owns = automating || _pendingSurfaceClaim.value;
     // Latched for the lifetime of this operation's ownership: a setting the
     // user changes mid-task must not take the surface away from a run that is
     // in the middle of reading a page (see TaskCapabilitySnapshot).
