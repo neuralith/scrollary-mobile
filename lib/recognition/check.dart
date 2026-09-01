@@ -47,6 +47,7 @@ import '../domain/source.dart' as domain;
 import '../save/capture_policy.dart';
 import 'discovery.dart';
 import 'entry_identity.dart';
+import 'relocation.dart' show SourceRelocationCandidate;
 
 /// How much of someone else's site one check may open.
 ///
@@ -234,6 +235,7 @@ class SourceCheckOutcome {
     this.concerns = const [],
     this.notClaimedAsNew = 0,
     this.restrictedAddresses = 0,
+    this.relocation,
   });
 
   /// The one Source this check read. Empty only when there was none to read.
@@ -280,6 +282,17 @@ class SourceCheckOutcome {
   /// capture from. Counted rather than silently dropped.
   final int restrictedAddresses;
 
+  /// Present when this Source's listing was read at a path other than the one
+  /// stored for it — the site moved the listing and redirected the reading to
+  /// where it now lives.
+  ///
+  /// **Evidence for an offer, never an applied change.** The check reads the
+  /// listing it was sent to, because refusing to read a page the site itself
+  /// redirected us to would be inventing a stoppage; recording that the Source
+  /// has moved is a `resolvedInto` lifecycle change and stays the user's
+  /// confirmation (V2-D14, `recognition/relocation.dart`).
+  final SourceRelocationCandidate? relocation;
+
   /// Entries this check brought into the library.
   List<String> get newEntryIds => discovery.createdEntryIds;
 
@@ -307,6 +320,7 @@ class SourceObservation {
     required this.newestFirst,
     this.dropped = 0,
     this.nextPageUrl,
+    this.landedPathKey,
   }) : stop = null;
 
   /// Nothing was read, and here is which named condition ended it.
@@ -321,7 +335,8 @@ class SourceObservation {
       orderingConfident = false,
       newestFirst = false,
       dropped = 0,
-      nextPageUrl = null;
+      nextPageUrl = null,
+      landedPathKey = null;
 
   /// Where the reading actually happened — not necessarily where it aimed.
   final String url;
@@ -347,6 +362,16 @@ class SourceObservation {
 
   /// A further page of the same listing, or null for the end of it.
   final String? nextPageUrl;
+
+  /// The path this Source's listing was actually read at, normalised the way a
+  /// `path_key` is — null when the reading has nothing to say about it.
+  ///
+  /// Reported only by a **listing root** reading, and only when that reading
+  /// produced listings: a page that worked as this Source's list is the
+  /// evidence, and a landing that produced nothing is not evidence of a move.
+  /// The check compares it against the stored key and never acts on it — where
+  /// a Source lives is a lifecycle change the user confirms (V2-D14).
+  final String? landedPathKey;
 
   final SourceCheckStop? stop;
 
@@ -514,6 +539,9 @@ class SourceCheck {
     var orderingConfident = true;
     var newestFirst = false;
     String? pageUrl;
+    // Where the listing root actually turned out to be. Only the first
+    // reading can say: every page after it is inside the listing already.
+    String? landedPath;
 
     while (true) {
       if (pagesRead >= limits.maxPages) {
@@ -549,7 +577,10 @@ class SourceCheck {
         stop = SourceCheckStop.listingUnrecognised;
         break;
       }
-      if (pagesRead == 1) newestFirst = observation.newestFirst;
+      if (pagesRead == 1) {
+        newestFirst = observation.newestFirst;
+        landedPath = observation.landedPathKey;
+      }
       orderingConfident &= observation.orderingConfident;
       dropped += observation.dropped;
       for (final listing in observation.listings) {
@@ -749,6 +780,15 @@ class SourceCheck {
       placedEntryIds: placed,
       notClaimedAsNew: notClaimedAsNew,
       restrictedAddresses: restricted,
+      relocation: landedPath == null || landedPath == source.pathKey
+          ? null
+          : SourceRelocationCandidate(
+              sourceId: source.id,
+              host: source.host,
+              previousPathKey: source.pathKey,
+              pathKey: landedPath,
+              listingsSeen: listings.length,
+            ),
     );
   }
 

@@ -137,7 +137,7 @@ PageShape readPageShape(
   );
 
   final fingerprint = collectionFingerprint(url);
-  final ownPath = _ownPath(url);
+  final ownPath = ownPathOf(url);
   final belowListing = ownPath.isNotEmpty && fingerprint != ownPath;
 
   final PageKind kind;
@@ -164,7 +164,11 @@ PageShape readPageShape(
 
 /// This address's own path, normalised the way a fingerprint is: no empty
 /// segments, no trailing slash, `/` for a bare host.
-String _ownPath(String url) {
+///
+/// Public because relocation asks the same question of a landed listing
+/// address, and two copies of a normalisation are how two callers come to
+/// disagree about what one path is.
+String ownPathOf(String url) {
   final uri = Uri.tryParse(url);
   if (uri == null) return '';
   final segments = uri.pathSegments.where((s) => s.trim().isNotEmpty).toList();

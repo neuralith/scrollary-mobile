@@ -33,6 +33,7 @@ import '../library_ui/providers.dart';
 import '../recognition/history.dart';
 import '../recognition/placement.dart' as placement;
 import '../recognition/recognise.dart';
+import '../recognition/relocation.dart' show LocationRelocator;
 import '../save/queue_repository.dart';
 import '../save/queue_runner.dart';
 import '../sync/download_intent.dart';
@@ -96,6 +97,16 @@ class V2Services {
   /// build the same thing to hand it back.
   late final SourceReadingMeter sourceReading = SourceReadingMeter(
     MeasurementRepository(library),
+  );
+
+  /// Recognising that an address this library holds has moved
+  /// (`lib/recognition/relocation.dart`).
+  ///
+  /// Derived for the same reason [sourceReading] is: it is one repository and
+  /// one index over the library this object already holds.
+  late final LocationRelocator relocator = LocationRelocator(
+    entries: ui.entries,
+    index: RecognitionIndex(library),
   );
 
   /// What reading on to the next Entry **at its Source** says about the one
@@ -448,6 +459,17 @@ Future<void> recordCompletedVisit(
   bool completed = true,
 }) async {
   if (!userInitiated || !completed) return;
+  // A site that redirected an address this library holds has said, in its own
+  // words, that the page moved. Applied **before** recognition so the landed
+  // address is already a Location by the time it is asked about: the Entry is
+  // then recognised, its access recorded and its meter pointed at it, exactly
+  // as if the URL had never changed. Refused evidence writes nothing and
+  // leaves the navigation to be what it was.
+  await v2.relocator.aliasOnRedirect(
+    requestedUrl: requestedUrl,
+    landedUrl: url,
+    pageTitle: title,
+  );
   final result = await v2.recogniser.recognise(url, pageTitle: title);
   // What is now on screen, for the meter that records how far a reading at a
   // Source got. Set here because this is where the app finds out what the

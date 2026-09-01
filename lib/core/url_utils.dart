@@ -84,6 +84,21 @@ String pageIdentityKey(String url) {
   return normalizeUrl(uri.removeFragment().toString());
 }
 
+/// Whether [url]'s path names a destination no navigation may be read as
+/// content: sign-in, registration, account and subscription pages.
+///
+/// The only other reader of [_denyPathPatterns] besides [validateNextUrl], so
+/// the list stays in the file that owns it rather than being copied to a
+/// second caller. An unparseable URL is not denied here — whoever asked
+/// refuses it on its own account, and answering "denied" would name the wrong
+/// reason.
+bool isDeniedDestination(String url) {
+  final uri = Uri.tryParse(url.trim());
+  if (uri == null) return false;
+  final lowerPath = uri.path.toLowerCase();
+  return _denyPathPatterns.any(lowerPath.contains);
+}
+
 /// Resolve [href] (possibly relative) against [base].
 String? resolveUrl(String base, String href) {
   if (href.trim().isEmpty) return null;
@@ -142,8 +157,7 @@ NextUrlCheck validateNextUrl({
     return const NextUrlCheck.rejected(NextUrlRejection.unsupportedScheme);
   }
 
-  final lowerPath = uri.path.toLowerCase();
-  if (_denyPathPatterns.any(lowerPath.contains)) {
+  if (isDeniedDestination(resolved)) {
     return const NextUrlCheck.rejected(NextUrlRejection.denyListed);
   }
 

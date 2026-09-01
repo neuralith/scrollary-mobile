@@ -4,6 +4,7 @@ import '../core/url_utils.dart';
 import '../data/schema.dart';
 import '../recognition/check.dart';
 import '../recognition/discovery.dart';
+import '../recognition/relocation.dart' show landedListingPath;
 import '../save/capture_policy.dart';
 
 /// Reads one page of one Source's listing through the real Browser.
@@ -67,30 +68,55 @@ class BrowserSourceObservationSource implements SourceObservationSource {
       );
     }
 
-    final listings = _listingsOf(probe, source, landed);
+    // Where this Source's listing actually turned out to live. A provider that
+    // rewrites part of its URL structure redirects the address we asked for to
+    // the one it now uses; filtering that page's links against the key we
+    // stored would reject every one of them and report the site's own
+    // successful answer as "not this Source's listing". Asked only of the
+    // listing **root** — a later page of a listing is inside it already, and
+    // its address is not the Source's path.
+    final listingPath = pageUrl == null
+        ? landedListingPath(
+            sourceHost: source.host,
+            sourcePathKey: source.pathKey,
+            landedUrl: landed,
+          )
+        : source.pathKey;
+
+    final listings = _listingsOf(probe, source, landed, listingPath);
     return SourceObservation.read(
       url: landed,
       listings: listings,
       listRecognised: listings.isNotEmpty,
       orderingConfident: _orderingConfident(listings),
       newestFirst: _newestFirst(listings),
+      // Only a reading that worked as a listing says anything about where the
+      // listing is. An empty one is a failed reading, not a relocation.
+      landedPathKey: listings.isEmpty ? null : listingPath,
     );
   }
 
   /// Addresses of this Source the page linked to, in the page's own order.
+  ///
+  /// [listingPath] is the path the reading is filtering against — the stored
+  /// `path_key` ordinarily, and the one the site redirected the reading to
+  /// where it moved the listing. The host is **never** relaxed: a link that
+  /// leaves the host is not this Source's, whatever the path says.
   List<ObservedEntryListing> _listingsOf(
     PageProbe probe,
     SourceRow source,
     String landedUrl,
+    String listingPath,
   ) {
     final landedKey = normalizeUrl(landedUrl);
+    final prefix = listingPath.toLowerCase();
     final seen = <String>{};
     final listings = <ObservedEntryListing>[];
     for (final link in probe.links) {
       if (link.inNav) continue;
       final uri = Uri.tryParse(link.href);
       if (uri == null || !uri.hasScheme || uri.host != source.host) continue;
-      if (!uri.path.toLowerCase().startsWith(source.pathKey.toLowerCase())) {
+      if (!uri.path.toLowerCase().startsWith(prefix)) {
         continue;
       }
       final listing = ObservedEntryListing.read(
