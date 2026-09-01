@@ -633,6 +633,42 @@ void main() {
       expect(key('captureMode_imageSequence'), findsOneWidget);
     });
 
+    screenTest('the picker names the site an existing collection would gain', (
+      tester,
+    ) async {
+      // *Add source to a collection* is not a second button on the sheet —
+      // the picker is always first (V2-D45, V2-D57) and holds both answers.
+      // What makes the second one findable is that the rows say what picking
+      // one does to this site, exactly as *New collection* always has.
+      final root = await h.root();
+      final collection = await h.collection('Alpha', folderId: root.id);
+      await openPanel(tester, _entryUrl, _entryTitle);
+      await pumpUntil(tester, key('v2AddToCollection'));
+
+      await tapAndPump(tester, key('v2AddToCollection'));
+      await pumpUntil(tester, key('collectionPickerSourceNote'));
+      expect(find.textContaining('reading.example.com'), findsWidgets);
+      expect(
+        key('collectionPickerNew'),
+        findsOneWidget,
+        reason: 'starting one is still offered beside it',
+      );
+
+      await tapAndPump(tester, key('collectionPickerClearFilter'));
+      await pumpUntil(tester, key('collectionOption-${collection.id}'));
+      await tapAndPump(tester, key('collectionOption-${collection.id}'));
+
+      // And the answer continues into the ordinary save sheet rather than
+      // ending the flow: the range, the capture line and the launch.
+      await pumpUntil(tester, key('saveScopeAddToQueue'));
+      expect(key('saveScopeFromHere'), findsOneWidget);
+      expect(
+        key('collectionNameField'),
+        findsNothing,
+        reason: 'a collection that exists is not renamed on the way past',
+      );
+    });
+
     screenTest('picking a collection then a count reaches the domain once', (
       tester,
     ) async {

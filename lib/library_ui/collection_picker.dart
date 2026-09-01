@@ -79,6 +79,15 @@ final pickableCollectionsProvider = StreamProvider<List<CollectionRow>>((ref) {
 /// value is echoed on the next one is the step this removes (V2-D57). The row
 /// then hands [suggestedTitle] back as it stands, unconfirmed, and the caller
 /// is the one that asks.
+///
+/// [attachingSourceHost] is the site the caller is about to attach, on the
+/// paths where picking an existing Collection **adds this site to it as
+/// another Source**. Naming it here is what makes this sheet an operation the
+/// user can recognise rather than a list of Collections: its two answers are
+/// *start one for this site* and *add this site to one you already have*, and
+/// only the first said so. It is null or empty where picking one means
+/// something else — adopting a standalone Entry moves that Entry and attaches
+/// no site — and then nothing is said.
 Future<CollectionChoice?> showCollectionPicker(
   BuildContext context,
   // The caller already holds a ref; taking it keeps this signature honest
@@ -88,6 +97,7 @@ Future<CollectionChoice?> showCollectionPicker(
   String? suggestedTitle,
   bool allowCreate = true,
   bool confirmNameHere = true,
+  String? attachingSourceHost,
 }) {
   return showModalBottomSheet<CollectionChoice>(
     context: context,
@@ -96,6 +106,7 @@ Future<CollectionChoice?> showCollectionPicker(
       suggestedTitle: suggestedTitle?.trim() ?? '',
       allowCreate: allowCreate,
       confirmNameHere: confirmNameHere,
+      attachingSourceHost: attachingSourceHost?.trim() ?? '',
     ),
   );
 }
@@ -105,10 +116,14 @@ class _CollectionPicker extends ConsumerStatefulWidget {
     required this.suggestedTitle,
     required this.allowCreate,
     required this.confirmNameHere,
+    required this.attachingSourceHost,
   });
 
   final String suggestedTitle;
   final bool allowCreate;
+
+  /// The site an existing Collection would gain. Empty where none would.
+  final String attachingSourceHost;
 
   /// Whether *New collection* names it here. See [showCollectionPicker].
   final bool confirmNameHere;
@@ -241,6 +256,24 @@ class _CollectionPickerState extends ConsumerState<_CollectionPicker> {
           onTapOutside: (_) => FocusScope.of(context).unfocus(),
         ),
       ),
+      // The other answer, said where it is given. The *New collection* row
+      // below has always named what it does to this site; picking a
+      // Collection that exists does the same thing to it and said nothing,
+      // which left the operation the user came for looking like a list.
+      if (widget.attachingSourceHost.isNotEmpty)
+        Padding(
+          padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
+          child: Text(
+            'Picking one adds ${widget.attachingSourceHost} to it as another '
+            'source. What it already holds is kept.',
+            key: const ValueKey('collectionPickerSourceNote'),
+            style: TextStyle(
+              fontSize: 12,
+              height: 1.45,
+              color: palette.inkMuted,
+            ),
+          ),
+        ),
       if (widget.allowCreate)
         ListTile(
           key: const ValueKey('collectionPickerNew'),

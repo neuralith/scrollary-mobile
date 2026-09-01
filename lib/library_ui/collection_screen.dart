@@ -24,6 +24,7 @@ import '../ui/status_style.dart';
 import 'collection_actions.dart';
 import 'collection_models.dart';
 import 'entry_offline.dart';
+import 'entry_open.dart';
 import 'entry_sort_control.dart';
 import 'library_widgets.dart';
 import 'new_entries_bar.dart';
@@ -205,10 +206,10 @@ class _CollectionDetail extends ConsumerWidget {
 
 /// One Entry row, drawn identically wherever it sits in the list.
 ///
-/// The tap opens the same menu the trailing control does. Reading happens from
-/// a downloaded copy, and that lane is not built yet — so the row offers what
-/// can honestly be done with an Entry today rather than a tap that goes
-/// nowhere.
+/// The tap **opens the Entry** — the copy on this device where there is one,
+/// its own site where there is not (`entry_open.dart`, V2-D71). The menu is
+/// the three-dot control's alone: settings and the destructive verbs are not
+/// what somebody reaching for a row in a reading list meant.
 ///
 /// The badges are the two things that can be *pending* about a row: a download
 /// this device has been asked for, and a position the collection is still
@@ -217,7 +218,7 @@ class _CollectionDetail extends ConsumerWidget {
 Widget _entryRow(BuildContext context, WidgetRef ref, EntryRowView entry) =>
     EntryRowTile(
       view: entry,
-      onTap: () => showEntryMenu(context, ref, entry),
+      onTap: () => openEntryFromRow(context, ref, entry),
       onMenu: () => showEntryMenu(context, ref, entry),
       badges: [
         ?entryQueueChip(context, ref.watch(entrySaveTaskProvider(entry.id))),

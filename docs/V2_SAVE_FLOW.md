@@ -64,7 +64,13 @@ Rules that bind every row:
 - **A page that is not in the library yet is a question about the library
   first** (V2-D69). The only answers the sheet offers for one are *start a
   Collection for this* and *add it to a Collection you have, which gains this
-  site as another source*. There is no loose save: the flow never writes an
+  site as another source*. Both answers are the picker's, and **both name the
+  site they act on**: *New collection* has always said it becomes the first
+  Source, and the rows beside it say that picking one adds this site to it as
+  another Source and keeps what it already holds
+  (`collectionPickerSourceNote`). They are one question with two answers, not
+  two controls — the Collections already held must be visible before another
+  is started (V2-D45, V2-D57). There is no loose save: the flow never writes an
   Entry outside a Collection, and a Collection is not a claim that the content
   is a series — *AI Training* is as good a Collection as *Quiet Harbour*.
 - **What to take off the page is asked after that answer, never before it.**

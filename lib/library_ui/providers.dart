@@ -682,10 +682,6 @@ Future<LocationRow?> primaryLocation(LibraryDatabase db, String entryId) async {
   return rows.firstOrNull;
 }
 
-/// The address of [primaryLocation].
-Future<String?> primaryLocationUrl(LibraryDatabase db, String entryId) async =>
-    (await primaryLocation(db, entryId))?.url;
-
 /// Opens an Entry for reading — the composition supplies the navigation.
 /// Null (the default) means no reader is wired, and read affordances that
 /// depend on it simply do nothing rather than crash a test.

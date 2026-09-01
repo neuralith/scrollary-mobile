@@ -763,7 +763,7 @@ class _V2SavePanelState extends ConsumerState<V2SavePanel> {
           naming: switch (_chosen) {
             NewCollectionChoice(:final name) => NewCollectionNaming(
               suggestedName: name,
-              host: Uri.tryParse(widget.url)?.host ?? '',
+              host: _host,
             ),
             _ => null,
           },
@@ -847,6 +847,10 @@ class _V2SavePanelState extends ConsumerState<V2SavePanel> {
   /// The title to suggest for a Collection: what the page named the work,
   /// falling back to the page's own title. A suggestion, never a match key —
   /// it pre-fills a field and filters a list, and selects nothing.
+  /// The site this page is on, as the picker and the naming row name it.
+  /// Empty where the address has no host, and then simply not said.
+  String get _host => Uri.tryParse(widget.url)?.host ?? '';
+
   String get _suggestedTitle {
     final detected = _shape?.detectedTitle?.trim() ?? '';
     return detected.isNotEmpty ? detected : widget.pageTitle.trim();
@@ -1141,6 +1145,11 @@ class _V2SavePanelState extends ConsumerState<V2SavePanel> {
       ref,
       suggestedTitle: _suggestedTitle,
       confirmNameHere: indexOnly,
+      // Both of this picker's answers do something to *this site*, and only
+      // *New collection* said so. Naming the host on the existing-Collection
+      // half is what makes the second answer — add this site to a Collection
+      // I already have — legible as the operation it is (V2-D69).
+      attachingSourceHost: _host,
     );
     if (choice == null || !mounted) return;
 

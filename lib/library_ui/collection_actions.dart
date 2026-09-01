@@ -38,6 +38,7 @@ import '../ui/status_style.dart';
 import 'collection_models.dart';
 import 'collection_picker.dart';
 import 'entry_offline.dart';
+import 'entry_open.dart';
 import 'folder_picker.dart';
 import 'library_widgets.dart';
 import 'placement_actions.dart';
@@ -570,7 +571,10 @@ Future<void> showEntryMenu(
     case _EntryAction.details:
       await showEntryDetails(context, ref, view);
     case _EntryAction.openAtSource:
-      await _openAtSource(context, ref, view);
+      // The same resolution the row's own tap uses (`entry_open.dart`), so
+      // there is one rule about which of an Entry's sites is opened and one
+      // place a choice is asked for.
+      await openEntryAtSource(context, ref, view);
     case _EntryAction.place:
       await placeEntryInSequence(context, ref, view);
     case _EntryAction.addToCollection:
@@ -791,33 +795,6 @@ class _ModeChoice {
   const _ModeChoice.ask() : mode = null;
 
   final CaptureMode? mode;
-}
-
-/// Opening at the source is two facts, in this order: the page opens, and the
-/// library records that it was opened (I16 — never that it was finished).
-Future<void> _openAtSource(
-  BuildContext context,
-  WidgetRef ref,
-  EntryRowView view,
-) async {
-  final opener = ref.read(sourceOpenerProvider);
-  final url = await primaryLocationUrl(
-    ref.read(libraryDatabaseProvider),
-    view.id,
-  );
-  if (!context.mounted) return;
-  if (url == null) {
-    showLibraryMessage(context, 'No address is recorded for this entry.');
-    return;
-  }
-  if (opener == null) {
-    // Honest rather than silent: nothing opened, so nothing is recorded as
-    // having been opened.
-    showLibraryMessage(context, 'Opening a source is not available yet.');
-    return;
-  }
-  await opener(url);
-  await ref.read(readingRepoProvider).recordSourceAccess(view.id);
 }
 
 Future<void> _removeFromLibrary(

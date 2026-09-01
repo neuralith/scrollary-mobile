@@ -29,6 +29,7 @@ void main() {
     String? suggestedTitle,
     bool allowCreate = true,
     bool confirmNameHere = true,
+    String? attachingSourceHost,
   }) async {
     choice = null;
     closed = false;
@@ -45,6 +46,7 @@ void main() {
                     suggestedTitle: suggestedTitle,
                     allowCreate: allowCreate,
                     confirmNameHere: confirmNameHere,
+                    attachingSourceHost: attachingSourceHost,
                   );
                   closed = true;
                 },
@@ -204,6 +206,41 @@ void main() {
     expect(find.byKey(ValueKey('collectionOption-$alphaId')), findsOneWidget);
     expect(find.byKey(const ValueKey('collectionPickerNew')), findsOneWidget);
     expect(closed, isFalse);
+  });
+
+  screenTest('the site an existing collection would gain is named on the '
+      'rows that would gain it', (tester) async {
+    // Both answers here do something to this site, and only *New collection*
+    // said so. The list is the *add this site as another source* operation,
+    // and a list of names alone does not read as one.
+    final (alphaId, _) = await seedTwo();
+    await openPicker(tester, attachingSourceHost: 'reading.example.com');
+    await pumpUntil(tester, find.text('Alpha notes'));
+
+    expect(
+      find.byKey(const ValueKey('collectionPickerSourceNote')),
+      findsOneWidget,
+    );
+    expect(find.textContaining('reading.example.com'), findsOneWidget);
+
+    await tapAndPump(tester, find.byKey(ValueKey('collectionOption-$alphaId')));
+    expect((choice! as ExistingCollectionChoice).id, alphaId);
+  });
+
+  screenTest('and is not named where picking one attaches no site', (
+    tester,
+  ) async {
+    // Adopting a standalone Entry moves that Entry into a Collection; no site
+    // is attached, so the sentence would be a claim about something that does
+    // not happen.
+    await seedTwo();
+    await openPicker(tester, allowCreate: false);
+    await pumpUntil(tester, find.text('Alpha notes'));
+
+    expect(
+      find.byKey(const ValueKey('collectionPickerSourceNote')),
+      findsNothing,
+    );
   });
 
   screenTest('cannot create one where creating one would be wrong', (

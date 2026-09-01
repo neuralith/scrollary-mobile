@@ -179,6 +179,12 @@ in [docs/DECISIONS.md](docs/DECISIONS.md).
   already named above the list; across the library it names itself. The
   stored title is never modified, and *Entry details* is where the record is
   read (V2-D55).
+  **A tap on the row opens the Entry** (`lib/library_ui/entry_open.dart`,
+  V2-D71): the copy on this device where there is one, its own site where
+  there is not, and a question about which site only where the Collection has
+  several Sources and no preferred one. The actions sheet is the three-dot
+  control's alone — it is where an Entry's settings and its two removals live,
+  and it is never what a reading gesture reaches.
 - **Library UX** (`lib/library_ui`, D1–D7) — the one-page Library (root
   Collections listed directly, Folders as collapsible sections, Continue
   Reading and the Settings/Activity doors in its header — V2-D43), folder

@@ -625,8 +625,6 @@ class BrowserSaveActions extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final palette = AppPalette.of(context);
-
     return AnimatedBuilder(
       animation: Listenable.merge([runner, sourceCheck]),
       builder: (context, _) {
@@ -700,32 +698,32 @@ class BrowserSaveActions extends StatelessWidget {
                     // Icon only: the page is what the user came for, and the
                     // word beside the glyph bought nothing a tooltip and an
                     // accessible name do not. The state still reads — the
-                    // glyph and the colour carry it, and the name says it in
+                    // glyph and the tint carry it, and the name says it in
                     // words for anyone who cannot see either.
-                    Tooltip(
-                      message: _saveLabel(running, hasCopy),
-                      child: FloatingActionButton(
-                        key: const ValueKey('browserSaveAction'),
-                        heroTag: 'browserSave',
-                        onPressed: running ? onViewLibrary : onSave,
-                        backgroundColor: running
-                            ? palette.surface
-                            : palette.primary,
-                        foregroundColor: running
-                            ? palette.inkStrong
-                            : palette.onPrimary,
-                        child: Icon(
-                          running
-                              ? Icons.downloading
-                              : pageIsQueued
-                              ? Icons.schedule
-                              : hasCopy
-                              ? Icons.download_for_offline
-                              : Icons.download,
-                          size: 22,
-                          semanticLabel: _saveLabel(running, hasCopy),
-                        ),
-                      ),
+                    //
+                    // Same square, radius, lift and glyph size as the two
+                    // controls beside it: these are one group, and a control
+                    // of a different shape and size reads as belonging to a
+                    // different surface. What marks this one as the action
+                    // the user came for is the accent tint — the app's own
+                    // emphasis, a container and an edge rather than a
+                    // saturated fill, so it survives a warm filter and does
+                    // not shout over the page.
+                    _RoundAction(
+                      actionKey: const ValueKey('browserSaveAction'),
+                      icon: running
+                          ? Icons.downloading
+                          : pageIsQueued
+                          ? Icons.schedule
+                          : hasCopy
+                          ? Icons.download_for_offline
+                          : Icons.download,
+                      tooltip: _saveLabel(running, hasCopy),
+                      // While a run runs this is a way to the library, not
+                      // the save — so it drops back to the neutral tone the
+                      // other two carry.
+                      emphasis: !running,
+                      onPressed: running ? onViewLibrary : onSave,
                     ),
                 ],
               ),
@@ -779,6 +777,10 @@ class _QueuedSavesChip extends StatelessWidget {
   }
 }
 
+/// One control in the floating group over the page. Every control in that
+/// group is this widget: same square, same radius, same lift, same glyph
+/// size, so the row reads as one thing rather than as parts borrowed from
+/// different surfaces. [emphasis] is the only difference on offer.
 class _RoundAction extends StatelessWidget {
   const _RoundAction({
     required this.actionKey,
@@ -786,6 +788,7 @@ class _RoundAction extends StatelessWidget {
     required this.tooltip,
     required this.onPressed,
     this.dimmed = false,
+    this.emphasis = false,
   });
 
   final Key actionKey;
@@ -796,6 +799,12 @@ class _RoundAction extends StatelessWidget {
   /// Drawn back, for the one control that stays over a page being read.
   final bool dimmed;
 
+  /// The accent tone, for the one action in the group the user came for. It
+  /// is the app's ordinary emphasis — a container fill and a matching edge,
+  /// not a saturated block — so it stays legible under a warm filter and
+  /// never outweighs the page it sits on.
+  final bool emphasis;
+
   @override
   Widget build(BuildContext context) {
     final palette = AppPalette.of(context);
@@ -804,14 +813,17 @@ class _RoundAction extends StatelessWidget {
       child: Tooltip(
         message: tooltip,
         child: SizedBox.square(
-          dimension: 46,
+          // 48: the smallest square a finger can be asked to find.
+          dimension: 48,
           child: Material(
-            color: palette.surface,
+            color: emphasis ? palette.primaryContainer : palette.surface,
             elevation: 2,
             shadowColor: Colors.black26,
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(16),
-              side: BorderSide(color: palette.border),
+              side: BorderSide(
+                color: emphasis ? palette.primaryBorder : palette.border,
+              ),
             ),
             child: InkWell(
               key: actionKey,
@@ -820,7 +832,9 @@ class _RoundAction extends StatelessWidget {
               child: Icon(
                 icon,
                 size: 21,
-                color: palette.inkStrong,
+                color: emphasis
+                    ? palette.onPrimaryContainer
+                    : palette.inkStrong,
                 semanticLabel: tooltip,
               ),
             ),

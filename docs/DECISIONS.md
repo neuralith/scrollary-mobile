@@ -1614,3 +1614,41 @@ The scope of a taught rule is unchanged (`HintScope`, narrowest first): host
 plus collection fingerprint by default, which is the Source, widening to a
 path pattern or the whole host only on the user's explicit choice. Nothing is
 persisted about a site that a person did not teach by tapping.
+
+### V2-D71
+
+**A tap on an Entry opens the Entry. The menu is the three-dot control's
+alone.**
+
+Both of a row's controls opened the same actions sheet, and the code said why:
+"reading happens from a downloaded copy, and that lane is not built yet". The
+lane has been built for several stages — `entryOpenerProvider` is wired to the
+reader route and `sourceOpenerProvider` to the Browser — and the row never
+caught up. So the most ordinary thing a person can want from a reading list —
+*read this one* — was two taps behind a sheet whose other rows remove copies
+and remove Entries from the library.
+
+The tap now answers one question, in `lib/library_ui/entry_open.dart`, and the
+three-dot control keeps the menu unchanged:
+
+- **This device holds a copy → the offline reader.** A download is a property
+  of this device (I13); where the bytes are here, they are what *open it*
+  means.
+- **It does not → the Entry's own site**, and the library records that it was
+  *opened*, never that it was finished (I16). A non-downloaded Entry is a
+  first-class library item, so this is the ordinary path and not a fallback.
+- **Several places, and no clear preferred one → ask.** An Entry may be
+  published on more than one of its Collection's Sources. The Collection's
+  preferred Source answers that where it has one — the same pointer, read the
+  same way `SourceCheck.checkPreferredSource` reads it — and where it does not,
+  the user is asked which site rather than having one picked for them.
+
+*Open at source* on the menu goes through the same resolution, so there is one
+rule about which of an Entry's sites is opened and one place a choice is asked
+for. Nothing here constructs an address: every URL is read from a Location the
+library recorded, because an Entry is not a URL (V2-D15).
+
+Why the menu was not simply left on the tap as well: a list whose every row
+opens a sheet containing *Remove from library* puts a destructive verb one
+mis-tap from a reading gesture, and the sheet is where an Entry's settings
+belong — not where its content is reached.

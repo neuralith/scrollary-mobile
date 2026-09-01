@@ -31,6 +31,7 @@ import 'collection_actions.dart';
 import 'collection_models.dart';
 import 'continue_reading_strip.dart';
 import 'entry_offline.dart';
+import 'entry_open.dart';
 import 'folder_actions.dart';
 import 'folder_models.dart';
 import 'library_widgets.dart';
@@ -184,9 +185,9 @@ List<Widget> _contentsOf(
         padding: EdgeInsets.only(left: _indent(depth)),
         child: EntryRowTile(
           view: entry,
-          // The same menu from either control: reading opens from a
-          // downloaded copy, and that lane is not built yet.
-          onTap: () => showEntryMenu(context, ref, entry),
+          // The tap opens the Entry; the menu is the three-dot control's
+          // alone (`entry_open.dart`, V2-D71).
+          onTap: () => openEntryFromRow(context, ref, entry),
           onMenu: () => showEntryMenu(context, ref, entry),
           // A standalone Entry is downloaded the same way any other is, so
           // it says so in the same place.

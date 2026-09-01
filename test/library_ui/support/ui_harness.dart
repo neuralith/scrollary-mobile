@@ -61,6 +61,12 @@ class UiHarness {
   /// Every URL the injected opener was handed, in order.
   final opened = <String>[];
 
+  /// Every Entry the injected reader was asked to open, in order. Separate
+  /// from [opened] deliberately: opening the copy on this device and opening a
+  /// website are two different things a tap can mean, and a test that could
+  /// not tell them apart could not assert which one happened.
+  final readEntries = <String>[];
+
   /// How many times the queue runner was handed an authorised queue.
   int starts = 0;
 
@@ -96,6 +102,7 @@ class UiHarness {
     overrides: [
       libraryUiServicesProvider.overrideWithValue(services),
       sourceOpenerProvider.overrideWithValue((url) async => opened.add(url)),
+      entryOpenerProvider.overrideWithValue((id) async => readEntries.add(id)),
       saveQueueStarterProvider.overrideWithValue(starter),
       placementSubmitProvider.overrideWithValue(
         (request) => placement(request),

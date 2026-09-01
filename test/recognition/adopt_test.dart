@@ -229,6 +229,80 @@ void main() {
       expect(await locationsOf(entry.id), hasLength(1));
     });
 
+    test('what the Collection already holds is untouched by the new '
+        'Source', () async {
+      // The property the flow is asked for by name: attaching another site to
+      // a Collection is an addition, never a rebuild. Everything that made
+      // the Collection what it is — its Entries, their order, their reading
+      // state, the bytes on this device and which Source it prefers — is the
+      // same afterwards.
+      final collection = await h.collection();
+      final sourceA = await h.source(collection: collection, host: kHostA);
+      final (five, locationFive) = await h.placedEntry(
+        collection: collection,
+        source: sourceA,
+        host: kHostA,
+        number: 5,
+      );
+      await h.placedEntry(
+        collection: collection,
+        source: sourceA,
+        host: kHostA,
+        number: 6,
+      );
+      await h.repos.reading.markRead(five.id);
+      await h.repos.offline.recordCopy(
+        entryId: five.id,
+        locationUrl: locationFive.url,
+        artifactFormat: 'imageSequence',
+        contentPath: 'packages/${five.id}',
+        byteSize: 4096,
+      );
+      await h.repos.collections.setPreferredSource(collection.id, sourceA.id);
+
+      final outcome = await h.adoption.addToExistingCollection(
+        collectionId: collection.id,
+        keys: RecognitionKeys.of(partUrl(kHostB, 7)),
+        pageTitle: 'Part 7',
+        printedNumber: 7,
+      );
+
+      expect(outcome.succeeded, isTrue);
+      final after = await h.repos.collections.byId(collection.id);
+      expect(
+        after!.preferredSourceId,
+        sourceA.id,
+        reason: 'a new Source never becomes the preferred one on its own',
+      );
+      expect(after.orderingBasis, collection.orderingBasis);
+      expect(after.name, collection.name);
+
+      final entries = await h.repos.entries.entriesOf(collection.id);
+      expect(
+        entries.map((e) => e.ordinal),
+        [5, 6, 7],
+        reason:
+            'the Entries it held keep their positions, and the new one '
+            'takes its own',
+      );
+      expect(
+        (await h.repos.reading.stateOf(five.id)).status,
+        ReadStatus.completed,
+        reason:
+            'reading state belongs to the Entry, not to the Sources '
+            'around it',
+      );
+      expect(
+        (await h.repos.offline.activeCopyOf(five.id))!.contentPath,
+        'packages/${five.id}',
+      );
+      expect(
+        await locationsOf(five.id),
+        hasLength(1),
+        reason: 'an Entry the new Source said nothing about gains nothing',
+      );
+    });
+
     test('an address with no stable Source key is refused', () async {
       final collection = await h.collection();
 
