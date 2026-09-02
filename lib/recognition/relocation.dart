@@ -334,7 +334,7 @@ class SourceRelocationCandidate {
     required this.host,
     required this.previousPathKey,
     required this.pathKey,
-    required this.listingsSeen,
+    this.listingsSeen = 0,
   });
 
   /// The Source as the library holds it — the row whose `path_key` is stale.
@@ -348,10 +348,65 @@ class SourceRelocationCandidate {
   /// Where the listing was actually read, normalised the way a `path_key` is.
   final String pathKey;
 
-  /// How many of this Source's addresses the landed page listed. A candidate
-  /// only exists because the page worked as a listing, and this is that fact
-  /// as a number.
+  /// How many of this Source's addresses the landed page listed.
+  ///
+  /// The check's corroboration, as a number: a candidate only reaches it
+  /// because the page worked as this Source's listing. **Zero on the save
+  /// path**, where the evidence is a different thing entirely — the user has
+  /// already said which Collection this page belongs to — and where there is
+  /// no listing to have counted.
   final int listingsSeen;
+}
+
+/// Whether [keys] could be a Source of [collectionId] at a new address.
+///
+/// **Asked only after the user has answered which Collection this page belongs
+/// to.** That answer is the identity decision (V2-D45), and this does not
+/// revisit it: it asks the narrower question the save flow never asked, which
+/// is whether attaching this address should *move* the Collection's existing
+/// Source on this site or *add a second one beside it*. Until now the save
+/// flow could only do the second, so a provider that rewrote its slug quietly
+/// grew a Collection a second Source — or, if the user started a new
+/// Collection instead, a duplicate of a work they already had.
+///
+/// Nothing here matches titles, slugs or anything else across sites. The three
+/// conditions are all structural, and each one is a refusal:
+///
+/// * the address must yield a stable Source key at all;
+/// * it must not already *be* a Source — an address the library publishes is
+///   not a move of anything;
+/// * the Collection must have **exactly one** readable Source on this host at
+///   a different path. None means there is nothing here to have moved, and
+///   more than one means which of them moved is a guess, which is not this
+///   function's to make.
+Future<SourceRelocationCandidate?> relocationCandidateFor({
+  required CollectionRepository collections,
+  required RecognitionIndex index,
+  required String collectionId,
+  required RecognitionKeys keys,
+}) async {
+  final pathKey = keys.pathKey;
+  final host = keys.host.toLowerCase();
+  if (pathKey == null || host.isEmpty) return null;
+  if (await index.lookupSource(keys.host, pathKey) != null) return null;
+
+  const readable = {'active', 'dormant'};
+  final candidates = [
+    for (final source in await collections.sourcesOf(collectionId))
+      if (source.host.toLowerCase() == host &&
+          source.pathKey != pathKey &&
+          readable.contains(source.lifecycle))
+        source,
+  ];
+  if (candidates.length != 1) return null;
+
+  final from = candidates.single;
+  return SourceRelocationCandidate(
+    sourceId: from.id,
+    host: from.host,
+    previousPathKey: from.pathKey,
+    pathKey: pathKey,
+  );
 }
 
 /// Where this Source's listing should be read, given where its own root
@@ -385,12 +440,21 @@ class SourceRelocationOutcome {
   const SourceRelocationOutcome({
     this.fromSourceId,
     this.toSourceId,
+    this.repairedLocationIds = const [],
     this.violation,
   });
 
   const SourceRelocationOutcome.refused(InvariantViolation this.violation)
     : fromSourceId = null,
-      toSourceId = null;
+      toSourceId = null,
+      repairedLocationIds = const [];
+
+  /// Locations that were filed on the Source being left behind while their
+  /// address provably belongs to the destination's path, moved to it.
+  ///
+  /// Empty for every ordinary relocation. Non-empty only on a library an
+  /// earlier build damaged — see [SourceRelocator].
+  final List<String> repairedLocationIds;
 
   /// The Source that moved. Kept, pointing forward — never deleted, so its
   /// Locations, its measurements and its history survive the move.
@@ -415,11 +479,33 @@ class SourceRelocationOutcome {
 /// The new Source is created **under the same Collection**, which is what the
 /// repository's `resolvedInto` validation requires and what keeps the move a
 /// lifecycle change rather than a reparenting.
+/// ## Repairing what an earlier build wrote
+///
+/// One shipped build read a listing at a path its Source did not claim and
+/// wrote the addresses it found onto that Source anyway. Those rows contradict
+/// their own Source, and confirming the move is the moment their correct home
+/// becomes known — so [relocate] moves exactly the ones it can prove: a
+/// Location of the Source being left behind whose address derives the
+/// **destination's** `(host, path_key)`. Nothing else is touched.
+///
+/// The same build also *retracted* Locations, because the foreign listing's
+/// numeric interval covered addresses that listing never showed. Those are
+/// **not** repaired, and deliberately: a retraction records no reason, so a
+/// wrongly retracted row is indistinguishable from one the site genuinely
+/// stopped listing, and un-retracting would restore an address that no longer
+/// resolves — the site moved it. An Entry left with no live address regains
+/// one the honest way, from the next check of the relocated Source, which
+/// re-lists it at the path it actually lives at now.
 class SourceRelocator {
-  SourceRelocator({required this._collections, required this._index});
+  SourceRelocator({
+    required this._collections,
+    required this._index,
+    required this._entries,
+  });
 
   final CollectionRepository _collections;
   final RecognitionIndex _index;
+  final EntryRepository _entries;
 
   Future<SourceRelocationOutcome> relocate({
     required String fromSourceId,
@@ -474,7 +560,31 @@ class SourceRelocator {
     return SourceRelocationOutcome(
       fromSourceId: fromSourceId,
       toSourceId: target.id,
+      repairedLocationIds: await _repair(from: fromSourceId, to: target),
     );
+  }
+
+  /// Move the Locations of [from] whose address provably belongs to [to].
+  ///
+  /// The proof is the one derivation there is: the address yields the
+  /// destination's own `(host, path_key)`. A row that derives anything else —
+  /// including the Source it is already on — is left exactly where it is, so
+  /// an ordinary relocation repairs nothing and a damaged one repairs only
+  /// what it can name.
+  Future<List<String>> _repair({
+    required String from,
+    required SourceRow to,
+  }) async {
+    final repaired = <String>[];
+    for (final location in await _entries.locationsOfSource(from)) {
+      final keys = RecognitionKeys.of(location.url);
+      if (keys.host != to.host || keys.pathKey != to.pathKey) continue;
+      if (await _entries.repointLocationSource(location.id, sourceId: to.id) ==
+          null) {
+        repaired.add(location.id);
+      }
+    }
+    return repaired;
   }
 
   /// The Source a check should actually read for [sourceId], following a

@@ -334,7 +334,14 @@ class LibrarySourceWalk implements SourceWalk {
     final start = await _entries.locationById(fromLocationId);
     final sourceId = start?.sourceId;
     if (start == null || sourceId == null) return ended(WalkStop.leftTheSource);
-    final source = await _collections.sourceById(sourceId);
+    // A site that moved points forward, and walking it means walking where it
+    // went (V2-D14) — the same resolution `check.dart` already applies, and
+    // the reason it is here too: a Location discovered before the move names
+    // the Source it was discovered on, whose own path is now the old one. The
+    // pages this walk reads are at the new path, so judging them against the
+    // row left behind would refuse the Collection's own addresses. A pointer
+    // that loops resolves to nothing.
+    final source = await _collections.terminalSourceOf(sourceId);
     if (source == null) return ended(WalkStop.leftTheSource);
     final collection = await _collections.byId(source.collectionId);
     if (collection == null) return ended(WalkStop.leftTheSource);

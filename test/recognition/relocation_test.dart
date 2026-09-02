@@ -18,10 +18,14 @@ import 'package:web_reader/domain/location.dart';
 import 'package:web_reader/domain/source.dart';
 import 'package:web_reader/features/source_observation_browser.dart';
 import 'package:web_reader/recognition/entry_identity.dart';
+import 'package:web_reader/core/url_utils.dart';
+import 'package:web_reader/recognition/check.dart';
+import 'package:web_reader/recognition/walk.dart';
 import 'package:web_reader/recognition/recognise.dart';
 import 'package:web_reader/recognition/relocation.dart';
 
 import '../helpers/fake_browser.dart';
+import 'support/forward_pages_fake.dart';
 import 'support/recognition_harness.dart';
 
 /// The same work, after the provider rewrote the unstable half of its slug.
@@ -485,6 +489,7 @@ void main() {
       relocator = SourceRelocator(
         collections: h.repos.collections,
         index: h.repos.recognition,
+        entries: h.repos.entries,
       );
       collection = await h.collection();
       source = await h.source(collection: collection, host: kHostA);
@@ -599,6 +604,8 @@ void main() {
     });
   });
 
+  _traversalAfterRediscovery();
+
   // ─── the duplicate this whole exercise exists to prevent ──────────────────
 
   group('a second Collection for a work the library already holds', () {
@@ -645,6 +652,7 @@ void main() {
       await SourceRelocator(
         collections: h.repos.collections,
         index: h.repos.recognition,
+        entries: h.repos.entries,
       ).relocate(
         fromSourceId: source.id,
         host: kHostA,
@@ -668,6 +676,7 @@ void main() {
           await SourceRelocator(
             collections: h.repos.collections,
             index: h.repos.recognition,
+            entries: h.repos.entries,
           ).relocate(
             fromSourceId: source.id,
             host: kHostA,
@@ -689,5 +698,300 @@ void main() {
         reason: 'one work, one Entry at position 101',
       );
     });
+  });
+}
+
+// ─── the regression: discovery and traversal disagreeing about the path ─────
+
+/// A provider that moved its listing *and* its entry addresses, reproduced end
+/// to end over the real check, the real observation source and the real walk.
+///
+/// The bug this pins: reading a listing at a path the Source does not claim
+/// wrote Locations contradicting their own Source, retracted the Locations the
+/// Source really held, and left *Entries from here* refusing to traverse the
+/// very rows the check had just created.
+void _traversalAfterRediscovery() {
+  group('a provider that moved its slug', () {
+    late RecognitionHarness h;
+    late CollectionRow collection;
+    late SourceRow source;
+    late LocationRow originalLocation;
+    late FakeBrowser browser;
+    late SourceCheck check;
+
+    PageProbe listingAt(String path, List<int> parts) {
+      final url = 'https://$kHostA$path';
+      return PageProbe(
+        url: url,
+        title: 'Quiet Harbour',
+        readyState: 'complete',
+        documentHeight: 2000,
+        viewportHeight: 800,
+        viewportWidth: 400,
+        atBottom: false,
+        links: [
+          for (final n in parts)
+            PageLink(href: movedPartUrl(kHostA, n), text: 'Part $n'),
+        ],
+      );
+    }
+
+    setUp(() async {
+      h = RecognitionHarness();
+      collection = await h.collection();
+      source = await h.source(collection: collection, host: kHostA);
+      final seeded = await h.placedEntry(
+        collection: collection,
+        source: source,
+        host: kHostA,
+        number: 101,
+      );
+      originalLocation = seeded.$2;
+
+      browser = FakeBrowser()..setUrl('about:blank');
+      browser.redirects['https://$kHostA$kWorkPath'] =
+          'https://$kHostA$kMovedWorkPath';
+      browser.addPage(
+        'https://$kHostA$kMovedWorkPath',
+        listingAt(kMovedWorkPath, [103, 102, 101]),
+      );
+
+      check = SourceCheck(
+        collections: h.repos.collections,
+        entries: h.repos.entries,
+        index: h.repos.recognition,
+        discovery: h.discovery,
+        observations: BrowserSourceObservationSource(browser),
+      );
+    });
+
+    tearDown(() => h.close());
+
+    Future<SourceCheckOutcome> runCheck() => check.checkSource(
+      source.id,
+      limits: const SourceCheckLimits(maxPages: 1, maxNewEntries: 10),
+      shouldContinue: () => true,
+    );
+
+    Future<SourceRelocationOutcome> confirmMove() => SourceRelocator(
+      collections: h.repos.collections,
+      index: h.repos.recognition,
+      entries: h.repos.entries,
+    ).relocate(fromSourceId: source.id, host: kHostA, pathKey: kMovedWorkPath);
+
+    LibrarySourceWalk walkOver(Map<String, WalkedPage> pages) =>
+        LibrarySourceWalk(
+          entries: h.repos.entries,
+          collections: h.repos.collections,
+          index: h.repos.recognition,
+          pages: FakeForwardPages(pages),
+        );
+
+    /// A straight chain at the moved path: each part links to the next.
+    Map<String, WalkedPage> movedChain(List<int> parts, {String? from}) {
+      final pages = <String, WalkedPage>{};
+      for (var i = 0; i < parts.length; i++) {
+        final n = parts[i];
+        final landing = movedPartUrl(kHostA, n);
+        // The first page may be reached at its pre-move address and land on
+        // the moved one, which is what the provider's redirect does.
+        final key = i == 0 && from != null ? from : landing;
+        pages[normalizeUrl(key)] = WalkedPage(
+          url: landing,
+          printedNumber: n.toDouble(),
+          title: 'Part $n',
+          nextUrl: i + 1 < parts.length
+              ? movedPartUrl(kHostA, parts[i + 1])
+              : null,
+        );
+      }
+      return pages;
+    }
+
+    // --- before the move is confirmed ------------------------------------
+
+    test('the check stops on the move rather than reading a listing this '
+        'Source does not claim', () async {
+      final outcome = await runCheck();
+
+      expect(outcome.state, SourceCheckState.stopped);
+      expect(outcome.stopReason, SourceCheckStop.sourceListingMoved);
+      expect(outcome.relocation, isNotNull);
+      expect(outcome.relocation!.previousPathKey, kWorkPath);
+      expect(outcome.relocation!.pathKey, kMovedWorkPath);
+    });
+
+    test('it writes no Location that contradicts its own Source', () async {
+      await runCheck();
+
+      for (final location in await h.repos.entries.locationsOfSource(
+        source.id,
+      )) {
+        expect(
+          RecognitionKeys.of(location.url).pathKey,
+          source.pathKey,
+          reason: 'every row of a Source sits on that Source\'s own path',
+        );
+      }
+    });
+
+    test('it does not retract the Locations the Source really holds', () async {
+      await runCheck();
+
+      final stored = await h.repos.entries.locationById(originalLocation.id);
+      expect(
+        stored!.lifecycle,
+        LocationLifecycle.active.name,
+        reason: 'a listing that never covered this address cannot retract it',
+      );
+    });
+
+    // --- once the user has confirmed it ----------------------------------
+
+    test('after the move is confirmed the check reads it as an ordinary '
+        'Source', () async {
+      await confirmMove();
+      final outcome = await runCheck();
+
+      expect(outcome.state, SourceCheckState.updatesAvailable);
+      expect(outcome.relocation, isNull, reason: 'it has already moved');
+      expect(outcome.discovery.addedLocationIds, isNotEmpty);
+    });
+
+    test(
+      'the rediscovered rows sit on the Source that describes them',
+      () async {
+        final moved = await confirmMove();
+        await runCheck();
+
+        final rows = await h.repos.entries.locationsOfSource(moved.toSourceId!);
+        expect(rows, isNotEmpty);
+        for (final location in rows) {
+          expect(RecognitionKeys.of(location.url).pathKey, kMovedWorkPath);
+        }
+      },
+    );
+
+    test('REGRESSION: Entries from here traverses the rediscovered '
+        'Entries', () async {
+      await confirmMove();
+      await runCheck();
+
+      final hit = await h.repos.recognition.lookupUrl(
+        RecognitionKeys.of(movedPartUrl(kHostA, 102)).urlKey,
+      );
+      expect(hit, isNotNull);
+
+      final captured = <String>[];
+      // `wanted` counts the Entries *after* the one the walk starts on: the
+      // starting page is what the count counts from.
+      final outcome = await walkOver(movedChain([102, 103, 104])).forward(
+        fromLocationId: hit!.location.id,
+        wanted: 2,
+        shouldContinue: () => true,
+        // A CAPTURING walk — what *Entries from here* runs. The non-capturing
+        // one reuses held rows before the guard and would hide this.
+        onEntry: (entry) async {
+          captured.add(entry.url);
+          return true;
+        },
+      );
+
+      expect(outcome.stop, WalkStop.countReached);
+      expect(captured, [movedPartUrl(kHostA, 103), movedPartUrl(kHostA, 104)]);
+    });
+
+    test('REGRESSION: it also traverses from an Entry discovered before the '
+        'move, whose Location names the Source left behind', () async {
+      await confirmMove();
+
+      final captured = <String>[];
+      final outcome =
+          await walkOver(
+            movedChain([101, 102, 103], from: partUrl(kHostA, 101)),
+          ).forward(
+            // The pre-move Location: it still names the old Source row.
+            fromLocationId: originalLocation.id,
+            wanted: 2,
+            shouldContinue: () => true,
+            onEntry: (entry) async {
+              captured.add(entry.url);
+              return true;
+            },
+          );
+
+      expect(outcome.stop, WalkStop.countReached);
+      expect(captured, [movedPartUrl(kHostA, 102), movedPartUrl(kHostA, 103)]);
+    });
+
+    // --- the refusal boundary --------------------------------------------
+
+    test('a confirmed move does not weaken the guard: a next address in '
+        'another work is still refused', () async {
+      await confirmMove();
+      await runCheck();
+
+      final hit = await h.repos.recognition.lookupUrl(
+        RecognitionKeys.of(movedPartUrl(kHostA, 102)).urlKey,
+      );
+      const foreign = 'https://$kHostA/works/a-different-work/part-1';
+
+      final outcome =
+          await walkOver({
+            normalizeUrl(movedPartUrl(kHostA, 102)): WalkedPage(
+              url: movedPartUrl(kHostA, 102),
+              printedNumber: 102,
+              title: 'Part 102',
+              nextUrl: foreign,
+            ),
+            normalizeUrl(foreign): WalkedPage(
+              url: foreign,
+              printedNumber: 1,
+              title: 'Part 1',
+            ),
+          }).forward(
+            fromLocationId: hit!.location.id,
+            wanted: 3,
+            shouldContinue: () => true,
+            onEntry: (entry) async => true,
+          );
+
+      expect(outcome.stop, WalkStop.leftTheSource);
+      expect(
+        await h.repos.recognition.lookupUrl(normalizeUrl(foreign)),
+        isNull,
+        reason: 'nothing from another work entered the library',
+      );
+    });
+
+    test(
+      'a next address on another host is still refused after a move',
+      () async {
+        await confirmMove();
+        await runCheck();
+
+        final hit = await h.repos.recognition.lookupUrl(
+          RecognitionKeys.of(movedPartUrl(kHostA, 102)).urlKey,
+        );
+        final foreign = movedPartUrl(kHostB, 103);
+
+        final outcome =
+            await walkOver({
+              normalizeUrl(movedPartUrl(kHostA, 102)): WalkedPage(
+                url: movedPartUrl(kHostA, 102),
+                printedNumber: 102,
+                title: 'Part 102',
+                nextUrl: foreign,
+              ),
+            }).forward(
+              fromLocationId: hit!.location.id,
+              wanted: 3,
+              shouldContinue: () => true,
+              onEntry: (entry) async => true,
+            );
+
+        expect(outcome.stop, WalkStop.leftTheSource);
+      },
+    );
   });
 }

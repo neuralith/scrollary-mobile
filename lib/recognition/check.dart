@@ -94,6 +94,22 @@ enum SourceCheckStop {
   /// The page was not this Source's listing. Not evidence of being up to date.
   listingUnrecognised,
 
+  /// The listing is no longer at the address stored for this Source: reading
+  /// it was redirected to another path on the same host.
+  ///
+  /// A reading of a page this Source's identity does not describe cannot be
+  /// applied to it. Its addresses would become Locations contradicting their
+  /// own Source — which every guard that re-derives `(host, path_key)` from an
+  /// address then rejects, including the traversal *Entries from here* runs —
+  /// and its interval would retract the Locations this Source really does
+  /// hold, because they are absent from a listing that never covered them.
+  ///
+  /// So the check stops and says which path it was sent to. Recording that the
+  /// Source moved is a lifecycle change the user confirms (V2-D14,
+  /// `recognition/relocation.dart`); once confirmed, the Source's own path is
+  /// the new one and an ordinary check reads it with nothing special about it.
+  sourceListingMoved,
+
   /// The reading itself left out addresses it saw, so it stopped short of what
   /// the page held and cannot be used to conclude anything about absence.
   listingTruncated,
@@ -542,6 +558,7 @@ class SourceCheck {
     // Where the listing root actually turned out to be. Only the first
     // reading can say: every page after it is inside the listing already.
     String? landedPath;
+    SourceRelocationCandidate? relocation;
 
     while (true) {
       if (pagesRead >= limits.maxPages) {
@@ -580,6 +597,24 @@ class SourceCheck {
       if (pagesRead == 1) {
         newestFirst = observation.newestFirst;
         landedPath = observation.landedPathKey;
+        // **A reading of a page this Source's identity does not describe is
+        // not a reading of this Source.** It is stopped here, before a single
+        // row is written and before the interval exists, because both of the
+        // things that would happen next are wrong: its addresses would become
+        // Locations whose `(host, path_key)` contradicts their own Source, and
+        // its interval would retract the Locations this Source really holds —
+        // absent from a listing that never covered them.
+        if (landedPath != null && landedPath != source.pathKey) {
+          relocation = SourceRelocationCandidate(
+            sourceId: source.id,
+            host: source.host,
+            previousPathKey: source.pathKey,
+            pathKey: landedPath,
+            listingsSeen: observation.listings.length,
+          );
+          stop = SourceCheckStop.sourceListingMoved;
+          break;
+        }
       }
       orderingConfident &= observation.orderingConfident;
       dropped += observation.dropped;
@@ -615,6 +650,7 @@ class SourceCheck {
             : SourceCheckState.stopped,
         stopReason: only,
         pagesRead: pagesRead,
+        relocation: relocation,
       );
     }
 
@@ -780,15 +816,7 @@ class SourceCheck {
       placedEntryIds: placed,
       notClaimedAsNew: notClaimedAsNew,
       restrictedAddresses: restricted,
-      relocation: landedPath == null || landedPath == source.pathKey
-          ? null
-          : SourceRelocationCandidate(
-              sourceId: source.id,
-              host: source.host,
-              previousPathKey: source.pathKey,
-              pathKey: landedPath,
-              listingsSeen: listings.length,
-            ),
+      relocation: relocation,
     );
   }
 

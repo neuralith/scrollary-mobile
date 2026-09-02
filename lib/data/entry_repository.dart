@@ -438,6 +438,54 @@ class EntryRepository {
     });
   }
 
+  /// Move one Location onto the Source that actually publishes it.
+  ///
+  /// **A repair, and deliberately the narrowest one that can be proved.** A
+  /// Location's address is on its Source's `(host, path_key)` everywhere else
+  /// in this app, because every writer derives the Source key from the address
+  /// it is writing. One build broke that: a check that read a listing at a
+  /// path its Source did not claim wrote addresses onto the Source it was
+  /// reading *for*, and those rows are then rejected by every guard that
+  /// re-derives the key — the traversal *Entries from here* runs among them.
+  ///
+  /// Whether a given row is one of those is decided by
+  /// `recognition/relocation.dart`, which can prove it: the address belongs to
+  /// the destination Source's own path. Nothing here judges — this writes the
+  /// `source_id` it is handed, and nothing else. The lifecycle, the URL, the
+  /// evidence and the Entry are untouched, so a repaired row is the same row
+  /// at the same address, filed where it belongs.
+  ///
+  /// Refuses to move a Location across Entries or off a Source it does not
+  /// have: I7's pairing is the Entry's business and is not restated here,
+  /// because a Location that has a Source keeps having one.
+  Future<InvariantViolation?> repointLocationSource(
+    String locationId, {
+    required String sourceId,
+  }) async {
+    return _db.transaction(() async {
+      final row = await locationById(locationId);
+      if (row == null) return unknownRow;
+      // A Location with no Source belongs to a standalone Entry (I7). Giving
+      // it one would contradict its Entry, so it is refused rather than fixed.
+      if (row.sourceId == null) return locationSourcePairing;
+      if (row.sourceId == sourceId) return null;
+      final at = _now();
+      await (_db.update(
+        _db.locations,
+      )..where((l) => l.id.equals(locationId))).write(
+        LocationsCompanion(sourceId: Value(sourceId), updatedAt: Value(at)),
+      );
+      await _outbox.record(
+        kind: SyncedEntityKind.location,
+        entityId: locationId,
+        op: OutboxOp.upsert,
+        at: at,
+        fields: {'source_id': sourceId},
+      );
+      return null;
+    });
+  }
+
   /// A user removing an address by hand IS a removal and syncs (V2_SYNC.md
   /// §5). Copies keep their provenance snapshot.
   Future<InvariantViolation?> removeLocationByHand(String locationId) async {

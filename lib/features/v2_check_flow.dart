@@ -25,10 +25,15 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../capability/foreground_gate.dart';
+import '../data/recognition_index.dart';
+import '../library_ui/providers.dart' as libui;
 import '../providers.dart';
 import '../recognition/check.dart';
+import '../recognition/relocation.dart'
+    show SourceRelocationCandidate, SourceRelocationOutcome, SourceRelocator;
 import 'check_state.dart';
 import 'foreground_gate_sheet.dart';
+import 'source_moved_sheet.dart';
 
 /// What one check may read, and what it may bring in.
 ///
@@ -96,7 +101,123 @@ Future<SourceCheckOutcome?> startCollectionCheck(
   state.recordCheck(collectionId, outcome, at: DateTime.now());
   if (!context.mounted) return outcome;
   _say(context, checkOutcomeSentence(outcome));
+
+  // The one thing a check can find that it may not act on by itself: the site
+  // moved. `(host, path_key)` is persistent Source identity, so the answer is
+  // the user's (V2-D14, V2-D45) and it is asked for here, after the sentence
+  // that says nothing was read.
+  final moved = outcome?.relocation;
+  if (moved != null) {
+    await resolveSourceMove(
+      context,
+      ref,
+      collectionId: collectionId,
+      collectionName: collectionName,
+      candidate: moved,
+    );
+  }
   return outcome;
+}
+
+/// *The site moved — which of the three is this?*, asked and then carried out.
+///
+/// Separate from [startCollectionCheck] so the answer can be reached from
+/// anywhere the evidence is (a Collection's Sources, a later report), and so
+/// the three writes it authorises are testable without driving a Browser.
+///
+/// Nothing here decides anything: the sheet asks, and each branch is one call
+/// into the operation that already exists for that answer.
+Future<void> resolveSourceMove(
+  BuildContext context,
+  WidgetRef ref, {
+  required String collectionId,
+  required String collectionName,
+  required SourceRelocationCandidate candidate,
+}) async {
+  final choice = await showSourceMovedSheet(
+    context: context,
+    collectionName: collectionName,
+    candidate: candidate,
+  );
+  if (choice == null || !context.mounted) return;
+
+  final collections = ref.read(libui.collectionRepoProvider);
+  final index = RecognitionIndex(ref.read(libui.libraryDatabaseProvider));
+
+  switch (choice) {
+    // The move is real: the old Source stays and points forward (V2-D14).
+    case SourceMovedChoice.updateSource:
+      final outcome =
+          await SourceRelocator(
+            collections: collections,
+            index: index,
+            entries: ref.read(libui.entryRepoProvider),
+          ).relocate(
+            fromSourceId: candidate.sourceId,
+            host: candidate.host,
+            pathKey: candidate.pathKey,
+          );
+      if (!context.mounted) return;
+      if (!outcome.relocated) {
+        _say(
+          context,
+          'That address already belongs to another collection, so this one '
+          'was left exactly as it was.',
+        );
+        return;
+      }
+      _say(context, sourceMovedSentence(outcome));
+
+    // Both are live: the ordinary multi-Source state.
+    case SourceMovedChoice.addAsAnotherSource:
+      final taken = await index.lookupSource(candidate.host, candidate.pathKey);
+      if (taken != null && taken.collectionId != collectionId) {
+        if (!context.mounted) return;
+        _say(
+          context,
+          'That address already belongs to another collection, so nothing '
+          'was changed.',
+        );
+        return;
+      }
+      final source = await collections.sourceById(candidate.sourceId);
+      final (added, violation) = await collections.addSource(
+        collectionId: collectionId,
+        host: candidate.host,
+        pathKey: candidate.pathKey,
+        language: source?.language ?? '',
+      );
+      if (!context.mounted) return;
+      _say(
+        context,
+        added == null && violation != null
+            ? 'That address could not be added as another site.'
+            : 'Added as another site for $collectionName. Its old address is '
+                  'unchanged, and you can choose which one to read from in '
+                  'Sources.',
+      );
+
+    // Not the same work. Naming a Collection needs a page, which is the save
+    // flow's job — so this opens the address and stops (V2-D45, V2-D69).
+    case SourceMovedChoice.differentContent:
+      final open = ref.read(libui.sourceOpenerProvider);
+      if (open == null) return;
+      await open('https://${candidate.host}${candidate.pathKey}');
+  }
+}
+
+/// What a confirmed relocation came to, including any rows it put right.
+String sourceMovedSentence(SourceRelocationOutcome outcome) {
+  final repaired = outcome.repairedLocationIds.length;
+  final putRight = repaired == 0
+      ? ''
+      : repaired == 1
+      ? ' 1 entry that was filed under the old address was moved with it.'
+      : ' $repaired entries that were filed under the old address were moved '
+            'with it.';
+  return 'Updated. This collection is read at its new address from now on, '
+      'and nothing on this device was changed. Check again to read its '
+      'list.$putRight';
 }
 
 /// What happened, in one sentence.
@@ -139,6 +260,13 @@ String checkOutcomeSentence(SourceCheckOutcome? outcome) {
       'That page would not load, so nothing could be read from it.',
     SourceCheckStop.listingUnrecognised =>
       'That page did not look like this collection\'s list of entries, so '
+          'nothing was read from it.',
+    // Never folded into "up to date": the reading stopped precisely because
+    // the site sent it somewhere this collection does not claim, and nothing
+    // was read, written or removed. The sheet that follows is where the
+    // answer is asked for, so this sentence only has to be true on its own.
+    SourceCheckStop.sourceListingMoved =>
+      'This collection\'s site appears to have moved its list of entries, so '
           'nothing was read from it.',
     SourceCheckStop.listingTruncated =>
       'Only part of the list could be read, so nothing was concluded from it.',

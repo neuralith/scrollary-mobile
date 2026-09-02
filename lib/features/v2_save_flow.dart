@@ -17,6 +17,8 @@ import '../recognition/history.dart';
 import '../recognition/page_kind.dart';
 import '../recognition/recognise.dart';
 import '../recognition/reconcile.dart';
+import '../recognition/relocation.dart'
+    show SourceRelocator, relocationCandidateFor;
 import '../save/capture_mode.dart';
 import '../save/capture_policy.dart';
 import '../save/entry_capture.dart';
@@ -30,6 +32,7 @@ import '../ui/status_style.dart';
 import 'capture_mode_section.dart';
 import 'foreground_gate_sheet.dart';
 import 'selection_overlay.dart';
+import 'source_moved_sheet.dart';
 // STUB IMPORT — switch to 'v2_add_flow.dart' at merge.
 import 'v2_add_flow.dart';
 import 'v2_check_flow.dart';
@@ -1140,7 +1143,7 @@ class _V2SavePanelState extends ConsumerState<V2SavePanel> {
   /// the one that saves, with the range block and, for a Collection about to
   /// exist, its name (V2-D62).
   Future<void> _chooseCollection({required bool indexOnly}) async {
-    final choice = await showCollectionPicker(
+    final picked = await showCollectionPicker(
       context,
       ref,
       suggestedTitle: _suggestedTitle,
@@ -1151,6 +1154,15 @@ class _V2SavePanelState extends ConsumerState<V2SavePanel> {
       // I already have — legible as the operation it is (V2-D69).
       attachingSourceHost: _host,
     );
+    if (picked == null || !mounted) return;
+
+    // The picker answered *which Collection*. One question can still be open:
+    // whether attaching this address **moves** that Collection's existing
+    // Source on this site or adds a second one beside it. Until this was
+    // asked, the save flow could only ever add — so a provider that rewrote
+    // its slug grew a Collection a duplicate Source, and a user who started a
+    // new Collection instead got a duplicate of a work they already had.
+    final choice = await _resolvePossibleMove(picked);
     if (choice == null || !mounted) return;
 
     if (!indexOnly) {
@@ -1194,6 +1206,78 @@ class _V2SavePanelState extends ConsumerState<V2SavePanel> {
     final collectionId = report?.collectionId;
     if (collectionId != null && mounted) {
       setState(() => _added = (id: collectionId, name: name));
+    }
+  }
+
+  /// *Is this that Collection's site at a new address?*, where there is
+  /// anything to ask.
+  ///
+  /// Returns the choice to carry on with — the same one for every ordinary
+  /// save, since [relocationCandidateFor] answers null unless the Collection
+  /// already has exactly one readable Source on this host at another path.
+  /// Null means **stop**: the user backed out, or the write was refused, and
+  /// nothing should be saved under an answer they did not give.
+  ///
+  /// The three answers are the ones the moved-source sheet already has, and
+  /// each is carried out by the service that already does it — nothing here
+  /// decides identity, and no guard is relaxed to make any of them work.
+  Future<CollectionChoice?> _resolvePossibleMove(
+    CollectionChoice choice,
+  ) async {
+    if (choice is! ExistingCollectionChoice) return choice;
+    final services = ref.read(libraryUiServicesProvider);
+    final candidate = await relocationCandidateFor(
+      collections: services.collections,
+      index: RecognitionIndexOf(services).index,
+      collectionId: choice.id,
+      keys: RecognitionKeys.of(widget.url, pageTitle: widget.pageTitle),
+    );
+    if (candidate == null || !mounted) return choice;
+
+    final answer = await showSourceMovedSheet(
+      context: context,
+      collectionName: choice.name,
+      candidate: candidate,
+      origin: SourceMovedOrigin.save,
+    );
+    if (answer == null || !mounted) return null;
+
+    switch (answer) {
+      // The move is real: `resolvedInto`, and then the ordinary save. The
+      // adoption that follows finds the Source at this address and reuses it,
+      // so no second Source is written.
+      case SourceMovedChoice.updateSource:
+        final outcome =
+            await SourceRelocator(
+              collections: services.collections,
+              index: RecognitionIndexOf(services).index,
+              entries: services.entries,
+            ).relocate(
+              fromSourceId: candidate.sourceId,
+              host: candidate.host,
+              pathKey: candidate.pathKey,
+            );
+        if (!mounted) return null;
+        if (!outcome.relocated) {
+          setState(
+            () => _message =
+                'That address already belongs to another collection, so '
+                'nothing was changed.',
+          );
+          return null;
+        }
+        return choice;
+
+      // Both live. This is what the flow has always done, now chosen rather
+      // than assumed: the adoption writes the second Source.
+      case SourceMovedChoice.addAsAnotherSource:
+        return choice;
+
+      // Not the same work — carry on into the ordinary create path, where the
+      // name is confirmed on the sheet that asks the count (V2-D62).
+      case SourceMovedChoice.differentContent:
+        final suggested = _suggestedTitle.trim();
+        return NewCollectionChoice(suggested.isEmpty ? choice.name : suggested);
     }
   }
 
