@@ -115,6 +115,13 @@ class StartupController extends ValueNotifier<StartupRun> {
       final startedAt = DateTime.now();
       try {
         await step.run();
+        // Timed and printed, because "the splash sat there" is otherwise
+        // indistinguishable between four fast steps and one slow one. The
+        // report is paced (see [minStepDuration]); this is the work.
+        debugPrint(
+          '[startup] ${step.label}: '
+          '${DateTime.now().difference(startedAt).inMilliseconds}ms',
+        );
       } catch (e, stack) {
         debugPrint('[startup] ${step.label} failed: $e\n$stack');
         if (step.critical) {
