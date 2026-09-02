@@ -376,7 +376,7 @@ NextPageResult resolveNextPage(
     // *showing* a next-entry control that carries no address, the sequence
     // continues and only the means of following it is missing — which is
     // precisely what the user can supply by pointing at it. Reporting this as
-    // the end of the collection is how a reader stops at chapter 41 of 43 and
+    // the end of the collection is how a reader stops at Entry 41 of 43 and
     // calls it finished.
     if (allowUserAssist && offersUnfollowableNext(probe)) {
       return NextPageResult(

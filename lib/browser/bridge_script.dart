@@ -1130,7 +1130,7 @@ window.__wr = window.__wr || (function () {
     // was before it did.
     //
     // The one place this script makes a page navigate itself, and it exists
-    // because a client-routed reader publishes its next chapter nowhere else.
+    // because a client-routed reader publishes its next Entry nowhere else.
     // Three refusals guard it, and all three are refusals rather than
     // best-efforts:
     //

@@ -377,7 +377,7 @@ class LibrarySourceWalk implements SourceWalk {
       // **Forward progress, judged where the reading landed.** Every check
       // above this line is about the address the walk *aimed* at; this is the
       // only one about the address it arrived at. A client-routed reader that
-      // answers the next chapter with the current one, a redirect back to the
+      // answers the next Entry with the current one, a redirect back to the
       // page you were on, a load that failed and left the WebView where it
       // was — all of them look like an ordinary read, and all of them resolve
       // to an Entry the walk has already captured. Stopping here is what makes
