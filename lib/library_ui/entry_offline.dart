@@ -30,6 +30,7 @@ import '../save/queue_task.dart';
 import '../ui/palette.dart';
 import '../ui/status_style.dart';
 import '../features/cleanup_dialogs.dart';
+import '../features/operation_lane.dart';
 import 'collection_models.dart';
 import 'library_widgets.dart';
 import 'run_summary.dart' show runSummarySourceProvider;
@@ -229,6 +230,7 @@ Future<void> startQueuedDownloads(
 }) async {
   final queue = ref.read(saveQueueRepoProvider);
   final starter = ref.read(saveQueueStarterProvider);
+  final lane = ref.read(operationLaneProvider);
   final waiting = [
     for (final task in await queue.pending())
       if (task.state == SaveTaskState.queued) task,
@@ -236,6 +238,24 @@ Future<void> startQueuedDownloads(
   if (!context.mounted) return;
   if (waiting.isEmpty) {
     showLibraryMessage(context, 'Nothing is waiting to be downloaded.');
+    return;
+  }
+  // **There is one download pipeline, and it is already going.** The rows are
+  // durable and the run picks up whatever appears while it drains, so the work
+  // is not lost — but a second Start is not a second run, and telling the user
+  // "Starting 3 downloads" over a run that was already going was a claim about
+  // work that never began. Reordering is skipped for the same reason: the row
+  // the user asked for first may already be the one being captured.
+  if (lane.holds(kDownloadWorkKey)) {
+    showLibraryMessage(
+      context,
+      queuedBehindSentence(
+        active: kDownloadWorkLabel,
+        request: waiting.length == 1
+            ? 'this entry'
+            : 'these ${waiting.length} entries',
+      ),
+    );
     return;
   }
   if (starter == null) {
@@ -254,9 +274,21 @@ Future<void> startQueuedDownloads(
   // count, and saying "1 download" to somebody who typed 20 reads as the 20
   // having been lost (V2-D56).
   final journeyed = ref.read(runSummarySourceProvider)?.pendingJourneyEntries;
+  // "Starting" only when it is actually starting. Something else may be
+  // driving the Browser — a check reading a listing — and the starter will
+  // join the lane behind it; announcing a start here would be a sentence the
+  // next few minutes contradict.
+  final active = lane.activeLabel;
   showLibraryMessage(
     context,
-    journeyed != null && journeyed > 0
+    active != null
+        ? queuedBehindSentence(
+            active: active,
+            request: waiting.length == 1
+                ? 'this download'
+                : 'these ${waiting.length} downloads',
+          )
+        : journeyed != null && journeyed > 0
         ? 'Starting — up to $journeyed ${journeyed == 1 ? 'entry' : 'entries'} '
               'from where you were.'
         : 'Starting ${waiting.length} download${waiting.length == 1 ? '' : 's'}.',

@@ -15,6 +15,8 @@
 ///   a claim the check never made.
 library;
 
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -22,6 +24,7 @@ import 'package:web_reader/browser/browser_controller.dart';
 import 'package:web_reader/data/local_settings.dart';
 import 'package:web_reader/data/schema.dart';
 import 'package:web_reader/domain/collection.dart';
+import 'package:web_reader/features/operation_lane.dart';
 import 'package:web_reader/features/v2_check_flow.dart';
 import 'package:web_reader/library_ui/collection_actions.dart';
 import 'package:web_reader/library_ui/collection_models.dart';
@@ -232,16 +235,19 @@ void main() {
 
   group('starting one', () {
     late V2Harness v2;
+    late OperationLane lane;
     late ValueNotifier<int?> tabRequest;
     late String collectionId;
     late String collectionName;
 
     setUp(() {
       v2 = V2Harness(browser: BrowserController(), fileStore: tempFileStore());
+      lane = OperationLane();
       tabRequest = ValueNotifier<int?>(null);
       collectionName = 'Serial Alpha';
     });
     tearDown(() async {
+      lane.dispose();
       tabRequest.dispose();
       await v2.close();
     });
@@ -270,6 +276,7 @@ void main() {
         v2ServicesProvider.overrideWithValue(v2.services),
         libui.libraryUiServicesProvider.overrideWithValue(v2.ui),
         shellTabRequestProvider.overrideWithValue(tabRequest),
+        operationLaneProvider.overrideWithValue(lane),
       ],
       child: MaterialApp(
         theme: appTheme(palette: AppPalette.light),
@@ -358,11 +365,22 @@ void main() {
       );
     });
 
-    screenTest('a check already running is refused, not stacked', (
+    screenTest('the same collection asked for again is not stacked', (
       tester,
     ) async {
+      // A check of this Collection is already in the one lane every
+      // Browser-driving operation runs in — running, or waiting its turn. A
+      // second tap is a duplicate, not a second request, and running the same
+      // reading twice is work nobody asked for.
       await seed();
-      v2.check.debugSetRunning(true);
+      final held = Completer<void>();
+      unawaited(
+        lane.submit(
+          key: collectionCheckWorkKey(collectionId),
+          label: kCheckWorkLabel,
+          body: () => held.future,
+        ),
+      );
       SourceCheckOutcome? outcome;
       var called = false;
       await tester.pumpWidget(
@@ -376,12 +394,16 @@ void main() {
       await tester.tap(find.text('check'));
       await _settle(tester);
 
-      expect(find.text('A check is already running.'), findsOneWidget);
+      expect(
+        find.text('This collection is already waiting to be checked.'),
+        findsOneWidget,
+      );
       expect(cancel, findsNothing, reason: 'no second sheet was opened');
       expect(called, isTrue);
       expect(outcome, isNull);
+      expect(lane.waiting, 0, reason: 'nothing was stacked behind it');
 
-      v2.check.debugSetRunning(false);
+      held.complete();
       await _settle(tester);
     });
 

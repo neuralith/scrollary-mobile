@@ -43,6 +43,7 @@ library;
 import 'dart:async';
 
 import '../browser/browser_controller.dart';
+import '../browser/browsing_history.dart' show NavigationSource;
 import '../core/url_utils.dart';
 import '../storage/document.dart';
 import '../storage/file_store.dart';
@@ -272,6 +273,21 @@ class SaveEnginePageCaptureSource implements PageCaptureSource {
       if (!shouldContinue()) engine.cancel();
     });
 
+    // **Claim the WebView, for as long as this capture drives it.** There is
+    // one WebView and `automationOwner` is how the app says who is driving it
+    // — a Collection check refuses to start against a Browser somebody else
+    // holds. A capture that never claimed it left that guard reading a field
+    // nobody set, and left every page the capture opened attributed to the
+    // user: `effectiveNavigationSource` degrades an unclaimed Browser to
+    // `manual`, which is the one value that enters browsing history.
+    //
+    // Saved and restored rather than cleared, so a nested claim can never
+    // hand the Browser back on somebody else's behalf.
+    final heldOwner = browser.automationOwner;
+    final heldSource = browser.navigationSource;
+    browser.automationOwner = 'a download';
+    browser.navigationSource = NavigationSource.saveAutomation;
+
     final EntrySaveResult result;
     try {
       // Claim the surface *before* the first navigation. WebKit fixes a
@@ -308,6 +324,8 @@ class SaveEnginePageCaptureSource implements PageCaptureSource {
       );
     } finally {
       poll.cancel();
+      browser.automationOwner = heldOwner;
+      browser.navigationSource = heldSource;
     }
     return outcomeOf(result, requestedUrl: url);
   }

@@ -41,10 +41,15 @@
 // is stubbed. The missing seam is reported as a blocker rather than papered
 // over here, and if `lib` ever lets a Source name its own origin this wrapper
 // should be deleted in the same change.
+import 'dart:async';
+
+import 'package:flutter/widgets.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
 import 'package:web_reader/core/url_utils.dart';
 import 'package:web_reader/domain/collection.dart';
+import 'package:web_reader/features/operation_lane.dart';
 import 'package:web_reader/features/v2_check_flow.dart';
 import 'package:web_reader/recognition/check.dart';
 
@@ -331,6 +336,101 @@ void main() {
               'library is not being on the device',
         );
       }
+    },
+    timeout: const Timeout(Duration(minutes: 8)),
+  );
+
+  testWidgets(
+    'a check asked for during a download waits for it, and then runs',
+    (tester) async {
+      // **The single-operation invariant, on a real WebView.** There is one
+      // WebView, and before `OperationLane` a check started while a download
+      // was running read a listing through the page the capture was driving.
+      // Every start surface now goes through the lane, so the check is queued
+      // and told, and it runs when its turn comes.
+      //
+      // The delay is the fixture's own: panel 4 is served two seconds late, so
+      // the download is still going when the check is asked for. Without a
+      // window this case could pass by accident on a fast device, which is
+      // worse than not having it.
+      fixture.applyDelays = true;
+      fixture.entryCount = 2;
+      await boot(tester, 'lane_${caseIndex++}_$kRunStamp');
+      final seeded = await seedCollection(held: 2);
+      fixture.entryCount = 4;
+
+      final container = ProviderScope.containerOf(tester.element(libraryTab));
+      final lane = container.read(operationLaneProvider);
+
+      // A real download, started the way the app starts one — through
+      // `V2Services.startQueue`, which is the only place V2 Browser automation
+      // is authorised from.
+      await openPage(tester, app, fixture.entry(1));
+      await app.queueSaveOf(fixture.entry(1), title: 'Entry 1');
+      await startQueue(tester, app);
+      await pumpUntil(
+        tester,
+        () => app.runner.isRunning,
+        timeout: const Duration(seconds: 60),
+        reason:
+            'the download never started, so there is nothing to queue '
+            'behind',
+      );
+
+      // …and, while it is running, the user asks for a check through the real
+      // control the Collection screen puts up.
+      unawaited(
+        app.v2.checkCollection!(seeded.collectionId, 'Fixture image sequence'),
+      );
+      await pumpFor(tester, const Duration(seconds: 2));
+      await tester.tap(
+        find.byKey(const ValueKey('startInBrowser')),
+        warnIfMissed: false,
+      );
+      await pumpFor(tester, const Duration(seconds: 1));
+
+      if (!app.runner.isRunning) {
+        // The download beat us to the finish. Say so rather than assert
+        // something this run did not measure.
+        fixture.applyDelays = false;
+        markTestSkipped(
+          'the download finished before the check could be asked for — this '
+          'device is too fast for the fixture window',
+        );
+        return;
+      }
+      expect(
+        app.check.isRunning,
+        isFalse,
+        reason: 'two operations may not drive the one WebView',
+      );
+      expect(
+        lane.waiting,
+        1,
+        reason: 'the request was kept, not refused and not started',
+      );
+      expect(
+        app.browser.automationOwner,
+        isNotNull,
+        reason: 'the download holds the Browser while it drives it',
+      );
+
+      // Both finish, in order, and the check the user asked for happened.
+      await pumpUntil(
+        tester,
+        () => !lane.isBusy && !app.runner.isRunning && !app.check.isRunning,
+        timeout: const Duration(minutes: 3),
+        reason: 'the queued check never got its turn',
+      );
+      expect(
+        app.check.lastOutcome,
+        isNotNull,
+        reason:
+            'queueing is only better than refusing because the request '
+            'actually runs',
+      );
+      expect(app.browser.automationOwner, isNull);
+      fixture.applyDelays = false;
     },
     timeout: const Timeout(Duration(minutes: 8)),
   );

@@ -16,6 +16,7 @@ library;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:web_reader/browser/browsing_history.dart';
 import 'package:web_reader/browser/page_data.dart';
 import 'package:web_reader/core/config.dart';
 import 'package:web_reader/domain/reading_state.dart';
@@ -203,6 +204,42 @@ void main() {
       expect(h.stagingLeftovers(), isEmpty);
       expect(await h.repos.offline.allCopies(), isEmpty);
     });
+
+    test('a capture holds the Browser while it drives it', () async {
+      // There is one WebView, and `BrowserController.automationOwner` is how
+      // the app says who is driving it — a check refuses to start while
+      // somebody else holds it. A download that never claimed it left that
+      // guard reading a field nobody set, so the guard was a fiction and the
+      // navigations a capture performs were attributed to the user.
+      final browser = _OwnerRecordingBrowser()..setUrl('about:blank');
+      browser.addPage(_url, _prosePage());
+      browser.addDocument(_url, _rawDocument());
+
+      await captureOne(browser: browser);
+
+      expect(
+        browser.ownerWhileNavigating,
+        isNotEmpty,
+        reason: 'the capture navigated',
+      );
+      expect(
+        browser.ownerWhileNavigating.every((owner) => owner != null),
+        isTrue,
+        reason: 'a download owns the Browser for as long as it drives it',
+      );
+      expect(
+        browser.sourceWhileNavigating.every(
+          (source) => source != NavigationSource.manual,
+        ),
+        isTrue,
+        reason: 'a page a capture opened is not somewhere the user went',
+      );
+      expect(
+        browser.automationOwner,
+        isNull,
+        reason: 'and it is handed back at the end',
+      );
+    });
   });
 
   group('the copy opens the real reader', () {
@@ -331,4 +368,28 @@ void main() {
       await tester.pump(const Duration(seconds: 3));
     });
   });
+}
+
+/// A [FakeBrowser] that records who was driving it, at the moment it was
+/// driven.
+class _OwnerRecordingBrowser extends FakeBrowser {
+  final List<String?> ownerWhileNavigating = [];
+  final List<NavigationSource> sourceWhileNavigating = [];
+
+  void _note() {
+    ownerWhileNavigating.add(automationOwner);
+    sourceWhileNavigating.add(effectiveNavigationSource);
+  }
+
+  @override
+  Future<void> loadAndWait(String url, {Duration? timeout}) {
+    _note();
+    return super.loadAndWait(url, timeout: timeout);
+  }
+
+  @override
+  Future<void> load(String url) {
+    _note();
+    return super.load(url);
+  }
 }

@@ -20,6 +20,7 @@ import '../providers.dart';
 import '../ui/status_style.dart';
 import 'foreground_gate_sheet.dart';
 import 'library_check_flow.dart';
+import 'operation_lane.dart';
 
 /// The header control. Absent where no library-wide check is attached.
 class LibraryCheckButton extends ConsumerWidget {
@@ -47,6 +48,10 @@ class LibraryCheckButton extends ConsumerWidget {
 
 /// Ask, then check every Collection.
 ///
+/// Runs in the one lane every Browser-driving operation runs in: a pass asked
+/// for while a download or a single check holds the Browser waits its turn and
+/// says so, rather than being thrown away or started alongside.
+///
 /// Returns the report, or null when nothing ran — a dismissed sheet, or a
 /// pass already in flight. Both are ordinary answers and neither writes a row.
 Future<LibraryCheckReport?> startLibraryCheck(
@@ -54,7 +59,19 @@ Future<LibraryCheckReport?> startLibraryCheck(
   WidgetRef ref,
 ) async {
   final controller = ref.read(libraryCheckProvider);
-  if (controller == null || controller.isRunning) return null;
+  if (controller == null) return null;
+  final lane = ref.read(operationLaneProvider);
+  // Already going, or already waiting its turn: a second tap is a duplicate,
+  // and the control itself is a Stop while a pass is running.
+  if (lane.holds(kLibraryCheckWorkKey)) {
+    if (!controller.isRunning) {
+      showLibraryMessage(
+        context,
+        'Your library is already waiting to be checked.',
+      );
+    }
+    return null;
+  }
 
   final choice = await showStartOptionsSheet(
     context: context,
@@ -77,7 +94,18 @@ Future<LibraryCheckReport?> startLibraryCheck(
     ref.read(shellTabRequestProvider).value = 1;
   }
 
-  final report = await controller.run();
+  // The same lane a single check and a download run in: one thing drives the
+  // Browser, and a pass asked for while something else holds it waits rather
+  // than being thrown away.
+  final report = await lane.submit(
+    key: kLibraryCheckWorkKey,
+    label: kCheckWorkLabel,
+    whenQueued: (active) => showLibraryMessage(
+      context,
+      queuedBehindSentence(active: active, request: 'this check'),
+    ),
+    body: controller.run,
+  );
   if (!context.mounted || report == null) return report;
   showLibraryMessage(context, libraryCheckSentence(report));
   return report;

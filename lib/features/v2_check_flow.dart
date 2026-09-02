@@ -14,6 +14,10 @@
 ///   `running_operation_panel.dart`; bounded by [kCollectionCheckLimits],
 ///   which the start sheet states in words before anything opens; cancelled
 ///   through [CheckController.cancel].
+/// * **It runs in the one lane, never beside another operation.** There is a
+///   single WebView, so a check asked for while a download run or another
+///   check holds it is **queued and the user is told**, not refused and not
+///   started alongside (`features/operation_lane.dart`).
 /// * **The gate is about where the user waits, never whether the check runs.**
 ///   Backing out of the sheet starts nothing and changes nothing.
 /// * **Nothing is downloaded.** A check reads a listing and writes rows. The
@@ -33,6 +37,7 @@ import '../recognition/relocation.dart'
     show SourceRelocationCandidate, SourceRelocationOutcome, SourceRelocator;
 import 'check_state.dart';
 import 'foreground_gate_sheet.dart';
+import 'operation_lane.dart';
 import 'source_moved_sheet.dart';
 
 /// What one check may read, and what it may bring in.
@@ -48,10 +53,13 @@ const kCollectionCheckLimits = SourceCheckLimits(
 
 /// Ask, then check [collectionId]'s preferred Source.
 ///
+/// Waits its turn when something else is driving the Browser, saying so as
+/// soon as it knows.
+///
 /// Returns the outcome, or null when nothing ran — a dismissed sheet, a check
-/// already in flight, a Browser something else owns, or a Source on a service
-/// this app does not read from. Every one of those is an ordinary answer, and
-/// none of them writes a row.
+/// of this same Collection already running or already waiting, a Browser
+/// something else owns, or a Source on a service this app does not read from.
+/// Every one of those is an ordinary answer, and none of them writes a row.
 Future<SourceCheckOutcome?> startCollectionCheck(
   BuildContext context,
   WidgetRef ref,
@@ -59,8 +67,17 @@ Future<SourceCheckOutcome?> startCollectionCheck(
   required String collectionName,
 }) async {
   final check = ref.read(checkControllerProvider);
-  if (check.isRunning) {
-    _say(context, 'A check is already running.');
+  final lane = ref.read(operationLaneProvider);
+  final key = collectionCheckWorkKey(collectionId);
+  // A second tap on the same control is a duplicate, not a second request:
+  // this Collection is already being checked, or already waiting to be.
+  if (lane.holds(key)) {
+    _say(
+      context,
+      check.runningCollectionId == collectionId
+          ? 'This collection is already being checked.'
+          : 'This collection is already waiting to be checked.',
+    );
     return null;
   }
 
@@ -94,11 +111,31 @@ Future<SourceCheckOutcome?> startCollectionCheck(
     ref.read(shellTabRequestProvider).value = 1;
   }
 
-  // The library rows watch this: a Collection that is being checked says so,
-  // and what the check concluded outlives the snackbar that announced it.
-  final state = ref.read(checkStateProvider)..beginCheck(collectionId);
-  final outcome = await check.run(collectionId, limits: kCollectionCheckLimits);
-  state.recordCheck(collectionId, outcome, at: DateTime.now());
+  // Through the one lane, so this never becomes a second thing driving the
+  // Browser. Anything already running keeps it and this waits its turn; the
+  // user is told so the moment it happens, not left watching a control that
+  // appeared to do nothing.
+  final state = ref.read(checkStateProvider);
+  final outcome = await lane.submit(
+    key: key,
+    label: kCheckWorkLabel,
+    whenQueued: (active) => _say(
+      context,
+      queuedBehindSentence(active: active, request: 'this check'),
+    ),
+    body: () async {
+      // The library rows watch this: a Collection that is being checked says
+      // so, and what the check concluded outlives the snackbar that announced
+      // it. Written when the check actually begins, never while it waits.
+      state.beginCheck(collectionId);
+      final outcome = await check.run(
+        collectionId,
+        limits: kCollectionCheckLimits,
+      );
+      state.recordCheck(collectionId, outcome, at: DateTime.now());
+      return outcome;
+    },
+  );
   if (!context.mounted) return outcome;
   _say(context, checkOutcomeSentence(outcome));
 

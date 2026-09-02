@@ -34,6 +34,7 @@ import 'package:web_reader/domain/collection.dart';
 import 'package:web_reader/domain/entry.dart';
 import 'package:web_reader/domain/reading_state.dart';
 import 'package:web_reader/features/check_controller.dart';
+import 'package:web_reader/features/operation_lane.dart';
 import 'package:web_reader/features/running_operation_panel.dart';
 import 'package:web_reader/features/v2_composition.dart';
 import 'package:web_reader/features/v2_save_flow.dart';
@@ -75,6 +76,7 @@ void main() {
       libui.saveQueueStarterProvider.overrideWithValue(
         ({decided}) async => h.starts++,
       ),
+      operationLaneProvider.overrideWithValue(h.lane),
     ],
     child: MaterialApp(
       theme: appTheme(palette: AppPalette.light),
@@ -102,6 +104,89 @@ void main() {
             'an idle panel that reserved a strip would be a standing claim on '
             'the Browser for something that is not happening',
       );
+    });
+  });
+
+  group('what is waiting behind the operation on screen', () {
+    /// Put a request in the lane behind whatever is running, the way a check
+    /// asked for during a download lands there.
+    Completer<void> queueBehind(String label) {
+      final held = Completer<void>();
+      // Something has to hold the lane first, or this would simply run.
+      unawaited(
+        h.lane.submit(
+          key: 'holder',
+          label: 'a download',
+          body: () => held.future,
+        ),
+      );
+      unawaited(h.lane.submit(key: 'behind', label: label, body: () async {}));
+      return held;
+    }
+
+    screenTest('a download with a check behind it says so', (tester) async {
+      await h.seed();
+      await tester.pumpWidget(app());
+      final holder = queueBehind('a check');
+      h.startQueue();
+      await _pumpUntil(tester, panel);
+
+      expect(
+        find.text('A check is waiting for this to finish.'),
+        findsOneWidget,
+        reason:
+            'the snackbar that announced it is long gone; this is the '
+            'standing answer to "did my request get lost"',
+      );
+
+      holder.complete();
+      await h.releaseCapture(tester);
+    });
+
+    screenTest('several waiting requests are counted, not listed', (
+      tester,
+    ) async {
+      await h.seed();
+      await tester.pumpWidget(app());
+      final held = Completer<void>();
+      unawaited(
+        h.lane.submit(
+          key: 'holder',
+          label: 'a download',
+          body: () => held.future,
+        ),
+      );
+      for (final key in ['a', 'b']) {
+        unawaited(h.lane.submit(key: key, label: 'a check', body: () async {}));
+      }
+      h.startQueue();
+      await _pumpUntil(tester, panel);
+
+      expect(
+        find.text('2 more requests are waiting for this to finish.'),
+        findsOneWidget,
+        reason: 'a strip across the bottom of a phone is not a list',
+      );
+
+      held.complete();
+      await h.releaseCapture(tester);
+    });
+
+    screenTest('an operation with nothing behind it says nothing extra', (
+      tester,
+    ) async {
+      await h.seed();
+      await tester.pumpWidget(app());
+      h.startQueue();
+      await _pumpUntil(tester, panel);
+
+      expect(
+        find.byKey(const ValueKey('panelQueuedBehind')),
+        findsNothing,
+        reason: 'an ordinary single operation looks exactly as it always did',
+      );
+
+      await h.releaseCapture(tester);
     });
   });
 
@@ -424,6 +509,10 @@ class _Harness {
 
   final BrowserController browser = BrowserController();
 
+  /// The one lane every Browser-driving operation runs in. Held by the tests
+  /// that want something waiting behind the operation on screen.
+  final OperationLane lane = OperationLane();
+
   late final LibraryDatabase library = LibraryDatabase.forTesting(
     NativeDatabase.memory(),
   );
@@ -590,6 +679,7 @@ class _Harness {
   Future<void> close() async {
     runner.dispose();
     check.dispose();
+    lane.dispose();
     await library.close();
     if (storeRoot.existsSync()) storeRoot.deleteSync(recursive: true);
   }

@@ -9,6 +9,7 @@ import 'browser/browser_presentation.dart';
 import 'browser/browser_surface_policy.dart';
 import 'capability/foreground_multitasking.dart';
 import 'features/operation_indicator.dart';
+import 'features/operation_lane.dart';
 import 'ui/app_page.dart';
 
 import 'core/local_reset.dart';
@@ -582,7 +583,18 @@ class _ShellState extends ConsumerState<_Shell> {
     )) {
       return;
     }
-    await ref.read(queueRunnerProvider).start();
+    // Through the one lane. A check reading a listing holds the Browser, and
+    // the run waits for it rather than navigating the page out from under it —
+    // the rows are already written, so nothing is lost by waiting. The user
+    // has already been told which of the two happened: `startQueuedDownloads`
+    // says *starting* or *queued* from the state of this same lane.
+    await ref
+        .read(operationLaneProvider)
+        .submit(
+          key: kDownloadWorkKey,
+          label: kDownloadWorkLabel,
+          body: ref.read(queueRunnerProvider).start,
+        );
   }
 
   /// Show the Browser — on [url] when the caller named one — and wait for its

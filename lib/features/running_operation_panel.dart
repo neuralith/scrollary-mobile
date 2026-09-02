@@ -34,6 +34,7 @@ import '../save/save_state.dart';
 import '../ui/palette.dart';
 import '../ui/status_style.dart';
 import 'operation_indicator.dart' show indicatorTasksProvider;
+import 'operation_lane.dart';
 import 'operation_progress.dart';
 import 'v2_save_flow.dart' show assistHoldProvider;
 
@@ -58,11 +59,17 @@ class RunningOperationPanel extends ConsumerWidget {
     // Null on a surface where nothing can hold a run, which is the honest
     // answer there and the reason this seam is nullable.
     final assist = ref.watch(assistHoldProvider);
+    // Merged in so *what is waiting behind this* redraws with everything else:
+    // a request that queues while the panel is up changes nothing the runner
+    // or the checker publishes.
+    final lane = ref.watch(operationLaneProvider);
     return AnimatedBuilder(
-      animation: Listenable.merge([runner, check, ?assist]),
+      animation: Listenable.merge([runner, check, lane, ?assist]),
       builder: (context, _) {
-        // A check and a save can never run together — the Browser's automation
-        // ownership is single — so this is a choice, not a stack. Reading a
+        // A check and a save can never run together — every Browser-driving
+        // operation goes through the one `OperationLane`, and a capture claims
+        // the Browser's automation ownership for as long as it drives it — so
+        // this is a choice, not a stack. Reading a
         // Source forward is no longer a state of its own: it happens *inside*
         // a download now, between one entry and the next (V2-D56), and the
         // download is what the user started and what they can stop.
@@ -135,6 +142,37 @@ class _WaitingQueue extends ConsumerWidget {
           ],
         ),
       ],
+    );
+  }
+}
+
+/// *A check is waiting for this to finish.* — what the lane holds behind the
+/// operation on screen.
+///
+/// One muted line under the description, and nothing more. The request was
+/// already announced when it was made (`queuedBehindSentence`); this is the
+/// standing answer to "did that get lost", for a user who has since walked
+/// away from the snackbar. It renders nothing when nothing is waiting, so an
+/// ordinary single operation looks exactly as it always did.
+class _QueuedBehind extends ConsumerWidget {
+  const _QueuedBehind();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final sentence = waitingBehindSentence(
+      ref.watch(operationLaneProvider).waitingLabels,
+    );
+    if (sentence == null) return const SizedBox.shrink();
+    final palette = AppPalette.of(context);
+    return Padding(
+      padding: const EdgeInsets.only(top: 6),
+      child: Text(
+        sentence,
+        key: const ValueKey('panelQueuedBehind'),
+        maxLines: 2,
+        overflow: TextOverflow.ellipsis,
+        style: TextStyle(fontSize: 11.5, height: 1.35, color: palette.inkMuted),
+      ),
     );
   }
 }
@@ -323,6 +361,7 @@ class _SaveRunning extends ConsumerWidget {
           overflow: TextOverflow.ellipsis,
           style: TextStyle(fontSize: 12, height: 1.35, color: palette.ink),
         ),
+        const _QueuedBehind(),
         const SizedBox(height: 10),
         const OperationProgressLine(),
         const SizedBox(height: 10),
@@ -476,6 +515,7 @@ class _CheckRunning extends ConsumerWidget {
           overflow: TextOverflow.ellipsis,
           style: TextStyle(fontSize: 12, height: 1.35, color: palette.ink),
         ),
+        const _QueuedBehind(),
         const SizedBox(height: 10),
         const _IndeterminateBar(),
         const SizedBox(height: 12),
