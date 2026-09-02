@@ -26,15 +26,18 @@ void main() {
 
   var toggles = 0;
   var saves = 0;
+  var libraryViews = 0;
   setUp(() {
     toggles = 0;
     saves = 0;
+    libraryViews = 0;
   });
 
   Widget host({
     required bool chromeHidden,
     bool canHideChrome = true,
     bool captureRestricted = false,
+    bool pageIsQueued = false,
   }) => MaterialApp(
     theme: appTheme(),
     home: Scaffold(
@@ -45,7 +48,7 @@ void main() {
             runner: v2.runner,
             sourceCheck: v2.check,
             pageStatus: null,
-            pageIsQueued: false,
+            pageIsQueued: pageIsQueued,
             captureRestricted: captureRestricted,
             waitingSaves: 0,
             chromeHidden: chromeHidden,
@@ -53,7 +56,7 @@ void main() {
             onToggleChrome: () => toggles++,
             onSave: () => saves++,
             onPageActions: () {},
-            onViewLibrary: () {},
+            onViewLibrary: () => libraryViews++,
           ),
         ],
       ),
@@ -100,6 +103,87 @@ void main() {
       await tester.pumpWidget(host(chromeHidden: false));
       await tester.tap(find.byKey(const ValueKey('browserSaveAction')));
       expect(saves, 1);
+    });
+
+    testWidgets('on a page already waiting to download, says the save it '
+        'performs — never a screen it does not open', (tester) async {
+      await tester.pumpWidget(host(chromeHidden: false, pageIsQueued: true));
+
+      final save = find.byKey(const ValueKey('browserSaveAction'));
+      final tooltip = tester.widget<Tooltip>(
+        find.ancestor(of: save, matching: find.byType(Tooltip)),
+      );
+      expect(tooltip.message, 'Waiting to download — save this page');
+      expect(
+        tester.widget<Icon>(find.byIcon(Icons.schedule)).semanticLabel,
+        'Waiting to download — save this page',
+      );
+
+      // The words and the tap agree: this one saves, and nothing about it
+      // leads to the library.
+      await tester.tap(save);
+      expect(saves, 1);
+      expect(libraryViews, 0);
+    });
+  });
+
+  group('while a run runs', () {
+    testWidgets('the save action is not drawn at all', (tester) async {
+      await tester.pumpWidget(host(chromeHidden: false));
+      expect(find.byKey(const ValueKey('browserSaveAction')), findsOneWidget);
+
+      v2.runner.debugSetRunning(true);
+      await tester.pump();
+
+      // Gone, not restyled: a download-looking control in the save's own
+      // place is what sent people to the library from a page they were
+      // watching.
+      expect(find.byKey(const ValueKey('browserSaveAction')), findsNothing);
+      expect(find.byIcon(Icons.downloading), findsNothing);
+      expect(find.byIcon(Icons.download), findsNothing);
+
+      // And nothing else took the corner: no control in this group navigates
+      // anywhere while the run runs.
+      expect(find.byKey(const ValueKey('browserPageActions')), findsNothing);
+      expect(find.byKey(const ValueKey('browserHideChrome')), findsNothing);
+      expect(libraryViews, 0);
+
+      v2.runner.debugSetRunning(false);
+    });
+
+    testWidgets('a source check takes it away for the same reason', (
+      tester,
+    ) async {
+      await tester.pumpWidget(host(chromeHidden: false));
+
+      v2.check.debugSetRunning(true);
+      await tester.pump();
+
+      expect(find.byKey(const ValueKey('browserSaveAction')), findsNothing);
+      expect(libraryViews, 0);
+
+      v2.check.debugSetRunning(false);
+    });
+
+    testWidgets('a queued page loses it too, and gets it back as the save '
+        'when the run ends', (tester) async {
+      await tester.pumpWidget(host(chromeHidden: false, pageIsQueued: true));
+      v2.runner.debugSetRunning(true);
+      await tester.pump();
+      expect(find.byKey(const ValueKey('browserSaveAction')), findsNothing);
+
+      v2.runner.debugSetRunning(false);
+      await tester.pump();
+
+      final save = find.byKey(const ValueKey('browserSaveAction'));
+      expect(save, findsOneWidget);
+      final tooltip = tester.widget<Tooltip>(
+        find.ancestor(of: save, matching: find.byType(Tooltip)),
+      );
+      expect(tooltip.message, 'Waiting to download — save this page');
+      await tester.tap(save);
+      expect(saves, 1);
+      expect(libraryViews, 0);
     });
   });
 

@@ -716,7 +716,16 @@ class BrowserSaveActions extends StatelessWidget {
                     ],
                     if (offersCapture) const SizedBox(width: 8),
                   ],
-                  if (offersCapture)
+                  // Not drawn at all while a run runs — it is the save, and
+                  // the save is not available while this app is driving the
+                  // Browser. It used to stay, wearing the downloading glyph,
+                  // and lead to the library instead: a download-looking
+                  // control in the save's own place that took the user off
+                  // the page they were watching. A run is already visible and
+                  // stoppable in the panel docked below the page, so nothing
+                  // is lost by its absence — and the other two controls in
+                  // this group are gone for the same duration.
+                  if (offersCapture && !running)
                     // Icon only: the page is what the user came for, and the
                     // word beside the glyph bought nothing a tooltip and an
                     // accessible name do not. The state still reads — the
@@ -733,19 +742,14 @@ class BrowserSaveActions extends StatelessWidget {
                     // not shout over the page.
                     _RoundAction(
                       actionKey: const ValueKey('browserSaveAction'),
-                      icon: running
-                          ? Icons.downloading
-                          : pageIsQueued
+                      icon: pageIsQueued
                           ? Icons.schedule
                           : hasCopy
                           ? Icons.download_for_offline
                           : Icons.download,
-                      tooltip: _saveLabel(running, hasCopy),
-                      // While a run runs this is a way to the library, not
-                      // the save — so it drops back to the neutral tone the
-                      // other two carry.
-                      emphasis: !running,
-                      onPressed: running ? onViewLibrary : onSave,
+                      tooltip: _saveLabel(hasCopy),
+                      emphasis: true,
+                      onPressed: onSave,
                     ),
                 ],
               ),
@@ -758,10 +762,15 @@ class BrowserSaveActions extends StatelessWidget {
 
   /// What the control is, in words — the tooltip, and the name assistive
   /// technology reads now that the button carries no text.
-  String _saveLabel(bool running, bool hasCopy) => running
-      ? 'Working — see the library'
-      : pageIsQueued
-      ? 'Queued — see the library'
+  ///
+  /// Each line is the state this page is in, then **what this tap does about
+  /// it** — and the two halves have to agree. Every line names a save, because
+  /// the save is the only thing this control does: while a run runs it is not
+  /// drawn at all, so no state is left in which it leads anywhere else. A
+  /// queued page used to promise the library here and open the save sheet
+  /// instead.
+  String _saveLabel(bool hasCopy) => pageIsQueued
+      ? 'Waiting to download — save this page'
       : hasCopy
       ? 'On this device — save again'
       : 'Save this page';
