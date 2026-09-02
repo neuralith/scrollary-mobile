@@ -175,6 +175,27 @@ CandidateSelection selectImageCandidates(
 /// keep the dominant group — this removes a stray large image (a promo, a
 /// related-collection thumbnail) that passed every other filter.
 ///
+/// **Dominant means the group that occupies the most of the page, not the one
+/// with the most members.** Counting members says a grid of twenty 400x580
+/// cover thumbnails is more of the page than nineteen stacked panels the
+/// reader actually scrolls through, because it stops at "twenty beats
+/// nineteen" and never asks how tall either group is. That is the whole of the
+/// failure: a recommendation grid below the entry won the column, every panel
+/// was rejected as [RejectReason.outsideContentColumn], and what reached the
+/// collapse guard was a set of thumbnails whose tallest member was a fraction
+/// of the panels the traversal had already seen.
+///
+/// So the measure is [clusterVerticalExtent] — the same "how much of this band
+/// is actually image" quantity `imageContentBand` builds its density test from
+/// — and member count survives only as the tiebreak for a page that reported
+/// no layout geometry at all, which is exactly the behaviour this had before.
+///
+/// Deliberately **not** ranked on whether a group forms a single vertical run.
+/// That test belongs to `imageContentBand`, where a band that cannot be
+/// established honestly falls back to the whole document; here a transient
+/// side-by-side layout during lazy settling would demote the real content
+/// column and there is nothing to fall back to.
+///
 /// If no group is convincing enough, keep everything: better a slightly noisy
 /// entry than a silently truncated one.
 List<_Scored> _dominantWidthCluster(
@@ -199,14 +220,29 @@ List<_Scored> _dominantWidthCluster(
     if (!placed) clusters.add([s]);
   }
 
-  clusters.sort((a, b) {
+  // Only a group big enough to be a column may win one. Ranking first and
+  // testing the winner afterwards was equivalent while the rank *was* the
+  // member count; it is not equivalent to anything now, and a one-image group
+  // that happened to be the tallest would have failed this test and thrown
+  // away the whole page's candidates with it.
+  final eligible = [
+    for (final cluster in clusters)
+      if (cluster.length >= config.minClusterSize) cluster,
+  ];
+  if (eligible.isEmpty) return survivors;
+
+  eligible.sort((a, b) {
+    // How much of the page each group is. Zero on both sides means the page
+    // reported no laid-out boxes, and the comparison below is what this
+    // always did.
+    final byExtent = _verticalExtent(b).compareTo(_verticalExtent(a));
+    if (byExtent != 0) return byExtent;
     final byCount = b.length.compareTo(a.length);
     if (byCount != 0) return byCount;
     return _area(b).compareTo(_area(a));
   });
 
-  final best = clusters.first;
-  if (best.length < config.minClusterSize) return survivors;
+  final best = eligible.first;
 
   final keptIds = best.map((s) => s.image.domIndex).toSet();
   for (final s in survivors) {
@@ -222,6 +258,27 @@ List<_Scored> _dominantWidthCluster(
   }
   return best;
 }
+
+/// How much of the page a set of images occupies vertically: the sum of the
+/// heights of the boxes the browser actually laid out for them.
+///
+/// **The rendered box, not the intrinsic size.** `PageImage.effectiveHeight`
+/// prefers `naturalHeight`, which is the image file's own height and says
+/// nothing about how much of this page it takes up — a 16000px strip scaled
+/// into a 720px column occupies 12800px, not 16000. Anything the browser has
+/// not laid out yet contributes nothing, so a page that reported no geometry
+/// measures zero and the caller falls back to whatever it did before.
+///
+/// One definition, two callers: the dominant-column rule in this file and
+/// `imageContentBand`'s density test both mean this quantity, and the bug this
+/// exists to prevent is the two of them drifting apart.
+int verticalExtentOf(Iterable<PageImage> images) => images.fold(
+  0,
+  (sum, image) => sum + (image.renderedHeight > 0 ? image.renderedHeight : 0),
+);
+
+int _verticalExtent(List<_Scored> cluster) =>
+    verticalExtentOf(cluster.map((s) => s.image));
 
 int _area(List<_Scored> cluster) =>
     cluster.fold(0, (sum, s) => sum + s.width * s.height);

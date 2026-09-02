@@ -528,12 +528,24 @@ class SaveEngine {
           '${chosen.acceptedCount} (tallest $chosenMaxHeight px) — refusing '
           'to store',
         );
+        // Say which of the two collapses happened. They are different facts
+        // about the page and only one of them is about a count: printing the
+        // count comparison for a height collapse produced "found 21 images
+        // where 21 were seen", a sentence that contradicts itself and names
+        // nothing the user could act on. Neither sentence claims the page
+        // navigated or mutated — the height collapse routinely fires on a
+        // page that did not change at all, because what changed is which set
+        // of images the column rule settled on.
         return EntrySaveResult(
           status: SaveStatus.failed,
           entryId: entryId,
-          error:
-              'The page changed under the save — found '
-              '${chosen.acceptedCount} images where $_peakAccepted were seen',
+          error: collapsedCount
+              ? 'Only ${chosen.acceptedCount} of the $_peakAccepted content '
+                    'images seen while scrolling were still there at the end'
+              : 'The images this page ended with are far shorter than the '
+                    'content seen while scrolling — the tallest is '
+                    '${chosenMaxHeight}px where ${_peakPanelHeight}px was '
+                    'found',
           extractionFailed: true,
           pageUrl: pageUrl,
         );

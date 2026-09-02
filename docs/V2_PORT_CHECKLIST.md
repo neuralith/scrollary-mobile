@@ -72,7 +72,10 @@ the *dedicated* suites are the ones whose subject the component is.
   `lib/save/save_engine.dart` carries the reviewed result seam (§17.1,
   2026-08-21); `_enumerateImages`, the slice loop, the deadline, the
   `isComplete` rule and the truncation reason are untouched, and an incomplete
-  enumeration still decides `partial` where it always did.
+  enumeration still decides `partial` where it always did. **Selection** is a
+  different matter: the dominant-width-cluster rule inside
+  `selectImageCandidates` was reviewed and changed (§17.5, 2026-09-01) — the
+  first change on this list to move a judgement rather than a seam.
 - **Tests carried:** dedicated — `test/image_candidates_test.dart` (per-image
   rules, width cluster, and the asserted superset property: everything final
   selection accepts, traversal already treated as relevant),
@@ -420,11 +423,15 @@ the *dedicated* suites are the ones whose subject the component is.
 
 The rule this list exists to enforce: *if a ported component needs an internal
 change, that is a task with its own review, not a side effect of a call-site
-edit.* Four such changes have now been reviewed and made. §17.1 and §17.2 cut
+edit.* Five such changes have now been reviewed and made. §17.1 and §17.2 cut
 the two seams V2 could not start without; §17.3 and §17.4 are the same two
 seams' other ends, made at the V1 retirement — the V1 route through each is
-removed now that nothing takes it. None of the four moves a measurement, a
+removed now that nothing takes it. None of those four moves a measurement, a
 threshold, a wait, an ordering or a stopping condition.
+
+**§17.5 does.** It is the first entry here that changes what the ported code
+*decides*, and it is recorded at that weight: a rule that was wrong on a real
+page, the evidence it was wrong, and what was deliberately left alone.
 
 ### 17.1 The save engine's result seam — 2026-08-21
 
@@ -617,6 +624,57 @@ threshold, a wait, an ordering or a stopping condition.
   calls in order, and a `db:`-built save writing a row equal field-for-field to
   one built over an explicit `LibrarySaveResultSink`. It proved parity with a
   library that no longer exists.
+
+### 17.5 The dominant content column, ranked by page rather than by count — 2026-09-01
+
+- **File:** `lib/save/image_candidates.dart` (§2's component), plus the
+  collapse guard's two sentences in `lib/save/save_engine.dart` (§1/§2's host).
+- **Why.** `_dominantWidthCluster` picked the width group with the **most
+  members**. On a real reader page — audited from a live address, which is why
+  no address appears here or in the fixtures — the Entry was a vertical strip
+  of 19 images 900px wide and up to 16000px tall, and below it sat a grid of
+  20 cover thumbnails 400x580 advertising other works. Twenty beat nineteen,
+  so the thumbnails became the content column and every one of the Entry's own
+  images was rejected as `outsideContentColumn`. What then reached the
+  collapse guard was 20 images no taller than 580px where 16000px had been
+  seen while scrolling, so the run stopped and asked the user to point at
+  content it had already found and thrown away. The same wrong column also
+  made `imageContentBand` refuse — a grid is not a reading order — so reading
+  progress on such a page silently measured against the whole document and
+  could never reach 100%.
+- **What changed.** Three things, all in the ranking:
+  1. Groups are ranked by `verticalExtentOf` — the sum of the laid-out box
+     heights, *how much of the page this group is* — before member count.
+     Count and area survive as the tiebreaks, so a page that reported no
+     layout geometry at all ranks exactly as it did before.
+  2. Only groups meeting `minClusterSize` are ranked. Ranking everything and
+     testing the winner afterwards was equivalent while the rank *was* the
+     count; under any other rank a one-image group could win and then fail
+     that test, discarding the whole page's candidates.
+  3. `imageContentBand` and this rule now take that measure from one
+     definition instead of two folds that could drift.
+- **What did not change.** Every per-image rule — the size floor, the aspect
+  test, hidden and chrome exclusion, URL de-duplication, `contentRejection`
+  and the `unknownSizeIsTooSmall` split that makes traversal a superset of
+  final selection. The clustering itself: same greedy grouping, same
+  `widthClusterTolerance`, same `minClusterSize`, same "keep everything when
+  no group is convincing" valve. No scroll, wait, decode, stop condition or
+  emitted state moved, and the collapse guard's own thresholds (`* 2`, `* 10`)
+  are untouched — only the two sentences it prints.
+- **Deliberately not done.** The band's single-vertical-run test was **not**
+  promoted into the cluster ranking. It belongs where a refusal is safe:
+  `imageContentBand` falls back to the whole document, while here a transient
+  side-by-side layout during lazy settling would demote the real content
+  column with nothing to fall back to.
+- **Proof.** `test/image_candidates_test.dart` — the audited measurements as a
+  fixture (19 tall content images against 20 thumbnails), the no-geometry
+  fallback to count, and a too-small group that must neither win nor empty the
+  page. `test/library_ui/reading_progress_test.dart` — a grid below the strip
+  no longer becomes the band. `test/hidden_webview_test.dart` — the collapse
+  guard's height branch now names heights instead of printing a count
+  comparison that read "found 4 images where 4 were seen". The first two fail
+  against the previous ranking and pass against this one; the eleven
+  pre-existing candidate-filter tests pass unedited.
 
 ---
 

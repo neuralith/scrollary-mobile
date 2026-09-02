@@ -119,7 +119,7 @@ ImageContentBand? imageContentBand(
   if (accepted.length < kContentBandMinimumImages) return null;
 
   final byIndex = {for (final image in probe.images) image.domIndex: image};
-  final boxes = <({int top, int height})>[];
+  final placed = <PageImage>[];
   for (final candidate in accepted) {
     final image = byIndex[candidate.domIndex];
     if (image == null) return null;
@@ -128,34 +128,38 @@ ImageContentBand? imageContentBand(
     // a measurement never goes down — so a band like that could only ever be
     // wrong in the direction that matters.
     if (image.renderedHeight <= 0) return null;
-    boxes.add((top: image.documentTop, height: image.renderedHeight));
+    placed.add(image);
   }
-  boxes.sort((a, b) => a.top.compareTo(b.top));
+  placed.sort((a, b) => a.documentTop.compareTo(b.documentTop));
 
   // One vertical run. Each image starts below the middle of the one before
   // it; anything tighter is two images side by side, which is a grid and not
   // a reading order.
-  for (var i = 1; i < boxes.length; i++) {
-    final previous = boxes[i - 1];
-    if (boxes[i].top < previous.top + (previous.height / 2)) return null;
+  for (var i = 1; i < placed.length; i++) {
+    final previous = placed[i - 1];
+    if (placed[i].documentTop <
+        previous.documentTop + (previous.renderedHeight / 2)) {
+      return null;
+    }
   }
 
-  final top = boxes.first.top;
-  final last = boxes.last;
-  final bottom = last.top + last.height;
+  final top = placed.first.documentTop;
+  final last = placed.last;
+  final bottom = last.documentTop + last.renderedHeight;
   if (bottom <= top) return null;
 
   final span = bottom - top;
   if (span <= probe.viewportHeight) return null;
 
-  final covered = boxes.fold<int>(0, (sum, box) => sum + box.height);
+  // The same measure the dominant-column rule ranks on, from the same place.
+  final covered = verticalExtentOf(placed);
   if (covered / span < kContentBandDensity) return null;
 
   return ImageContentBand(
     top: top,
     // The band cannot end past the document it was measured on.
     bottom: bottom > probe.documentHeight ? probe.documentHeight : bottom,
-    imageCount: boxes.length,
+    imageCount: placed.length,
   );
 }
 

@@ -35,6 +35,7 @@ import '../ui/palette.dart';
 import '../ui/status_style.dart';
 import 'operation_indicator.dart' show indicatorTasksProvider;
 import 'operation_progress.dart';
+import 'v2_save_flow.dart' show assistHoldProvider;
 
 /// The task the queue runner is working on, and what to call it.
 final _activeSaveProvider = FutureProvider.autoDispose
@@ -54,8 +55,11 @@ class RunningOperationPanel extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final runner = ref.watch(queueRunnerProvider);
     final check = ref.watch(checkControllerProvider);
+    // Null on a surface where nothing can hold a run, which is the honest
+    // answer there and the reason this seam is nullable.
+    final assist = ref.watch(assistHoldProvider);
     return AnimatedBuilder(
-      animation: Listenable.merge([runner, check]),
+      animation: Listenable.merge([runner, check, ?assist]),
       builder: (context, _) {
         // A check and a save can never run together — the Browser's automation
         // ownership is single — so this is a choice, not a stack. Reading a
@@ -64,6 +68,18 @@ class RunningOperationPanel extends ConsumerWidget {
         // download is what the user started and what they can stop.
         if (check.isRunning) return const _CheckRunning();
         if (!runner.isRunning) return const _WaitingQueue();
+        // A run holding for a tap gives its strip up to the sheet doing the
+        // asking. The full panel's progress, counters and bar describe motion
+        // that has stopped, and the two together took so much of a phone that
+        // the WebView the user is being asked to tap had no room left.
+        //
+        // The stop stays, because it is the only one on this screen and
+        // *Cancel run* on the sheet is not one: that ends the **hold**, the
+        // capture keeps the failure it already had, and the queue carries on
+        // to the next entry.
+        if (assist?.pendingSelection != null) {
+          return _SaveHolding(taskId: runner.activeTaskId);
+        }
         return _SaveRunning(taskId: runner.activeTaskId);
       },
     );
@@ -212,6 +228,50 @@ class _StopRow extends StatelessWidget {
               color: palette.inkMuted,
             ),
           ),
+        ),
+      ],
+    );
+  }
+}
+
+/// A download that has stopped for a person, folded to the two things still
+/// worth a strip of the Browser: what is waiting, and the way to end it.
+///
+/// The sheet above this one says what it needs and asks for the tap; nothing
+/// here repeats it. What cannot move to that sheet is the stop — *Cancel run*
+/// there ends the hold, not the download — so it stays, with the same key and
+/// the same call the full panel uses.
+class _SaveHolding extends ConsumerWidget {
+  const _SaveHolding({required this.taskId});
+
+  final String? taskId;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final palette = AppPalette.of(context);
+    final id = taskId;
+    final active = id == null ? null : ref.watch(_activeSaveProvider(id)).value;
+
+    return _PanelFrame(
+      children: [
+        Text(
+          'Waiting for you to point at the Entry on this page.',
+          maxLines: 2,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(fontSize: 12, height: 1.35, color: palette.ink),
+        ),
+        const SizedBox(height: 10),
+        _StopRow(
+          label: 'Stop download',
+          // Short on purpose. The full panel's paragraph about what survives
+          // a stop is worth its room while a run is moving; here every line
+          // it wraps to comes off the page the user is being asked to tap,
+          // and the dialog the stop opens says all of it anyway.
+          note: 'Stops at the next safe point.',
+          buttonKey: const ValueKey('panelStopDownload'),
+          onStop: active == null
+              ? null
+              : () => stopRunningDownload(context, ref, active.task),
         ),
       ],
     );

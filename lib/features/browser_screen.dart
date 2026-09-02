@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:collection';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
@@ -403,148 +404,169 @@ class _BrowserScreenState extends ConsumerState<BrowserScreen> {
       backgroundColor: palette.surfaceMuted,
       body: SafeArea(
         bottom: false,
-        child: Column(
-          children: [
-            if (!chromeHidden)
-              BrowserToolbar(
+        // The docked layers below the WebView are budgeted against the height
+        // this Column actually has. Without that budget the selection sheet's
+        // fixed 420, the running panel and the toolbar together exceed every
+        // phone, the WebView's `Expanded` resolves to **zero**, and the app
+        // asks the user to tap an Entry on a page it is no longer drawing.
+        child: LayoutBuilder(
+          builder: (context, constraints) => Column(
+            children: [
+              if (!chromeHidden)
+                BrowserToolbar(
+                  browser: browser,
+                  homeActive: presentation.isHome,
+                  onBack: _goBack,
+                  onForward: browser.canGoForward ? browser.goForward : null,
+                  onAddress: () => _openAddressEditor(),
+                  onReloadOrStop: () => browser.isLoading
+                      ? browser.stopLoading()
+                      : browser.reload(),
+                  onHome: _openHome,
+                ),
+              if (_findOpen)
+                FindInPageBar(
+                  browser: browser,
+                  onClose: () => setState(() => _findOpen = false),
+                ),
+              _HostChangeBanner(browser: browser),
+              _PageStateBanner(
                 browser: browser,
-                homeActive: presentation.isHome,
-                onBack: _goBack,
-                onForward: browser.canGoForward ? browser.goForward : null,
-                onAddress: () => _openAddressEditor(),
-                onReloadOrStop: () => browser.isLoading
-                    ? browser.stopLoading()
-                    : browser.reload(),
-                onHome: _openHome,
+                onRetry: browser.reload,
+                onEditAddress: () => _openAddressEditor(),
+                onGoHome: _openHome,
               ),
-            if (_findOpen)
-              FindInPageBar(
-                browser: browser,
-                onClose: () => setState(() => _findOpen = false),
-              ),
-            _HostChangeBanner(browser: browser),
-            _PageStateBanner(
-              browser: browser,
-              onRetry: browser.reload,
-              onEditAddress: () => _openAddressEditor(),
-              onGoHome: _openHome,
-            ),
-            Expanded(
-              child: Stack(
-                children: [
-                  // Always in the tree, always laid out at full size. The
-                  // layers below cover it; none of them unmount it.
-                  _WebViewHost(browser: browser, initialUrl: _initialUrl),
-                  _BlockingPageState(
-                    browser: browser,
-                    onRetry: browser.reload,
-                    onEditAddress: () => _openAddressEditor(),
-                    onGoHome: _openHome,
-                    onOpenLibrary: () =>
-                        ref.read(shellTabRequestProvider).value = 0,
-                  ),
-                  // While a run runs, block stray taps from reaching the page.
-                  //
-                  // Except while it is *holding for a tap*: the whole of the
-                  // assist flow is the user pointing at something in the page,
-                  // and a veil over it would swallow the one gesture the run is
-                  // waiting for. The page is in the bridge's element-picking
-                  // mode by then, which swallows the tap itself rather than
-                  // letting it navigate — so nothing here is loosened, the job
-                  // has simply moved to the layer that can tell a teaching tap
-                  // from a stray one.
-                  AnimatedBuilder(
-                    animation: Listenable.merge([runner, sourceCheck, assist]),
-                    builder: (context, _) =>
-                        (runner.isRunning || sourceCheck.isRunning) &&
-                            assist.pendingSelection == null
-                        ? Positioned.fill(
-                            child: AbsorbPointer(
-                              child: ColoredBox(color: palette.veil),
-                            ),
-                          )
-                        : const SizedBox.shrink(),
-                  ),
-                  BrowserSaveActions(
-                    runner: runner,
-                    sourceCheck: sourceCheck,
-                    pageStatus: _pageEntryState,
-                    pageIsQueued: pageIsQueued,
-                    captureRestricted: _captureRestricted,
-                    waitingSaves: waitingSaves,
-                    chromeHidden: chromeHidden,
-                    canHideChrome: canHideChrome,
-                    onToggleChrome: () =>
-                        _p.setChromeHidden(!presentation.chromeHidden),
-                    onSave: () => _showSaveSheet(context),
-                    onPageActions: _openPageActions,
-                    onViewLibrary: () =>
-                        ref.read(shellTabRequestProvider).value = 0,
-                  ),
-                  if (presentation.isHome)
-                    Positioned.fill(
-                      child: BrowserHome(
-                        preserved: presentation.preserved,
-                        onClose: _p.showWebsite,
-                        onOpenAddressEditor: () =>
-                            _openAddressEditor(fromHome: true),
-                        onOpenUrl: _openUrl,
-                        onOpenHistory: _openHistory,
-                        onAddSite: _addSavedSite,
-                        onEditSite: (site) => showSaveSiteSheet(
-                          context,
-                          url: site.url,
-                          title: site.title,
-                          editingId: site.id,
-                          offerSiteRoot: false,
+              Expanded(
+                child: Stack(
+                  children: [
+                    // Always in the tree, always laid out at full size. The
+                    // layers below cover it; none of them unmount it.
+                    _WebViewHost(browser: browser, initialUrl: _initialUrl),
+                    _BlockingPageState(
+                      browser: browser,
+                      onRetry: browser.reload,
+                      onEditAddress: () => _openAddressEditor(),
+                      onGoHome: _openHome,
+                      onOpenLibrary: () =>
+                          ref.read(shellTabRequestProvider).value = 0,
+                    ),
+                    // While a run runs, block stray taps from reaching the page.
+                    //
+                    // Except while it is *holding for a tap*: the whole of the
+                    // assist flow is the user pointing at something in the page,
+                    // and a veil over it would swallow the one gesture the run is
+                    // waiting for. The page is in the bridge's element-picking
+                    // mode by then, which swallows the tap itself rather than
+                    // letting it navigate — so nothing here is loosened, the job
+                    // has simply moved to the layer that can tell a teaching tap
+                    // from a stray one.
+                    AnimatedBuilder(
+                      animation: Listenable.merge([
+                        runner,
+                        sourceCheck,
+                        assist,
+                      ]),
+                      builder: (context, _) =>
+                          (runner.isRunning || sourceCheck.isRunning) &&
+                              assist.pendingSelection == null
+                          ? Positioned.fill(
+                              child: AbsorbPointer(
+                                child: ColoredBox(color: palette.veil),
+                              ),
+                            )
+                          : const SizedBox.shrink(),
+                    ),
+                    BrowserSaveActions(
+                      runner: runner,
+                      sourceCheck: sourceCheck,
+                      pageStatus: _pageEntryState,
+                      pageIsQueued: pageIsQueued,
+                      captureRestricted: _captureRestricted,
+                      waitingSaves: waitingSaves,
+                      chromeHidden: chromeHidden,
+                      canHideChrome: canHideChrome,
+                      onToggleChrome: () =>
+                          _p.setChromeHidden(!presentation.chromeHidden),
+                      onSave: () => _showSaveSheet(context),
+                      onPageActions: _openPageActions,
+                      onViewLibrary: () =>
+                          ref.read(shellTabRequestProvider).value = 0,
+                    ),
+                    if (presentation.isHome)
+                      Positioned.fill(
+                        child: BrowserHome(
+                          preserved: presentation.preserved,
+                          onClose: _p.showWebsite,
+                          onOpenAddressEditor: () =>
+                              _openAddressEditor(fromHome: true),
+                          onOpenUrl: _openUrl,
+                          onOpenHistory: _openHistory,
+                          onAddSite: _addSavedSite,
+                          onEditSite: (site) => showSaveSiteSheet(
+                            context,
+                            url: site.url,
+                            title: site.title,
+                            editingId: site.id,
+                            offerSiteRoot: false,
+                          ),
                         ),
                       ),
-                    ),
-                  if (presentation.isEditingAddress)
-                    Positioned.fill(
-                      child: BrowserUrlEditor(
-                        initialText: presentation.addressDraft,
-                        selectAll: presentation.selectAllOnOpen,
-                        currentPageUrl: browser.currentUrl,
-                        onSubmit: _submitAddress,
-                        onCancel: () => _p.closeAddressEditor(
-                          // Cancelling out of an editor opened from Home
-                          // returns to Home, not to the page behind it.
-                          toHome:
-                              presentation.addressDraft.isEmpty &&
-                              presentation.preserved != null,
+                    if (presentation.isEditingAddress)
+                      Positioned.fill(
+                        child: BrowserUrlEditor(
+                          initialText: presentation.addressDraft,
+                          selectAll: presentation.selectAllOnOpen,
+                          currentPageUrl: browser.currentUrl,
+                          onSubmit: _submitAddress,
+                          onCancel: () => _p.closeAddressEditor(
+                            // Cancelling out of an editor opened from Home
+                            // returns to Home, not to the page behind it.
+                            toHome:
+                                presentation.addressDraft.isEmpty &&
+                                presentation.preserved != null,
+                          ),
+                          onSaveSite: (url, title) =>
+                              _saveCurrentPage(url: url, title: title),
                         ),
-                        onSaveSite: (url, title) =>
-                            _saveCurrentPage(url: url, title: title),
                       ),
-                    ),
-                ],
+                  ],
+                ),
               ),
-            ),
-            // A run holding for the user, asked **here**.
-            //
-            // The save sheet renders the same overlay while it is open, but a
-            // journey outlives it by design: the sheet answers, closes, and the
-            // Browser performs the Start. So the surface the *Needs you* pill
-            // sends people to has to be able to ask as well, or a walk that
-            // stops to ask holds against a controller nothing is drawing.
-            //
-            // Docked below the page rather than over it, for the same reason
-            // the run panel is: the element being pointed at is in the page,
-            // and a sheet across the middle of it hides the control the user
-            // is being asked to find.
-            AnimatedBuilder(
-              animation: assist,
-              builder: (context, _) {
-                final request = assist.pendingSelection;
-                if (request == null) return const SizedBox.shrink();
-                return RuleSelectionOverlay(run: assist, request: request);
-              },
-            ),
-            // Docked under the WebView, never over it: while this app drives
-            // the Browser the user can see what it is doing and end it.
-            const RunningOperationPanel(),
-          ],
+              // A run holding for the user, asked **here**.
+              //
+              // The save sheet renders the same overlay while it is open, but a
+              // journey outlives it by design: the sheet answers, closes, and the
+              // Browser performs the Start. So the surface the *Needs you* pill
+              // sends people to has to be able to ask as well, or a walk that
+              // stops to ask holds against a controller nothing is drawing.
+              //
+              // Docked below the page rather than over it, for the same reason
+              // the run panel is: the element being pointed at is in the page,
+              // and a sheet across the middle of it hides the control the user
+              // is being asked to find.
+              AnimatedBuilder(
+                animation: assist,
+                builder: (context, _) {
+                  final request = assist.pendingSelection;
+                  if (request == null) return const SizedBox.shrink();
+                  return RuleSelectionOverlay(
+                    run: assist,
+                    request: request,
+                    // The page keeps the majority; this sheet lives in what is
+                    // left, and the running panel folds to its holding line
+                    // underneath rather than competing for the same strip.
+                    maxHeight: math.min(
+                      kAssistOverlayMaxHeight,
+                      constraints.maxHeight * kAssistSheetShare,
+                    ),
+                  );
+                },
+              ),
+              // Docked under the WebView, never over it: while this app drives
+              // the Browser the user can see what it is doing and end it.
+              const RunningOperationPanel(),
+            ],
+          ),
         ),
       ),
     );

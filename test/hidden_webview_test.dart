@@ -195,7 +195,21 @@ void main() {
 
       expect(result.status, SaveStatus.failed);
       expect(result.extractionFailed, isTrue, reason: 'asks the user instead');
-      expect(result.error, contains('changed under the save'));
+      // The sentence names the collapse that actually happened. This branch
+      // is the *height* one — four avatars where four tall panels were seen —
+      // so the count comparison the guard used to print read "found 4 images
+      // where 4 were seen", which contradicts itself and describes nothing.
+      // It also claimed the page "changed under the save"; nothing here
+      // navigated or mutated.
+      expect(
+        result.error,
+        allOf(
+          contains('shorter than the content seen while scrolling'),
+          contains('539px'),
+          contains('13000px'),
+          isNot(contains('changed under the save')),
+        ),
+      );
       expect(
         Directory(root.path).listSync(recursive: true).whereType<File>(),
         isEmpty,

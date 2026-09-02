@@ -452,4 +452,139 @@ void main() {
       },
     );
   });
+
+  /// **Dominant means most of the page, not most numerous.**
+  ///
+  /// The shape and the measurements here were taken from a real reader page
+  /// during an audit. A vertical strip of tall content images carried the
+  /// Entry; below it sat a grid of same-sized cover thumbnails advertising
+  /// other works. The grid had *more members* than the strip, so ranking
+  /// clusters by member count handed the content column to the thumbnails and
+  /// rejected every one of the Entry's own images as
+  /// [RejectReason.outsideContentColumn].
+  ///
+  /// Downstream that reached the save engine's collapse guard as twenty-odd
+  /// images no taller than a thumbnail where whole-screen content had been
+  /// seen while scrolling, and the run stopped to ask the user to point at
+  /// content it had already found and thrown away.
+  group('the dominant content column', () {
+    /// A tall content image in the reading column: 900px of source scaled
+    /// into a 720px column, so its laid-out box is what it occupies.
+    PageImage content({required int index, required int naturalHeight}) => img(
+      index: index,
+      src: 'https://reading.example.com/img/content-$index.png',
+      naturalWidth: 900,
+      naturalHeight: naturalHeight,
+      renderedWidth: 720,
+      renderedHeight: (naturalHeight * 0.8).round(),
+      top: index * 8000,
+    );
+
+    /// One cell of the grid underneath: a 400x580 cover, laid out small and
+    /// several to a row.
+    PageImage cover({required int index}) => img(
+      index: 100 + index,
+      src: 'https://reading.example.com/img/cover-$index.png',
+      naturalWidth: 400,
+      naturalHeight: 580,
+      renderedWidth: 200,
+      renderedHeight: 290,
+      top: 160000 + (index ~/ 5) * 300,
+    );
+
+    /// Nineteen content images, twenty covers — the counts as measured.
+    final measured = <PageImage>[
+      for (var i = 0; i < 9; i++) content(index: i, naturalHeight: 16000),
+      content(index: 9, naturalHeight: 15483),
+      content(index: 10, naturalHeight: 2907),
+      content(index: 11, naturalHeight: 2991),
+      content(index: 12, naturalHeight: 1159),
+      for (var i = 13; i < 19; i++) content(index: i, naturalHeight: 3000),
+      for (var i = 0; i < 20; i++) cover(index: i),
+    ];
+
+    test('a thumbnail grid does not outrank fewer, taller content images', () {
+      final selection = selectImageCandidates(measured);
+
+      expect(
+        selection.accepted.length,
+        19,
+        reason:
+            'the nineteen content images are the column, not the twenty '
+            'covers that outnumber them',
+      );
+      expect(
+        selection.accepted.every((c) => c.url.contains('content-')),
+        isTrue,
+      );
+      expect(
+        selection.rejected
+            .where((r) => r.reason == RejectReason.outsideContentColumn)
+            .length,
+        20,
+      );
+    });
+
+    test('the count still decides when the page laid nothing out', () {
+      // No rendered boxes anywhere: the page has told us nothing about how
+      // much of it anything occupies, so the rule degrades to exactly the
+      // member count it was before, rather than inventing a geometry answer.
+      final selection = selectImageCandidates([
+        for (var i = 0; i < 4; i++)
+          img(
+            index: i,
+            src: 'https://reading.example.com/img/thumb-$i.png',
+            naturalWidth: 400,
+            naturalHeight: 580,
+            renderedWidth: 0,
+            renderedHeight: 0,
+          ),
+        for (var i = 0; i < 3; i++)
+          img(
+            index: 10 + i,
+            src: 'https://reading.example.com/img/big-$i.png',
+            naturalWidth: 900,
+            naturalHeight: 16000,
+            renderedWidth: 0,
+            renderedHeight: 0,
+          ),
+      ]);
+
+      expect(selection.accepted.length, 4);
+      expect(selection.accepted.every((c) => c.url.contains('thumb-')), isTrue);
+    });
+
+    test('a group too small to be a column never wins one, and never empties '
+        'the page', () {
+      // Two enormous images occupy more of the page than four ordinary ones,
+      // but two is below `minClusterSize`. Ranking every group and only then
+      // testing the winner's size would find these first, fail that test, and
+      // throw away the whole page's candidates with them.
+      final selection = selectImageCandidates([
+        for (var i = 0; i < 2; i++)
+          img(
+            index: i,
+            src: 'https://reading.example.com/img/huge-$i.png',
+            naturalWidth: 1600,
+            naturalHeight: 6000,
+            renderedWidth: 1600,
+            renderedHeight: 5000,
+            top: i * 5000,
+          ),
+        for (var i = 0; i < 4; i++)
+          img(
+            index: 10 + i,
+            src: 'https://reading.example.com/img/panel-$i.png',
+            naturalWidth: 800,
+            naturalHeight: 1200,
+            renderedWidth: 800,
+            renderedHeight: 1000,
+            top: 10000 + i * 1000,
+          ),
+      ]);
+
+      expect(selection.accepted.length, 4);
+      expect(selection.accepted.every((c) => c.url.contains('panel-')), isTrue);
+    });
+  });
 }

@@ -236,6 +236,43 @@ void main() {
       );
     });
 
+    /// The band is built from whatever `selectImageCandidates` calls the
+    /// content column, so a column rule that picked the wrong images took
+    /// this with it. A grid below the strip won the column by member count,
+    /// the band was then built from *its* boxes, several of which share a
+    /// row — so the single-run test refused, and every reading of a page like
+    /// this fell back to the whole document and could never reach 100%.
+    test('a grid of thumbnails below the strip does not become the band', () {
+      // Twenty covers in rows of five, underneath six content panels.
+      final grid = [
+        for (var i = 0; i < 20; i++)
+          PageImage(
+            domIndex: 100 + i,
+            src: 'https://alpha.example/img/cover-$i.png',
+            complete: true,
+            naturalWidth: 400,
+            naturalHeight: 580,
+            renderedWidth: 200,
+            renderedHeight: 290,
+            documentTop: 9800 + (i ~/ 5) * 300,
+          ),
+      ];
+
+      final band = imageContentBand(
+        page(
+          document: 12000,
+          viewport: 1000,
+          scrollY: 0,
+          images: [...strip(), ...grid],
+        ),
+      );
+
+      expect(band, isNotNull, reason: 'the page still has a readable band');
+      expect(band!.imageCount, 6);
+      expect(band.top, 500);
+      expect(band.bottom, 9500);
+    });
+
     test('page chrome is not the entry', () {
       final withChrome = [
         panel(index: 99, top: 0, renderedHeight: 1500, chrome: true),
