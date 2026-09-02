@@ -44,9 +44,16 @@ const _entryTitle = 'Alpha 12';
 const _indexUrl = 'https://reading.example.com/works/alpha';
 const _indexTitle = 'Alpha';
 
-/// A page that says nothing about itself either way.
+/// A page that says nothing about itself either way. The bare host keys no
+/// Source path; the article below it keys its own.
 const _plainUrl = 'https://news.example.com/';
+const _plainPageUrl = 'https://news.example.com/the-quiet-morning';
 const _plainTitle = 'Home';
+
+/// A site given over to one work: the Entry sits directly on the domain, so
+/// the Source path is the root (V2-D72).
+const _flatEntryUrl = 'https://dedicated.example/quiet-harbour-part-12/';
+const _flatEntryTitle = 'Quiet Harbour Part 12';
 
 /// What the panel asked the domain for.
 class _AddCall {
@@ -827,10 +834,10 @@ void main() {
       await pumpUntil(tester, key('v2CheckAfterAdd'));
     });
 
-    screenTest('an ordinary page leads with the collection too, and offers '
-        'no loose save', (tester) async {
+    screenTest('an ordinary page inside a site leads with the collection, and '
+        'offers no loose save', (tester) async {
       await h.root();
-      await openPanel(tester, _plainUrl, _plainTitle);
+      await openPanel(tester, _plainPageUrl, _plainTitle);
 
       await pumpUntil(tester, key('v2AddToCollection'));
       expect(
@@ -846,6 +853,42 @@ void main() {
         reason: 'nothing is captured until the library answer is given',
       );
       expect(adds, isEmpty);
+    });
+
+    // The picker's every answer writes a Source, and a Source is
+    // `(host, path_key)`. A bare host yields no path key, so all three answers
+    // were refused *after* the user had chosen one. The sheet now says so
+    // first (V2-D72). This narrows V2-D69's offer to the addresses it could
+    // ever have been honoured on; no working save is removed, because none of
+    // them completed.
+    screenTest('a bare host is told it keys no section, instead of being '
+        'offered a collection that would be refused', (tester) async {
+      await h.root();
+      await openPanel(tester, _plainUrl, _plainTitle);
+
+      await pumpUntil(
+        tester,
+        find.textContaining('does not identify a section'),
+      );
+      expect(key('v2AddToCollection'), findsNothing);
+      expect(key('v2AddCollection'), findsNothing);
+      expect(
+        find.textContaining('another source'),
+        findsNothing,
+        reason: 'nothing about attaching a source, where none can be keyed',
+      );
+      expect(adds, isEmpty);
+    });
+
+    // The shape the root rule exists for: one work, published straight off the
+    // domain. It keys a Source, so the ordinary question is asked (V2-D72).
+    screenTest('an entry published straight off the domain is offered the '
+        'picker like any other', (tester) async {
+      await h.root();
+      await openPanel(tester, _flatEntryUrl, _flatEntryTitle);
+
+      await pumpUntil(tester, key('v2AddToCollection'));
+      expect(find.textContaining('does not identify a section'), findsNothing);
     });
   });
 
@@ -1169,7 +1212,11 @@ void main() {
       // no answer to it can be written — before the work is known.
       final collectionId = await seedKnownEntry();
       await h.root();
-      await openPanel(tester, _plainUrl, _plainTitle);
+      // A page *inside* a site: it keys a Source, so the picker is offered
+      // and the capture question is the one being withheld here — not the
+      // picker itself, which a bare host withholds for its own reason
+      // (V2-D72).
+      await openPanel(tester, _plainPageUrl, _plainTitle);
       await pumpUntil(tester, key('v2AddToCollection'));
 
       expect(find.text('What to save'), findsNothing);

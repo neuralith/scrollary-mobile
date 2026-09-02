@@ -1609,12 +1609,15 @@ class _V2SavePanelState extends ConsumerState<V2SavePanel> {
         // visible before another is started (V2-D45, V2-D57) — and what it
         // answers turns this same sheet into the one that saves (V2-D62).
         if (canDownload && _scope == null)
-          FilledButton(
-            key: const ValueKey('v2AddToCollection'),
-            onPressed: () => _chooseCollection(indexOnly: false),
-            child: const Text('Add to a Collection…'),
-          ),
-        if (_scope == null) _adoptionNote(palette),
+          if (_keysASource)
+            FilledButton(
+              key: const ValueKey('v2AddToCollection'),
+              onPressed: () => _chooseCollection(indexOnly: false),
+              child: const Text('Add to a Collection…'),
+            )
+          else
+            _noSourceKeyNote(palette),
+        if (_scope == null && _keysASource) _adoptionNote(palette),
         if (canDownload && _scope != null) ..._scopeAndLaunch(),
       ],
       // The listing itself. A Source, no Entry, and the check offered after.
@@ -1643,12 +1646,15 @@ class _V2SavePanelState extends ConsumerState<V2SavePanel> {
       // an about page on a site it knows nothing about.
       PageKind.unknownPage => [
         if (canDownload && _scope == null)
-          FilledButton(
-            key: const ValueKey('v2AddToCollection'),
-            onPressed: () => _chooseCollection(indexOnly: false),
-            child: const Text('Add to a Collection…'),
-          ),
-        if (_scope == null) _adoptionNote(palette),
+          if (_keysASource)
+            FilledButton(
+              key: const ValueKey('v2AddToCollection'),
+              onPressed: () => _chooseCollection(indexOnly: false),
+              child: const Text('Add to a Collection…'),
+            )
+          else
+            _noSourceKeyNote(palette),
+        if (_scope == null && _keysASource) _adoptionNote(palette),
         if (canDownload && _scope != null) ..._scopeAndLaunch(),
         if (_scope == null && (_shape?.couldBeListing ?? false)) ...[
           _note(
@@ -1675,6 +1681,24 @@ class _V2SavePanelState extends ConsumerState<V2SavePanel> {
       ],
     };
   }
+
+  /// Whether this address yields the Source key a Collection is attached by.
+  ///
+  /// Every answer the picker can give — join one I already have, start a new
+  /// one, add this site as a source — writes a Source, and a Source is
+  /// `(host, path_key)`. Without a key each of them is refused after the user
+  /// has chosen (I5), so the offer is not made. `PageShape` had already worked
+  /// this out; the sheet had simply never asked it.
+  bool get _keysASource => _shape?.identityIsStrong ?? true;
+
+  /// Why the picker is not offered — said before the user commits, in place of
+  /// the refusal that used to arrive after (V2-D72).
+  Widget _noSourceKeyNote(AppPalette palette) => _note(
+    palette,
+    'This address does not identify a section of this site, so it cannot '
+    'start or join a collection. Open a page inside the site and save from '
+    'there.',
+  );
 
   /// The one sentence that keeps the two answers apart. Choosing a Collection
   /// you already have and starting a new one are different operations, and the

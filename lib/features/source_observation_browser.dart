@@ -2,6 +2,7 @@ import '../browser/browser_controller.dart';
 import '../browser/page_data.dart';
 import '../core/url_utils.dart';
 import '../data/schema.dart';
+import '../library/collection_identity.dart' show addressKeysRoot;
 import '../recognition/check.dart';
 import '../recognition/discovery.dart';
 import '../recognition/relocation.dart' show landedListingPath;
@@ -116,9 +117,7 @@ class BrowserSourceObservationSource implements SourceObservationSource {
       if (link.inNav) continue;
       final uri = Uri.tryParse(link.href);
       if (uri == null || !uri.hasScheme || uri.host != source.host) continue;
-      if (!uri.path.toLowerCase().startsWith(prefix)) {
-        continue;
-      }
+      if (!_belongsTo(link.href, uri, prefix)) continue;
       final listing = ObservedEntryListing.read(
         url: link.href,
         label: _labelOf(link),
@@ -130,6 +129,18 @@ class BrowserSourceObservationSource implements SourceObservationSource {
     }
     return listings;
   }
+
+  /// Whether an address the listing linked to is one of *this* Source's.
+  ///
+  /// A path prefix is the ordinary test, and stays it. The root cannot use
+  /// one: it is a prefix of every address on the host, so a work published
+  /// straight off the domain would enrol the about page, the tag index and the
+  /// contact form as its own entries. A root Source's members are the
+  /// addresses that key the root, by the one derivation that made the root a
+  /// Source key in the first place (V2-D72).
+  bool _belongsTo(String href, Uri uri, String prefix) => prefix == '/'
+      ? addressKeysRoot(href)
+      : uri.path.toLowerCase().startsWith(prefix);
 
   String _labelOf(PageLink link) {
     for (final candidate in [link.text, link.ariaLabel, link.title]) {

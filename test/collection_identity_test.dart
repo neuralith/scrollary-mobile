@@ -195,6 +195,74 @@ void main() {
       expect(a.canMerge, isTrue);
     });
 
+    // A site given over entirely to one work publishes its entries with
+    // nothing above them but the domain, so the fingerprint strips the only
+    // segment there is. That leaves `/`, which is a real collection path —
+    // and, being a prefix of every address on the host, one that has to be
+    // claimed narrowly. `addressKeysRoot` is where the narrowness lives
+    // (V2-D72); these pin its two halves at the identity level, and
+    // `test/recognition/root_source_test.dart` proves what it means for
+    // membership.
+    test('an entry published straight off the domain keys the root', () {
+      final identity = resolveCollectionIdentity(
+        entryUrl: 'https://x.example/quiet-harbour-chapter-561/',
+        pageTitle: 'Quiet Harbour Chapter 561 - Quiet Harbour',
+      );
+
+      expect(identity.collectionKey, '/');
+      expect(identity.confidence, IdentityConfidence.high);
+      expect(identity.basis, 'root fingerprint');
+      expect(
+        identity.collectionIndexUrl,
+        'https://x.example/',
+        reason: 'the listing of a work published at the root is the root',
+      );
+    });
+
+    test('consecutive entries of it resolve to the one key', () {
+      final keys = [561, 562, 563]
+          .map(
+            (n) => resolveCollectionIdentity(
+              entryUrl: 'https://x.example/quiet-harbour-chapter-$n/',
+            ).collectionKey,
+          )
+          .toSet();
+
+      expect(keys, {'/'});
+    });
+
+    test('the root is claimed only where the address numbers an entry', () {
+      // `/chapters/` strips exactly as an entry segment does, so the
+      // fingerprint alone would call it the root. It is an index, and the
+      // absence of a number is what refuses it.
+      final index = resolveCollectionIdentity(
+        entryUrl: 'https://x.example/chapters/',
+        pageTitle: 'Chapters',
+      );
+
+      expect(index.collectionKey, isNot('/'));
+      expect(index.confidence, isNot(IdentityConfidence.high));
+    });
+
+    // The residual, kept visible on purpose: whether a root-level entry keys
+    // the root depends on the fingerprint recognising its slug as an entry
+    // segment. A slug that carries its number but no entry word does not
+    // strip, so the entry's own address becomes the key and each entry keys a
+    // Source of its own. Unchanged by V2-D72, and not something the root rule
+    // can reach without loosening the fingerprint for every site.
+    test('a root-level entry whose slug carries no entry word still keys '
+        'itself', () {
+      final first = resolveCollectionIdentity(
+        entryUrl: 'https://x.example/quiet-harbour-561/',
+      );
+      final second = resolveCollectionIdentity(
+        entryUrl: 'https://x.example/quiet-harbour-562/',
+      );
+
+      expect(first.collectionKey, '/quiet-harbour-561');
+      expect(second.collectionKey, isNot(first.collectionKey));
+    });
+
     test('nothing to go on is low confidence and must not merge', () {
       final identity = resolveCollectionIdentity(
         entryUrl: 'https://x.example/',

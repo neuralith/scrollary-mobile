@@ -427,11 +427,48 @@ String? entryLabelFrom({
   return null;
 }
 
+/// Whether [url] names the domain root as its collection path.
+///
+/// A site given over entirely to one work publishes its entries with nothing
+/// above them but the domain, so [collectionFingerprint] strips the only
+/// segments there are and leaves `/`. That is a real collection path — but the
+/// root is also a string prefix of *every* address on the host, so claiming it
+/// on the fingerprint alone would make the about page, the tag index and the
+/// contact form members of the work.
+///
+/// Two further conditions carry the whole safety of the rule, and both are
+/// read from the address and nothing else:
+///
+/// 1. **The path is exactly one segment** — nothing above the entry but the
+///    domain, literally. A bare host stripped nothing: it is a front page, and
+///    an address alone cannot tell a work's home page from a portal's
+///    (V2-D44). Two segments are the opposite problem: `/part/5` strips whole
+///    only because `part` is a short entry word, and `/part` is a better
+///    listing than the root — claiming the root there would *discard* a path
+///    the address actually carries.
+/// 2. **The address numbers an entry**, by [parseEntryNumber] over the URL —
+///    the same reading discovery and the update check use. This is what
+///    separates `/quiet-harbour-part-12` from `/parts`, which strips
+///    identically and is an index.
+///
+/// One answer decides both identity and membership, because it is one
+/// question: an address either keys this root or it is not on it (V2-D72).
+bool addressKeysRoot(String url) {
+  if (collectionFingerprint(url) != '/') return false;
+  final segments = Uri.tryParse(
+    url,
+  )?.pathSegments.where((s) => s.trim().isNotEmpty);
+  if (segments == null || segments.length != 1) return false;
+  return parseEntryNumber(url: url) != null;
+}
+
 /// Work out which collection an entry belongs to, and what to call it.
 ///
 /// Order of preference, strongest first:
 ///   1. a same-host link back to the collection index (gives key *and* title)
 ///   2. the collection-path fingerprint of the entry URL
+///   2b. the domain root, where the fingerprint stripped everything and the
+///       address still numbers an entry ([addressKeysRoot])
 ///   3. the page title, when the URL carries no usable path
 ///   4. the host, which never merges (low confidence)
 CollectionIdentity resolveCollectionIdentity({
@@ -478,6 +515,23 @@ CollectionIdentity resolveCollectionIdentity({
           ? null
           : '${uri?.scheme ?? 'https'}://$host$fingerprint',
       basis: 'url fingerprint',
+    );
+  }
+
+  // 2b. Every segment was an entry segment and the address still numbers one,
+  //     so the work is published straight off the domain: the root is the
+  //     collection path. Narrower than the fingerprint that produced it — see
+  //     [addressKeysRoot], which is also what decides membership (V2-D72).
+  if (addressKeysRoot(entryUrl)) {
+    return CollectionIdentity(
+      host: host,
+      collectionKey: '/',
+      confidence: IdentityConfidence.high,
+      detectedTitle: _firstNonEmpty([titleFromOg, titleFromH1, titleFromPage]),
+      collectionIndexUrl: host.isEmpty
+          ? null
+          : '${uri?.scheme ?? 'https'}://$host/',
+      basis: 'root fingerprint',
     );
   }
 
