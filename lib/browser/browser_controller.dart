@@ -241,11 +241,28 @@ class BrowserController extends ChangeNotifier {
     _pageSessionKey = key;
     _pageSession++;
     _pageSessionSource = effectiveNavigationSource;
+    // The title belongs to the document that printed it, and this is a
+    // different document. Keeping the previous page's name here is not a
+    // cosmetic lag: it is what the save sheet is handed as `pageTitle`, so it
+    // becomes a new Collection's suggested name, a new Entry's stored title,
+    // and — through `parseEntryNumber` — the number that Entry is placed at.
+    // Empty is the honest answer until the new document says otherwise; the
+    // page's own headings still reach detection through `PageHints`.
+    _title = '';
   }
 
   /// Test seam: drive a page change without a WebView.
   @visibleForTesting
   void debugEnterPage(String url) => _notePageIdentity(url);
+
+  /// What the loaded document calls itself, asked once the load has stopped.
+  ///
+  /// A seam rather than a bare `getTitle()` so the load lifecycle — which is
+  /// where the title is scoped to its page — can be driven in a test, where
+  /// there is no WebView to answer. Null means the document did not say, and
+  /// the caller keeps whatever the current page had.
+  @visibleForTesting
+  Future<String?> readPageTitle() async => _webView?.getTitle();
 
   /// Hosts the user has explicitly allowed this session to leave for.
   final Set<String> _allowedHostChanges = {};
@@ -426,7 +443,7 @@ class BrowserController extends ChangeNotifier {
     _notePageIdentity(url);
     String? iconUrl;
     try {
-      _title = await _webView?.getTitle() ?? _title;
+      _title = await readPageTitle() ?? _title;
       await _refreshHistory();
       iconUrl = await _readPageIcon();
     } catch (_) {
