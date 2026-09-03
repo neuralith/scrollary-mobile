@@ -446,6 +446,69 @@ void main() {
     );
 
     testWidgets(
+      'panels that reserve a small box are read as a run, not as icons',
+      (tester) async {
+        // The shape a per-image size test cannot read, on a real browser:
+        // until a panel loads it reports only the box its stylesheet reserved
+        // (`min-width`/`min-height`), and 50x50 is an icon by any per-image
+        // measure. What makes it content is that it is one of a stacked run.
+        await boot(tester);
+        await app.browser.loadAndWait('${fixture.base}/minbox/20');
+        await settle(tester, ticks: 10);
+
+        final atRest = await app.browser.probe(withSignals: false);
+        final unloaded = atRest.images
+            .where((i) => i.naturalWidth == 0 && i.renderedWidth > 0)
+            .toList();
+        expect(
+          unloaded,
+          isNotEmpty,
+          reason: 'the fixture must arrive with panels still to come',
+        );
+
+        // Judged one at a time, the placeholders are icons…
+        final aloneRelevant = unloaded.where(couldBeContent).length;
+        // …and judged as a page, the stacked ones are content on its way.
+        final asPage = contentRelevanceFor(atRest.images);
+        final pageRelevant = unloaded.where(asPage).length;
+        expect(
+          pageRelevant,
+          greaterThan(aloneRelevant),
+          reason:
+              'the run rule is what keeps the traversal waiting for these; '
+              'alone=$aloneRelevant page=$pageRelevant',
+        );
+
+        // Now walk it the way the engine does.
+        var probe = atRest;
+        for (var i = 0; i < 40 && !probe.atBottom; i++) {
+          await app.browser.scrollStep((probe.viewportHeight * 0.8).round());
+          await settle(tester, ticks: 4);
+          probe = await app.browser.probe(withSignals: false);
+        }
+        await settle(tester, ticks: 15);
+        probe = await app.browser.probe(withSignals: false);
+
+        final chosen = selectImageCandidates(probe.images);
+        final urls = chosen.accepted.map((c) => c.url).toList();
+        expect(
+          urls,
+          [
+            for (var i = 1; i <= 20; i++)
+              '${fixture.base}$kMinBoxPanelPath$i.png?w=400&h=600',
+          ],
+          reason: 'every panel, in reading order, and nothing else',
+        );
+        // The furniture reserved boxes too, and reserved them in vain: a rail
+        // of slots down the page, and a grid of thumbnails sharing one
+        // vertical position at the foot of it.
+        expect(urls.any((u) => u.contains('/ads/')), isFalse);
+        expect(urls.any((u) => u.contains('/related/')), isFalse);
+      },
+      timeout: const Timeout(Duration(minutes: 6)),
+    );
+
+    testWidgets(
       'the real lazy fixture still yields every panel',
       (tester) async {
         // The IntersectionObserver entry page: nothing about the state-model

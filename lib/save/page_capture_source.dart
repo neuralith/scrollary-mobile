@@ -364,9 +364,12 @@ PageCaptureOutcome outcomeOf(
     return PageCaptureOutcome.failed(
       pageUrl: landed,
       error: result.error,
-      stopReason: result.error == 'cancelled'
-          ? StopReason.cancelledByUser
-          : null,
+      // The engine's own named reason first — it is the one made where the
+      // page was measured. The cancelled case stays because that answer comes
+      // from the runner rather than from a measurement.
+      stopReason:
+          result.stopReason ??
+          (result.error == 'cancelled' ? StopReason.cancelledByUser : null),
       // Read off the engine's own result, never re-derived: whether pointing
       // at the reader area could help is a judgement made where the page was
       // measured.

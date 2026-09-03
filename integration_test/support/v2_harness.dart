@@ -74,6 +74,7 @@ export '../../tool/fixture/fixture_site.dart'
         kBrokenPanel,
         kContentImagesPerEntry,
         kEntryCount,
+        kMinBoxPanelPath,
         kSlowPanel;
 
 /// Whether any widget tree has been pumped in this process yet. `pump` before

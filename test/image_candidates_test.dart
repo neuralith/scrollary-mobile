@@ -587,4 +587,177 @@ void main() {
       expect(selection.accepted.every((c) => c.url.contains('panel-')), isTrue);
     });
   });
+
+  /// **A placeholder is judged by the run it is in, not by its own box.**
+  ///
+  /// Every shape below was measured on a real page. An image that has not
+  /// loaded has no size of its own — only the box its stylesheet reserved —
+  /// and at that moment a panel placeholder, an avatar and an advertisement
+  /// slot are the same measurement. What tells them apart is arrangement.
+  group('lazy runs', () {
+    /// A placeholder: no pixels, no declared size, only a reserved box.
+    PageImage placeholder({
+      required int index,
+      required int top,
+      required int boxWidth,
+      required int boxHeight,
+      String? src,
+    }) => img(
+      index: index,
+      src: src ?? 'https://reading.example.com/img/$index.jpg',
+      complete: false,
+      naturalWidth: 0,
+      naturalHeight: 0,
+      renderedWidth: boxWidth,
+      renderedHeight: boxHeight,
+      top: top,
+    );
+
+    test('a stacked column of min-size placeholders is content on its way', () {
+      // The shape that loses a page: a stylesheet gives every unloaded panel
+      // `min-width: 50px; min-height: 50px`, so 132 panels report 50x50 until
+      // they load. Read one at a time they are icons, and the traversal stops
+      // waiting for the entry it came for.
+      final page = [
+        for (var i = 0; i < 132; i++)
+          placeholder(index: i, top: i * 50, boxWidth: 50, boxHeight: 50),
+      ];
+      final isRelevant = contentRelevanceFor(page);
+
+      expect(
+        page.where(isRelevant).length,
+        132,
+        reason: 'a run of stacked placeholders is where the entry is arriving',
+      );
+      // …and judged alone, every one of them is still an icon.
+      expect(page.where(couldBeContent).length, 0);
+    });
+
+    test('a related-items grid is not a run — side by side is not stacked', () {
+      // Seven thumbnails sharing one vertical position, which is what a grid
+      // row is. Same box, enough of them to clear the cluster floor, and they
+      // must still not hold the traversal open.
+      final page = [
+        for (var i = 0; i < 7; i++)
+          placeholder(index: i, top: 52979, boxWidth: 140, boxHeight: 0),
+      ];
+      expect(page.where(contentRelevanceFor(page)).length, 0);
+    });
+
+    test('an advertisement rail is not a run — the entry sits between it', () {
+      // Four slots spread down a long page. Same width, same box, in DOM
+      // order, and thousands of pixels apart.
+      final page = [
+        for (var i = 0; i < 4; i++)
+          placeholder(
+            index: i,
+            top: 15000 + i * 20000,
+            boxWidth: 300,
+            boxHeight: 250,
+          ),
+      ];
+      expect(page.where(contentRelevanceFor(page)).length, 0);
+    });
+
+    test('too few to be a column is never a run', () {
+      final page = [
+        for (var i = 0; i < 2; i++)
+          placeholder(index: i, top: i * 40, boxWidth: 40, boxHeight: 40),
+      ];
+      expect(page.where(contentRelevanceFor(page)).length, 0);
+    });
+
+    test(
+      'a run does not rescue chrome, hidden images or a known small size',
+      () {
+        // A run says "something is arriving here". It never says "keep this",
+        // so the rejections that are facts about the image still stand.
+        final page = <PageImage>[
+          for (var i = 0; i < 6; i++)
+            placeholder(index: i, top: i * 50, boxWidth: 50, boxHeight: 50),
+          img(
+            index: 100,
+            src: 'https://reading.example.com/img/furniture.png',
+            complete: false,
+            naturalWidth: 0,
+            naturalHeight: 0,
+            renderedWidth: 50,
+            renderedHeight: 50,
+            top: 300,
+            chrome: true,
+          ),
+          img(
+            index: 101,
+            src: 'https://reading.example.com/img/hidden.png',
+            complete: false,
+            naturalWidth: 0,
+            naturalHeight: 0,
+            renderedWidth: 50,
+            renderedHeight: 50,
+            top: 350,
+            hidden: true,
+          ),
+          // Declares its own size, and that size is small. Nothing ambiguous
+          // about it, so no run can take its part.
+          img(
+            index: 102,
+            src: 'https://reading.example.com/img/icon.png',
+            complete: false,
+            naturalWidth: 0,
+            naturalHeight: 0,
+            attrWidth: 48,
+            attrHeight: 48,
+            renderedWidth: 50,
+            renderedHeight: 50,
+            top: 400,
+          ),
+        ];
+        final relevant = page
+            .where(contentRelevanceFor(page))
+            .map((i) => i.domIndex)
+            .toSet();
+
+        expect(relevant, {0, 1, 2, 3, 4, 5});
+      },
+    );
+
+    test('a page that reserves no box at all is unchanged', () {
+      // The commoner placeholder, and the one that always worked: no reserved
+      // box means the size is unknown, and unknown was never disqualifying.
+      final page = [
+        for (var i = 0; i < 18; i++)
+          placeholder(index: i, top: i * 2455, boxWidth: 0, boxHeight: 0),
+      ];
+      expect(page.where(contentRelevanceFor(page)).length, 18);
+      expect(page.where(couldBeContent).length, 18);
+    });
+
+    test('a run never lets traversal skip what selection would keep', () {
+      // The superset property, restated with the run rule switched on: the
+      // page-level answer may only ever *add* to the per-image one.
+      final page = <PageImage>[
+        for (var i = 0; i < 8; i++)
+          placeholder(index: i, top: i * 50, boxWidth: 50, boxHeight: 50),
+        for (var i = 0; i < 4; i++)
+          img(
+            index: 50 + i,
+            src: 'https://reading.example.com/img/loaded-$i.png',
+            top: 5000 + i * 1200,
+          ),
+      ];
+      final relevant = page
+          .where(contentRelevanceFor(page))
+          .map((i) => i.domIndex)
+          .toSet();
+      final accepted = selectImageCandidates(
+        page,
+      ).accepted.map((c) => c.domIndex).toSet();
+
+      expect(
+        accepted.difference(relevant),
+        isEmpty,
+        reason: 'final selection accepted something traversal would skip',
+      );
+    });
+  });
 }

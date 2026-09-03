@@ -275,6 +275,20 @@ Three things future agents get wrong here:
   either.
 - Detection uses standard HTML semantics and measurements only —
   `lib/save/content_detection.dart` is the whole surface.
+- **An image that has not loaded is judged by the run it is in, not by its own
+  box** (`LazyImageRuns`, `lib/save/image_candidates.dart`). Until a picture
+  arrives it has no size of its own, so a page that reserves a small box for it
+  reports one: a `min-width`/`min-height` placeholder, an unfired advert slot
+  and an avatar are the same measurement, and read one at a time a column of
+  unloaded panels is a column of icons. What separates them is arrangement —
+  reading content arrives as a stacked run of same-width boxes, each starting
+  where the one above it ended, while an advert rail is slots thousands of
+  pixels apart and a related-items grid is several boxes sharing one vertical
+  position. Geometry only: no hostname, no selector, no class name.
+- That rule is **traversal's, never selection's**. It answers "keep waiting
+  here", not "save this". An image still a placeholder when the page settles
+  has nothing to store and `selectImageCandidates` rejects it exactly as
+  before, so the traversal set stays a superset of the selected one.
 
 ### Some sites are never saved from
 
@@ -351,6 +365,34 @@ V2's metadata sync for reasons that only apply to capture.
   "subscribe to continue" is not a paywall.
 - "Finished" and "the site stopped us" are different outcomes and live in
   different column values.
+- **A refused asset is an answer, not a bad moment.** A host that replies 401,
+  402, 403, 407, 429 or 451, or that serves a *web page* where an image was
+  asked for, has settled the question; `AssetFetcher` classifies that as
+  `AssetFailure.refused`, stops retrying it, and tries only the page's own
+  session — which is the one context that legitimately has whatever the user
+  established by browsing there. Retrying a refusal is the
+  "retry with different headers" rule one step removed, and on a page of a
+  hundred and thirty panels it is a hundred and thirty repetitions of a
+  question already answered.
+- **A reading whose images were refused does not become a partial entry.**
+  When more assets were refused than were stored, the capture stops with
+  `StopReason.assetsRefusedBySource`, commits nothing and says one sentence
+  about what the site does. *Retry failed* on such an entry could only be
+  refused again, and the handful of files that did arrive are not a copy of
+  the reading. A refusal that did *not* prevent the entry from being saved is
+  an ordinary broken asset and still yields a `partial` — the comparison is
+  against what was actually stored, so one dead panel among a hundred good
+  ones stays what it is.
+- **Some sites cannot be saved from at all, and that is a boundary rather than
+  a bug.** A host that is cross-origin to the page, serves no
+  `Access-Control-Allow-Origin`, and answers a separate client with a
+  human-verification interstitial has no path: `<img>` renders the picture
+  while script may read nothing, and the direct request is challenged.
+  Measured, not assumed — the reasoning is in `lib/save/asset_fetcher.dart`.
+  Getting past it would mean completing a verification check on the user's
+  behalf or defeating the browser's cross-origin rules, and reading the
+  rendered pixels back out is not an escape either because stored bytes are
+  byte-for-byte originals.
 
 ### Capture modes
 

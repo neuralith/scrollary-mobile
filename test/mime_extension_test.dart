@@ -94,7 +94,7 @@ void main() {
           config: const SaveConfig(minAssetBytes: 16, downloadRetries: 0),
         );
 
-        final entry = await downloader.download(
+        final entry = (await downloader.download(
           entry: EntryAsset(
             index: 1,
             sourceUrl: 'http://127.0.0.1:${server.port}/img/panel.webp?v=123',
@@ -102,7 +102,7 @@ void main() {
           ),
           staging: staging,
           refererUrl: 'http://127.0.0.1:${server.port}/entry/1',
-        );
+        )).asset;
 
         expect(entry.status, AssetStatus.stored);
         expect(entry.mimeType, 'image/jpeg');

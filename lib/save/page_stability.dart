@@ -118,8 +118,13 @@ PageStability measureStability(
   // the page happened to report its images in.
   final tokens = <int>[];
 
+  // Built once for the page: whether a placeholder is content depends on the
+  // run it sits in, and asking that per image would both cost more and let
+  // this file's answer drift from the engine's.
+  final isRelevant = contentRelevanceFor(probe.images, config: config);
+
   for (final image in probe.images) {
-    if (!couldBeContent(image, config: config)) continue;
+    if (!isRelevant(image)) continue;
     contentCount++;
     if (image.isResolved) resolved++;
     if (image.isBroken) broken++;

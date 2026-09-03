@@ -83,7 +83,7 @@ void main() {
 
   Future<EntryAsset> fetchOne(String url, {int index = 1}) async {
     final staging = await store.beginEntry(collectionId: 'c1', entryId: 'e1');
-    return fetcher().download(
+    final download = await fetcher().download(
       entry: EntryAsset(
         index: index,
         sourceUrl: url,
@@ -92,6 +92,7 @@ void main() {
       staging: staging,
       refererUrl: allowedPage,
     );
+    return download.asset;
   }
 
   setUp(() => adapter = _RecordingAdapter(pngBytes));

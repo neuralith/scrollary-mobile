@@ -96,6 +96,144 @@ RejectReason? contentRejection(
   return null;
 }
 
+/// Nothing has told us how big this picture is.
+///
+/// Neither the file (it has not produced pixels) nor the document (`width` /
+/// `height` are absent). All that is left is the box the stylesheet reserved,
+/// and a reserved box is a fact about the page's CSS, not about the image that
+/// will arrive in it.
+bool _sizeIsOnlyItsReservedBox(PageImage image) =>
+    image.naturalWidth == 0 &&
+    image.naturalHeight == 0 &&
+    image.attrWidth == 0 &&
+    image.attrHeight == 0;
+
+/// How far past one placeholder the next may start and still count as the same
+/// run, when the placeholders are too short for their own height to say.
+///
+/// Small on purpose: this is the allowance for a margin between stacked
+/// panels, not for the rest of a page.
+const int kLazyRunGapFloor = 200;
+
+/// The not-yet-loaded images that sit in a **vertical run** of their own kind.
+///
+/// This exists because the per-image question is unanswerable for an image
+/// that has not loaded. A page that reserves *no* box for one (`0x0`, much the
+/// commonest) says "unknown", and [contentRejection] correctly treats unknown
+/// as relevant. A page that reserves a *small* box says 50x50 — and a 50x50
+/// placeholder, a 40x40 avatar and a 300x250 advertisement slot are the same
+/// measurement. Read literally, a column of 132 unloaded panels is a column of
+/// icons: [couldBeContent] rejects every one of them, and with that the
+/// traversal loses exactly the images that set its pace. Nothing near the
+/// position is unresolved, nothing pending is relevant, nothing in the
+/// stability digest moves, and the page reads as settled while its panels have
+/// never been asked for.
+///
+/// What separates them is not the box, it is the company it keeps. Reading
+/// content arrives as a **run**: many boxes of the same width, stacked, each
+/// starting where the one above it ended. Page furniture does not. An
+/// advertisement rail is a handful of slots thousands of pixels apart with the
+/// entry between them; a related-items grid is several boxes at the *same*
+/// vertical position, side by side. Both are excluded by the same rule, and
+/// neither needs a hostname, a selector or a class name to be recognised —
+/// only the geometry the page has already laid out.
+///
+/// Deliberately a **traversal** rule and not a selection one. It answers "is
+/// there more coming here, so keep waiting and keep the careful pace", never
+/// "save this". An image that is still a placeholder when the page settles has
+/// nothing to store and [selectImageCandidates] rejects it exactly as before.
+class LazyImageRuns {
+  const LazyImageRuns._(this._members);
+
+  /// No run information — every ambiguous placeholder is judged on its own, as
+  /// it was before this existed.
+  static const LazyImageRuns none = LazyImageRuns._(<int>{});
+
+  /// Find the runs among [images]. Only the ambiguous population is
+  /// considered: images whose size is nothing but a reserved box, and whose
+  /// box is what would have them rejected as too small.
+  factory LazyImageRuns.of(
+    List<PageImage> images, {
+    SaveConfig config = kDefaultSaveConfig,
+  }) {
+    final ambiguous = <PageImage>[
+      for (final image in images)
+        if (_sizeIsOnlyItsReservedBox(image) &&
+            contentRejection(
+                  image,
+                  config: config,
+                  unknownSizeIsTooSmall: false,
+                ) ==
+                RejectReason.tooSmall)
+          image,
+    ]..sort((a, b) => a.documentTop.compareTo(b.documentTop));
+    if (ambiguous.length < config.minClusterSize) return none;
+
+    final members = <int>{};
+    var run = <PageImage>[];
+
+    void flush() {
+      if (run.length >= config.minClusterSize) {
+        members.addAll(run.map((i) => i.domIndex));
+      }
+      run = <PageImage>[];
+    }
+
+    for (final image in ambiguous) {
+      if (run.isEmpty) {
+        run.add(image);
+        continue;
+      }
+      final previous = run.last;
+      if (_continuesRun(previous, image, config)) {
+        run.add(image);
+      } else {
+        flush();
+        run.add(image);
+      }
+    }
+    flush();
+
+    return LazyImageRuns._(members);
+  }
+
+  final Set<int> _members;
+
+  bool contains(PageImage image) => _members.contains(image.domIndex);
+
+  int get length => _members.length;
+}
+
+/// Does [next] carry on the run [previous] is in?
+///
+/// Three conditions, and each one excludes a real shape of page furniture:
+///
+/// * **The same column width.** A run is one column. This is the same
+///   tolerance the dominant-column rule uses, so "one column" means one thing
+///   in both places.
+/// * **Further down the page.** Strictly further: a related-items grid puts
+///   several boxes at one vertical position, and side by side is not stacked.
+/// * **Starting where the last one ended.** An advertisement rail is slots
+///   thousands of pixels apart with the entry in between; stacked panels have
+///   nothing between them. The allowance is generous relative to the
+///   placeholder's own height because a short placeholder cannot speak for the
+///   picture that replaces it.
+bool _continuesRun(PageImage previous, PageImage next, SaveConfig config) {
+  final reference = previous.renderedWidth;
+  if (reference <= 0 || next.renderedWidth <= 0) return false;
+  final widthDelta = (next.renderedWidth - reference).abs() / reference;
+  if (widthDelta > config.widthClusterTolerance) return false;
+
+  if (next.documentTop <= previous.documentTop) return false;
+
+  final previousBottom = previous.documentTop + previous.renderedHeight;
+  final gap = next.documentTop - previousBottom;
+  final allowance = previous.renderedHeight * 2 > kLazyRunGapFloor
+      ? previous.renderedHeight * 2
+      : kLazyRunGapFloor;
+  return gap <= allowance;
+}
+
 /// Could this image plausibly be part of the readable entry, on a page that is
 /// still loading?
 ///
@@ -109,12 +247,42 @@ RejectReason? contentRejection(
 ///
 /// Deliberately permissive: see [contentRejection] for why an unmeasured image
 /// counts as relevant.
+///
+/// [runs] is the page-level half of the same question, and the reason this
+/// takes a page and not just an image. Without it, a placeholder small enough
+/// to be an icon is an icon; with it, a placeholder that is one of a stacked
+/// run of its own kind is content still on its way. Defaulting to
+/// [LazyImageRuns.none] keeps every caller that has no page to offer on the
+/// per-image answer, which is what they had before.
 bool couldBeContent(
   PageImage image, {
   SaveConfig config = kDefaultSaveConfig,
-}) =>
-    contentRejection(image, config: config, unknownSizeIsTooSmall: false) ==
-    null;
+  LazyImageRuns runs = LazyImageRuns.none,
+}) {
+  final rejection = contentRejection(
+    image,
+    config: config,
+    unknownSizeIsTooSmall: false,
+  );
+  if (rejection == null) return true;
+  // The only rejection a run can overturn. A hidden image, one in page chrome,
+  // one with no address and one whose *known* size is too small are all still
+  // out — a run says "something is arriving here", never "keep this".
+  return rejection == RejectReason.tooSmall && runs.contains(image);
+}
+
+/// [couldBeContent] for every image on one page, with the run rule applied.
+///
+/// The one call the pacing gates should use: it builds [LazyImageRuns] once
+/// for the page rather than per image, and it is the only place the two halves
+/// of the predicate are guaranteed to see the same page.
+bool Function(PageImage) contentRelevanceFor(
+  List<PageImage> images, {
+  SaveConfig config = kDefaultSaveConfig,
+}) {
+  final runs = LazyImageRuns.of(images, config: config);
+  return (image) => couldBeContent(image, config: config, runs: runs);
+}
 
 /// Pick the entry's content images out of everything the page contains.
 ///

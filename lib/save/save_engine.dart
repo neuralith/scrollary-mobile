@@ -42,12 +42,20 @@ class EntrySaveResult {
     this.videoDominant = false,
     this.pageUrl = '',
     this.error,
+    this.stopReason,
     this.detectedImages = 0,
     this.storedImages = 0,
   });
 
   final SaveStatus status;
   final String entryId;
+
+  /// The named condition that ended this capture, when one did.
+  ///
+  /// Carried rather than re-derived downstream: the reason a capture stopped
+  /// is known where the page was measured, and a string in [error] is not
+  /// something a queue row should have to parse back.
+  final StopReason? stopReason;
   final EntryManifest? manifest;
   final String? nextUrl;
   final String? nextEvidence;
@@ -591,18 +599,37 @@ class SaveEngine {
       );
 
       tPhase = DateTime.now();
-      entries = await _downloadAll(
+      final downloads = await _downloadAll(
         entries: entries,
         staging: staging,
         refererUrl: pageUrl,
         userAgent: userAgent,
         cookieHeader: cookieHeader,
       );
+      entries = downloads.assets;
       _time('download', tPhase);
       await _checkpoint();
 
       final stored = entries.where((e) => e.isStored).length;
       final failed = entries.length - stored;
+
+      // The host refused more of this reading than it handed over. That is a
+      // settled answer about the site rather than a bad moment on the network,
+      // so it is a **stop**, not a partial entry: nothing is committed, the
+      // reason is named, and *Retry failed* is not offered for something that
+      // could only be refused again. The comparison is against what was
+      // actually stored so that one dead panel among a hundred good ones stays
+      // what it is — a broken asset, and an entry worth keeping.
+      if (downloads.refused > stored) {
+        await fileStore.discard(staging);
+        staging = null;
+        return _refusedBySource(
+          entryId,
+          pageUrl: pageUrl,
+          refused: downloads.refused,
+          detected: entries.length,
+        );
+      }
 
       if (stored == 0) {
         await fileStore.discard(staging);
@@ -959,13 +986,16 @@ class SaveEngine {
           ),
         );
         final tDownload = DateTime.now();
-        assets = await _downloadAll(
+        // No refusal stop on this path, and that is deliberate: here the text
+        // is the entry and the pictures illustrate it, so a host that will not
+        // hand over a figure costs the entry a figure — not the reading.
+        assets = (await _downloadAll(
           entries: assets,
           staging: staging,
           refererUrl: pageUrl,
           userAgent: await browser.userAgent(),
           cookieHeader: await browser.cookieHeaderFor(pageUrl),
-        );
+        )).assets;
         _time('download', tDownload);
         await _checkpoint();
       } else if (captureMode == CaptureMode.textAndImages) {
@@ -1249,6 +1279,39 @@ class SaveEngine {
     );
   }
 
+  /// The host serving this reading's images refused them.
+  ///
+  /// Named rather than counted: "132 images failed" and "this site does not
+  /// let its images be saved" are the same numbers and completely different
+  /// facts, and only the second tells the user whether to try again.
+  EntrySaveResult _refusedBySource(
+    String entryId, {
+    required String pageUrl,
+    required int refused,
+    required int detected,
+  }) {
+    final message = StopReason.assetsRefusedBySource.message;
+    _log(
+      'refused by the source: $refused of $detected image(s) — '
+      'nothing committed',
+    );
+    _emit(
+      (p) => p.copyWith(
+        state: SaveState.failed,
+        lastError: StopReason.assetsRefusedBySource.name,
+        message: message,
+      ),
+    );
+    return EntrySaveResult(
+      status: SaveStatus.failed,
+      entryId: entryId,
+      stopReason: StopReason.assetsRefusedBySource,
+      error: message,
+      pageUrl: pageUrl,
+      detectedImages: detected,
+    );
+  }
+
   EntrySaveResult _fail(String entryId, String reason) {
     _log('save failed: $reason');
     _emit(
@@ -1379,9 +1442,10 @@ class SaveEngine {
   /// counted: nothing is on the wire, so waiting cannot produce it. Only
   /// scrolling to it can, which is why it is the fast-mode lookahead that has
   /// to see it and this count that must not.
-  int _relevantPendingCount(PageProbe probe) => probe.images
-      .where((i) => couldBeContent(i, config: config) && i.isPending)
-      .length;
+  int _relevantPendingCount(PageProbe probe) {
+    final isRelevant = contentRelevanceFor(probe.images, config: config);
+    return probe.images.where((i) => isRelevant(i) && i.isPending).length;
+  }
 
   /// Track the best candidate set seen while traversing, for the collapse
   /// guard at extraction time.
@@ -1503,11 +1567,9 @@ class SaveEngine {
       // broken — nothing coming, nothing to wait for — which let a fast jump
       // clear a region whose panels had never been asked for, so the loader
       // that would have produced them never fired.
+      final isRelevant = contentRelevanceFor(probe.images, config: config);
       final unresolvedNear = probe.images.any(
-        (i) =>
-            couldBeContent(i, config: config) &&
-            i.isUnsettled &&
-            i.documentTop < lookahead,
+        (i) => isRelevant(i) && i.isUnsettled && i.documentTop < lookahead,
       );
       final heightMoved = probe.documentHeight != lastDocHeight;
       lastDocHeight = probe.documentHeight;
@@ -1732,7 +1794,7 @@ class SaveEngine {
 
   // --- downloads ----------------------------------------------------------
 
-  Future<List<EntryAsset>> _downloadAll({
+  Future<({List<EntryAsset> assets, int refused})> _downloadAll({
     required List<EntryAsset> entries,
     required StagingHandle staging,
     required String refererUrl,
@@ -1742,29 +1804,45 @@ class SaveEngine {
     final results = List<EntryAsset>.from(entries);
     var completed = 0;
     var failed = 0;
+    var refused = 0;
     var cursor = 0;
+
+    // Once refusals alone outnumber everything still possible, the outcome is
+    // already decided: the caller stops on `refused > stored`, and `stored`
+    // can never exceed what is left. Asking the rest is asking a host that has
+    // said no, once per remaining panel, for an answer that cannot change the
+    // result. Derived from the rule rather than a threshold of its own.
+    bool outcomeAlreadyDecided() => refused * 2 > results.length;
 
     Future<void> worker() async {
       while (true) {
         await _checkpoint();
+        if (outcomeAlreadyDecided()) return;
         final index = cursor;
         if (index >= results.length) return;
         cursor++;
 
-        final result = await downloader.download(
+        final download = await downloader.download(
           entry: results[index],
           staging: staging,
           refererUrl: refererUrl,
           userAgent: userAgent,
           cookieHeader: cookieHeader,
         );
+        final result = download.asset;
         results[index] = result;
 
         if (result.isStored) {
           completed++;
         } else {
           failed++;
-          _log('asset ${result.index} failed: ${result.error}');
+          if (download.isRefusal) refused++;
+          // One line per asset was how a refused entry produced hundreds of
+          // identical lines. The count is what the caller acts on; the log
+          // says it once and then says how many.
+          if (!download.isRefusal || refused <= 3) {
+            _log('asset ${result.index} failed: ${result.error}');
+          }
         }
         _emit(
           (p) => p.copyWith(
@@ -1779,6 +1857,12 @@ class SaveEngine {
     await Future.wait([
       for (var i = 0; i < config.downloadConcurrency; i++) worker(),
     ]);
-    return results;
+    if (refused > 0) {
+      _log(
+        '$refused of ${results.length} asset(s) were refused by the host'
+        '${outcomeAlreadyDecided() ? ' — stopped asking' : ''}',
+      );
+    }
+    return (assets: results, refused: refused);
   }
 }

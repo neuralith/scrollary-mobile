@@ -39,6 +39,25 @@ enum StopReason {
   accessDenied,
   rateLimited,
 
+  /// The page was readable and its images were found, and the host serving
+  /// those images refused to hand them over.
+  ///
+  /// Distinct from [accessDenied], which is about a *page*. This is the case
+  /// where the reading renders perfectly in the Browser and the pictures in it
+  /// are delivered only to the browsing context that asked for them — a
+  /// separate request for the same file is answered with a refusal or a
+  /// human-verification page, and script inside the page cannot read the bytes
+  /// either because the delivering host allows no cross-origin reading of
+  /// them.
+  ///
+  /// It is a **stop**, and deliberately not a partial entry. A refusal is the
+  /// host's settled answer rather than a flaky moment, so *Retry failed* on a
+  /// half-written entry could only produce the same refusal; and the two files
+  /// that did arrive are not a copy of the reading. There is no workaround to
+  /// reach for: defeating a human-verification check or a browser's
+  /// cross-origin rules is exactly what this app does not do.
+  assetsRefusedBySource,
+
   // --- the structure stopped making sense ----------------------------------
   /// Navigation left the origin the run started on, without approval.
   crossOrigin,
@@ -80,7 +99,8 @@ enum StopReason {
       this == StopReason.paywallDetected ||
       this == StopReason.captchaDetected ||
       this == StopReason.accessDenied ||
-      this == StopReason.rateLimited;
+      this == StopReason.rateLimited ||
+      this == StopReason.assetsRefusedBySource;
 
   /// True when the run genuinely did what it was asked to do.
   bool get isSuccess =>
@@ -108,6 +128,12 @@ enum StopReason {
       'Stopped: the site refused access to the next page.',
     StopReason.rateLimited =>
       'Stopped: the site asked for fewer requests. Try again later.',
+    // What the app can and cannot do, in that order. It does not tell the user
+    // to try anything, because nothing they could try would change the answer.
+    StopReason.assetsRefusedBySource =>
+      'Stopped: this site delivers its images only to the browser, so they '
+          'cannot be saved for offline reading. You can still read the entry '
+          'at its source.',
     StopReason.crossOrigin =>
       'Stopped: the next page is on a different website.',
     StopReason.repeatedUrl => 'Stopped: that page had already been saved.',
@@ -143,6 +169,7 @@ enum StopReason {
     StopReason.captchaDetected => 'Verification check',
     StopReason.accessDenied => 'Access denied',
     StopReason.rateLimited => 'Rate limited',
+    StopReason.assetsRefusedBySource => 'Images not downloadable',
     StopReason.crossOrigin => 'Different website',
     StopReason.repeatedUrl => 'Already saved',
     StopReason.navigationLoop => 'Loop detected',

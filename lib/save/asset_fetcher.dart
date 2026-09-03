@@ -82,16 +82,118 @@ String _magicPreview(Uint8List b) {
   return '$hex  "$ascii"';
 }
 
+/// What happened when a host did not hand over an image.
+///
+/// The distinction that matters is **settled or not**. A refusal is the host's
+/// answer, and it will be the same answer next time; anything else might not
+/// be. Asking again after a refusal is the "retry with different headers"
+/// this app does not do, one step removed — and on a page of a hundred and
+/// thirty panels it is a hundred and thirty repetitions of a question already
+/// answered.
+enum AssetFailure {
+  /// The host answered, and the answer was no: it refused the request outright
+  /// (401, 402, 403, 407, 429, 451), or it served a **web page** where an
+  /// image was asked for, which is what a human-verification interstitial is.
+  refused,
+
+  /// Inconclusive — a timeout, a reset, a server error. Worth another go.
+  transient,
+
+  /// Bytes arrived and are not an image this app stores. A fact about the
+  /// file, not about access.
+  notAnImage,
+}
+
+/// Statuses that are the host declining, rather than the host failing.
+///
+/// 429 is here and not in [AssetFailure.transient] on purpose: waiting out a
+/// rate limit is named in this project's rules as something the app does not
+/// do, so "asked for fewer requests" is a stop like any other refusal.
+const Set<int> _refusalStatuses = {401, 402, 403, 407, 429, 451};
+
+/// Does this response body begin a web page?
+///
+/// A host that answers an image request with HTML has substituted something
+/// for the file — an interstitial, a verification challenge, an error page.
+/// Structural, and deliberately naming no vendor and no product: what is
+/// recognised is "a document where a picture was asked for", which is the same
+/// fact whoever served it.
+bool looksLikeMarkup(Uint8List bytes) {
+  var i = 0;
+  // Skip a UTF-8 BOM and any leading whitespace.
+  if (bytes.length >= 3 &&
+      bytes[0] == 0xef &&
+      bytes[1] == 0xbb &&
+      bytes[2] == 0xbf) {
+    i = 3;
+  }
+  while (i < bytes.length &&
+      (bytes[i] == 0x20 || (bytes[i] >= 0x09 && bytes[i] <= 0x0d))) {
+    i++;
+  }
+  final head = String.fromCharCodes(
+    bytes.sublist(i, i + 15 > bytes.length ? bytes.length : i + 15),
+  ).toLowerCase();
+  return head.startsWith('<!doctype') ||
+      head.startsWith('<html') ||
+      head.startsWith('<?xml') ||
+      head.startsWith('<head');
+}
+
+/// One asset's outcome, with the *kind* of failure kept beside it.
+///
+/// The kind lives here and not on [EntryAsset] deliberately: `manifest.json`
+/// is durable user data on devices today, and how a download failed during one
+/// run is a fact about that run, not about the package.
+class AssetDownload {
+  const AssetDownload(this.asset, {this.failure});
+
+  final EntryAsset asset;
+
+  /// Null when the asset was stored.
+  final AssetFailure? failure;
+
+  bool get isRefusal => failure == AssetFailure.refused;
+}
+
 /// Downloads the actual image bytes.
 ///
-/// Primary path: Dio, carrying the WebView's cookies, User-Agent and a Referer
-/// so hotlink checks pass. Fallback: pull the bytes through the page itself.
+/// ## Where the bytes can come from, and where they cannot
 ///
-/// Known hard limit (documented, not worked around): on iOS there is no
-/// resource interception, and an in-page `fetch` to a cross-origin CDN without
-/// CORS headers is unreadable. A site that is both Referer-gated *and*
-/// cross-origin *and* CORS-closed has no working path — such a site is
-/// recorded as unsupported.
+/// Two paths exist, and between them they are the whole of what is reachable
+/// without doing something this app does not do.
+///
+/// 1. **A direct request** carrying the Browser's cookies, its User-Agent and
+///    the page as `Referer`. Those are not a disguise: they are the true facts
+///    about the context this image was found in, and sending them is what
+///    makes the request honest rather than what makes it sneak through.
+/// 2. **The page itself** (`fetchAsBase64`), which runs inside the browsing
+///    context the user is reading in. It has whatever session the user
+///    established by browsing there, so it is the path that can succeed where
+///    a separate client is refused.
+///
+/// **The hard limit, measured rather than assumed.** Path 2 is bounded by the
+/// browser's own cross-origin rules: a host that serves images without
+/// `Access-Control-Allow-Origin` allows an `<img>` to render them and allows
+/// script to read nothing. On a real reading site the panels display at full
+/// size in the WebView while `fetch` on the same address throws and a
+/// `no-cors` fetch yields an opaque, zero-length body. Path 1 on that same
+/// site is answered with a human-verification interstitial, because it is a
+/// second client that has not been through the check the browser passed.
+///
+/// So a site that is **cross-origin, CORS-closed and challenge-protected** has
+/// no path, and that is a boundary rather than a bug to fix. Getting past it
+/// would mean either completing a human-verification check on the user's
+/// behalf or defeating the browser's cross-origin rules — the first is
+/// explicitly not something this app does, and the second is the browser
+/// protecting every other site the user visits. Reading the rendered pixels
+/// back out of the page is not an escape either: it re-encodes, and stored
+/// bytes are byte-for-byte originals.
+///
+/// What the app does instead is **stop and say so**:
+/// `StopReason.assetsRefusedBySource` carries one sentence about what the site
+/// does. A refusal is never retried and never becomes a partial entry, because
+/// the answer will not change and a fragment is not a copy of the reading.
 ///
 /// **The restricted-site capture policy is deliberately not applied here**, and
 /// this is a boundary worth stating rather than leaving implicit. That policy
@@ -129,8 +231,21 @@ class AssetFetcher {
   final Dio _dio;
 
   /// Download [entry] into [staging]. Always returns an explicit result — a
-  /// failed asset is recorded as `failed` with a reason, never dropped.
-  Future<EntryAsset> download({
+  /// failed asset is recorded as `failed` with a reason, never dropped, and
+  /// [AssetDownload.failure] names *what kind* of failure it was so the engine
+  /// can tell "this host said no" from "this one moment went wrong".
+  ///
+  /// Two paths, in this order:
+  ///
+  /// 1. **A direct request**, carrying the Browser's own cookies, its
+  ///    User-Agent and the page as `Referer` — not to disguise anything, but
+  ///    because those are the true facts about where this image was found.
+  /// 2. **The page itself**, which is the same browsing context the user is
+  ///    reading in and has already satisfied whatever the site asked of it.
+  ///
+  /// A refusal skips straight from 1 to 2: the retries exist for a moment that
+  /// might go differently, and a refusal is not one of those.
+  Future<AssetDownload> download({
     required EntryAsset entry,
     required StagingHandle staging,
     required String refererUrl,
@@ -138,6 +253,7 @@ class AssetFetcher {
     String? cookieHeader,
   }) async {
     Object? lastError;
+    AssetFailure kind = AssetFailure.transient;
 
     for (var attempt = 0; attempt <= config.downloadRetries; attempt++) {
       try {
@@ -149,45 +265,66 @@ class AssetFetcher {
         );
         final verified = _verify(bytes);
         if (verified != null) {
-          return _write(entry, staging, verified, bytes);
+          return AssetDownload(await _write(entry, staging, verified, bytes));
         }
+        // A page where a picture was asked for is the host declining, not a
+        // corrupt file, and the difference decides whether asking again could
+        // ever help.
+        if (looksLikeMarkup(bytes)) {
+          kind = AssetFailure.refused;
+          lastError = 'the host served a web page instead of an image';
+          break;
+        }
+        kind = AssetFailure.notAnImage;
         lastError =
             'not a recognised image format '
             '(${bytes.length} bytes, starts with ${_magicPreview(bytes)})';
       } catch (e) {
         lastError = e;
+        kind = _failureKindOf(e);
+        if (kind == AssetFailure.refused) break;
       }
       if (attempt < config.downloadRetries) {
         await Future<void>.delayed(Duration(milliseconds: 400 * (attempt + 1)));
       }
     }
 
-    // Fallback: read it through the page, inheriting its credential context.
+    // The page's own context. It holds the session the user established, so
+    // this is the one path that can succeed where a separate client was
+    // refused — and it is bounded by the browser's own cross-origin rules,
+    // which the app does not attempt to get around.
     try {
       final inPage = await browser.fetchAsBase64(entry.sourceUrl);
       if (inPage != null && inPage.base64Data.isNotEmpty) {
         final bytes = base64Decode(inPage.base64Data);
         final verified = _verify(bytes);
         if (verified != null) {
-          return _write(
-            entry,
-            staging,
-            // The sniffed type wins even here: a server's Content-Type is a
-            // claim, the magic bytes are a fact.
-            verified,
-            bytes,
-          );
+          // The sniffed type wins even here: a server's Content-Type is a
+          // claim, the magic bytes are a fact.
+          return AssetDownload(await _write(entry, staging, verified, bytes));
         }
+        if (looksLikeMarkup(bytes)) kind = AssetFailure.refused;
         lastError = 'in-page fetch returned unusable bytes';
       }
     } catch (e) {
       lastError = 'in-page fallback failed: $e';
     }
 
-    return entry.copyWith(
-      status: AssetStatus.failed,
-      error: _describe(lastError),
+    return AssetDownload(
+      entry.copyWith(status: AssetStatus.failed, error: _describe(lastError)),
+      failure: kind,
     );
+  }
+
+  /// Which kind of failure an exception from the direct path represents.
+  static AssetFailure _failureKindOf(Object error) {
+    if (error is DioException) {
+      final status = error.response?.statusCode;
+      if (status != null && _refusalStatuses.contains(status)) {
+        return AssetFailure.refused;
+      }
+    }
+    return AssetFailure.transient;
   }
 
   /// Name the file from what the bytes ARE, then write it. URL extensions

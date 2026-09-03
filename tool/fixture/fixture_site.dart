@@ -106,6 +106,18 @@ Future<bool> handleFixtureRequest(
     return true;
   }
 
+  // Panels that reserve a small box until they load, among furniture that
+  // reserves boxes too.
+  //   /minbox/<panelCount>
+  final minBoxMatch = RegExp(r'^/minbox/(\d+)$').firstMatch(path);
+  if (minBoxMatch != null) {
+    await _html(
+      res,
+      minBoxLazyPage(panelCount: int.parse(minBoxMatch.group(1)!)),
+    );
+    return true;
+  }
+
   // One of every lazy/broken/loaded image shape.
   //   /lazyshapes
   if (path == '/lazyshapes') {
@@ -391,6 +403,102 @@ $panels
   <p>${filler('the footer')}</p>
   <img src="/chrome/pixel.png" width="1" height="1" alt="">
 </div>
+</body></html>''';
+}
+
+/// Where [minBoxLazyPage]'s panels are served from. One definition, so the
+/// page and the suite that asserts its reading order cannot disagree.
+const String kMinBoxPanelPath = '/figure/1/';
+
+/// Panels that reserve a **small box** until they load, among furniture that
+/// reserves boxes too.
+///
+/// The shape a per-image size test cannot read. Until a panel loads it has no
+/// intrinsic size and no `width`/`height`, so all it reports is the box the
+/// stylesheet gave it — here `min-width: 50px; min-height: 50px`, which is
+/// ordinary CSS and is what a real reading site does. Judged one at a time,
+/// every panel on this page is an icon: traversal stops treating them as
+/// content, nothing near the position looks unresolved, the whole unloaded
+/// document is barely three viewports tall, and the save reaches the bottom
+/// and calls it settled before a single panel has been asked for.
+///
+/// Two kinds of furniture are here for the opposite reason — they reserve
+/// boxes as well, and must **not** be rescued by the rule that saves the
+/// panels:
+///
+/// * **[adSlots] rail slots**, `300x250` and never loading, spread down the
+///   page with the reading between them.
+/// * **A related-items grid** at the foot: several boxes sharing one vertical
+///   position, which is what side-by-side looks like to a geometry test.
+///
+/// Panels load only when scrolled near, and not instantly, so the run being
+/// waited for is a run that is genuinely still arriving. **Only the panels
+/// ever reach the network**: the furniture keeps its address in `data-src` and
+/// is never switched on, which is both what an unfired advert slot really
+/// looks like and what keeps twelve dead sockets from exhausting the WebView's
+/// per-host connection pool — with that pool full, the panels cannot load at
+/// all and the fixture tests nothing.
+String minBoxLazyPage({int panelCount = 20, int adSlots = 4}) {
+  final body = StringBuffer();
+  final every = panelCount ~/ (adSlots + 1);
+  for (var i = 1; i <= panelCount; i++) {
+    // Comfortably past the size floor on both edges, and no larger. The
+    // default panel is 800x1200, which is ~3.8MB of bitmap once decoded; a
+    // page of thirty of those is a hundred and fifteen megabytes of decoded
+    // image before the app has done anything, and the simulator kills it. The
+    // shape under test is the reserved *box*, not the size of the picture that
+    // eventually fills it.
+    body.writeln(
+      '<img class="panel" data-src="$kMinBoxPanelPath$i.png?w=400&h=600" '
+      'alt="panel $i">',
+    );
+    // A rail slot every so often, in the flow of the reading rather than
+    // beside it, so nothing but its geometry distinguishes it.
+    if (adSlots > 0 && every > 0 && i % every == 0 && i != panelCount) {
+      body.writeln('<img class="adslot" data-src="/ads/slot-$i.gif" alt="">');
+    }
+  }
+  final grid = StringBuffer();
+  for (var i = 1; i <= 7; i++) {
+    grid.writeln('<img class="thumb" data-src="/related/$i.jpg" alt="">');
+  }
+
+  return '''
+<!doctype html><html><head>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Fixture — panels that reserve a small box</title>
+<style>
+  body { margin:0; background:#111; color:#eee; font-family:-apple-system,sans-serif; }
+  .reading .panel {
+    display:block; width:100%; max-width:800px; margin:0 auto;
+    /* The placeholder every unloaded panel reports until its bytes arrive. */
+    min-width:50px; min-height:50px;
+  }
+  .adslot { display:block; width:300px; height:250px; margin:24px auto; background:#333; }
+  .related { display:flex; flex-wrap:wrap; gap:8px; padding:16px; }
+  .related .thumb { width:140px; background:#333; }
+</style></head>
+<body>
+<h1>Fixture — panels that reserve a small box</h1>
+<div class="reading">
+$body
+</div>
+<div class="related">
+$grid
+</div>
+<script>
+  // Loads only on approach, and never instantly: the point is a run that is
+  // still arriving while the save is deciding whether to wait for it.
+  const io = new IntersectionObserver((entries) => {
+    for (const e of entries) {
+      if (!e.isIntersecting) continue;
+      const img = e.target;
+      io.unobserve(img);
+      setTimeout(() => { img.src = img.dataset.src; }, 250);
+    }
+  }, { rootMargin: '100px' });
+  document.querySelectorAll('img.panel').forEach((i) => io.observe(i));
+</script>
 </body></html>''';
 }
 
