@@ -322,16 +322,56 @@ String _indexPage(MultiSourceSite site) {
   } else {
     items = [
       for (var n = site.firstPart!; n <= site.lastPart!; n++)
-        '<li><a href="${site.partPath(n)}">${site.printedLabel(n)}</a></li>',
+        '<li${_rowIsRendered(site, n) ? '' : ' style="display:none"'}>'
+            '<a href="${site.partPath(n)}">'
+            // No whitespace between these two, deliberately — see
+            // [kListingRowStyle].
+            '<span class="label">${site.printedLabel(n)}</span>'
+            '<span class="meta">${_rowAge(n)}</span>'
+            '</a></li>',
     ].join();
   }
   return '<!doctype html><html lang="${site.language}"><head>'
-      '${_head(site, kMultiSourceWorkTitle, '/')}</head>'
+      '${_head(site, kMultiSourceWorkTitle, '/')}'
+      '<style>$kListingRowStyle</style></head>'
       '<body>${_header(site)}'
       '<main><h1>$kMultiSourceWorkTitle</h1>'
       '<ul>$items</ul></main>'
       '</body></html>';
 }
+
+/// The stylesheet that makes a listing row two separate boxes.
+///
+/// Load-bearing, not decoration. A row here is written the way real listings
+/// write one — a label element and a metadata element with **no whitespace
+/// between them** — so the only thing that separates them is layout. A reading
+/// that concatenates characters welds the two into one number, and
+/// `Part 5` beside `5 minutes` becomes part 55.
+const String kListingRowStyle = '.label,.meta{display:block}';
+
+/// The relative age printed beside a row, in the forms a live listing renders.
+///
+/// Every one of them **begins with a digit**, which is the case that does the
+/// damage: welded to the label it extends the entry's number rather than
+/// terminating it, and the digit it adds is the age of the row, so a wrong
+/// number also moves as the page gets older.
+String _rowAge(int n) {
+  const units = ['second', 'minute', 'hour', 'week'];
+  final unit = units[n % units.length];
+  return '$n $unit${n == 1 ? '' : 's'}';
+}
+
+/// Whether the listing renders this row at all.
+///
+/// One row of every numerically ordered index is present, linked and readable
+/// but has **no layout box** — the ordinary case of a card a site's own
+/// stylesheet hides at this width, or a panel behind an inactive tab. It is
+/// here because a link enumeration reads every row rather than the visible
+/// ones, and because `innerText` is the layout-aware reading only for an
+/// element that is being rendered: for one that is not, it is defined to
+/// return the welded `textContent` instead. A listing whose rows are all
+/// rendered cannot catch that regression, and did not.
+bool _rowIsRendered(MultiSourceSite site, int n) => n != site.lastPart;
 
 String _partPage(MultiSourceSite site, int n) {
   final label = site.printedLabel(n);

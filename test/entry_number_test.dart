@@ -234,6 +234,111 @@ void main() {
     });
   });
 
+  /// The same defect, reported again from a live site, and the reason the
+  /// producer-side fix above was not yet complete.
+  ///
+  /// The rows there are written exactly as the group above describes — a label
+  /// element and a timestamp element with **no whitespace between them** — and
+  /// the timestamps are relative, rewritten in the page to `"4 minutes"`,
+  /// `"1 hour"`, `"1 week"`. Reading the rows a person can see came back
+  /// correct, because `innerText` separates them. Reading the rest did not:
+  /// `innerText` is the layout-aware reading only for an element that is
+  /// *being rendered*, and for one that is not it is defined to return
+  /// `textContent`. A listing carries plenty of those — a card the site's own
+  /// stylesheet hides at this width, a panel behind an inactive tab — and
+  /// `probe` reads every link on the page, not the ones on screen.
+  ///
+  /// So entry 214 arrived as 2146: `"Entry 214"` and `"6 minutes"` welded, and
+  /// the digit it gained was the age of the row, so it moved as the page aged.
+  ///
+  /// The fix is in `elementText`, which now asks whether the element has a
+  /// layout box before trusting `innerText` — see `bridge_element_text_test`.
+  /// These cases hold the line from below, in both directions.
+  group('a listing that prints a relative timestamp beside every row', () {
+    test('the separated reading — what the bridge now produces', () {
+      // Relative timestamps, in the forms the page actually renders.
+      expect(parseEntryNumber(title: 'Ch. 62 18 seconds'), 62);
+      expect(parseEntryNumber(title: 'Ch. 61 2 minutes'), 61);
+      expect(parseEntryNumber(title: 'Ch. 60 1 hour'), 60);
+      expect(parseEntryNumber(title: 'Ch. 59 1 week'), 59);
+      // The reported row, and the qualifier the same rewriting adds.
+      expect(parseEntryNumber(title: 'Chapter 214 6 minutes ago'), 214);
+      expect(parseEntryNumber(title: 'Chapter 214 about 2 hours ago'), 214);
+      expect(parseEntryNumber(title: 'Chapter 213 1 month ago'), 213);
+      // Absolute dates, which the same listing prints once a row is older.
+      expect(parseEntryNumber(title: 'Chapter 290 March 16, 2026'), 290);
+      expect(parseEntryNumber(title: 'Chapter 695 March 17, 2026'), 695);
+    });
+
+    test('metadata that is not a time reads the same way', () {
+      // The index cards carry a rating rather than a timestamp, and the work's
+      // own name in front of the marker.
+      expect(parseEntryNumber(title: 'Chapter 69 8.9'), 69);
+      expect(parseEntryNumber(title: 'The Quiet Harbour Chapter 264 8.9'), 264);
+      expect(parseEntryNumber(title: 'Chapter 117 9.9'), 117);
+    });
+
+    test('the glued reading is still not guessed at', () {
+      // What the unrendered rows produced before the fix. Kept as a statement
+      // of what the parser must *not* start doing: nothing in these strings
+      // says where the label ended, so any rule that recovered 214 from the
+      // first would be inventing it — and would have to invent 62 and 60 from
+      // the others by a different rule again.
+      expect(parseEntryNumber(title: 'Chapter 2146 minutes ago'), 2146);
+      expect(parseEntryNumber(title: 'Ch. 6218 seconds'), 6218);
+      expect(parseEntryNumber(title: 'Ch. 624 minutes'), 624);
+      expect(parseEntryNumber(title: 'Ch. 601 hour'), 601);
+      expect(parseEntryNumber(title: 'Ch. 591 week'), 591);
+    });
+
+    test('a glued label is not rescued by the address either', () {
+      // The address is right and says so, but a title that parses is preferred
+      // over the path by design — and discovery reads the label on its own
+      // account anyway, because a number read out of a URL is never adopted.
+      // This is why the reading had to be fixed where it is produced.
+      expect(
+        parseEntryNumber(
+          title: 'Chapter 2146 minutes ago',
+          url: 'https://a.example/the-quiet-harbour-chapter-214/',
+        ),
+        2146,
+      );
+      expect(
+        parseEntryNumber(
+          title: 'Chapter 214 6 minutes ago',
+          url: 'https://a.example/the-quiet-harbour-chapter-214/',
+        ),
+        214,
+      );
+    });
+
+    test('an absolute date glues less harmfully, by luck and not by rule', () {
+      // A date beginning with a letter stops the digit run on its own, which
+      // is why the older rows of the same listing looked correct throughout.
+      // It is not a defence: the same listing's newer rows begin with a digit.
+      expect(parseEntryNumber(title: 'Chapter 290March 16, 2026'), 290);
+      expect(parseEntryNumber(title: 'Chapter 6952026-03-17'), 6952026);
+    });
+
+    test('the address of a work published straight off the domain', () {
+      // Entries there are one segment deep, with the marker in the slug. The
+      // fallback that matters when a row prints no number of its own.
+      expect(
+        parseEntryNumber(
+          url: 'https://a.example/the-quiet-harbour-chapter-214/',
+        ),
+        214,
+      );
+      expect(
+        parseEntryNumber(
+          title: 'Prologue',
+          url: 'https://a.example/the-quiet-harbour-chapter-290/',
+        ),
+        290,
+      );
+    });
+  });
+
   group('collection titles', () {
     test('drop the entry marker they carry', () {
       expect(
