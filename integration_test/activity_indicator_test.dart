@@ -109,13 +109,27 @@ void main() {
         lessThan(screen.height - insetBottom - kShellBottomBarHeight),
       );
 
-      // …and it is clear of the Library header's own actions, which live at the
-      // top right of the screen it is floating over.
+      // …and it is clear of the Library header's own actions, which live at
+      // the top right of the screen it is floating over.
+      //
+      // **Clear of, not below.** This used to require `box.top >=
+      // headerAction.bottom`, which encoded one particular arrangement — the
+      // header on top, the pill under it. The one-page Library (V2-D43) draws
+      // its header lower than a toolbar would sit, and the pill now floats
+      // *above* that row rather than below it. Measured on an iPhone 17 Pro
+      // simulator: pill 126–166, header actions 172–216. The requirement was
+      // never the order, it is that the two do not sit on top of each other,
+      // so that is what is asserted.
       final headerAction = tester.getRect(find.byTooltip('New folder'));
+      debugPrint('[IND] headerAction=$headerAction');
+      final overlaps =
+          box.top < headerAction.bottom && headerAction.top < box.bottom;
       expect(
-        box.top,
-        greaterThanOrEqualTo(headerAction.bottom),
-        reason: 'the header owns the top right; the pill starts below it',
+        overlaps,
+        isFalse,
+        reason:
+            'the pill and the header\'s own actions must not share a band of '
+            'the screen — whichever of them is on top',
       );
     },
     timeout: const Timeout(Duration(minutes: 5)),

@@ -221,10 +221,35 @@ void main() {
       await fixture.stop();
       await readThroughTheLibrary(tester, entryId);
 
+      // **The banner is above panel 1, and the reader opens *at* the reading
+      // position** — so on an entry opened at its start the banner sits just
+      // above the viewport rather than in it (`_leadingExtent` is the top
+      // spacer *plus* `kPartialBannerExtent`). That is the design, not a
+      // defect: the warning is part of the content above the first panel and
+      // scrolls with it.
+      //
+      // So what is asserted is that the reader built it and a reader can
+      // reach it, which is the product claim. Asserting it was already on
+      // screen asserted a layout the reader deliberately does not have.
+      final banner = find.textContaining('Partial save', skipOffstage: false);
+      await pumpUntil(
+        tester,
+        () => banner.evaluate().isNotEmpty,
+        timeout: const Duration(seconds: 30),
+        reason: 'the reader never built the partial warning',
+      );
+      await tester.ensureVisible(banner.first);
+      await pumpFor(tester, const Duration(milliseconds: 600));
       expect(
         find.textContaining('Partial save'),
         findsOneWidget,
         reason: 'the reader says so offline, on the entry it is about',
+      );
+      expect(
+        find.textContaining('1 page is'),
+        findsOneWidget,
+        reason:
+            'and says how much is missing, from the manifest\'s own counts',
       );
     },
     timeout: const Timeout(Duration(minutes: 10)),
@@ -240,6 +265,28 @@ void main() {
       await awaitQueueIdle(tester, app);
 
       final copy = (await app.ui.offline.activeCopyOf(entryId))!;
+
+      // Somebody had read part of it. **Reading state has to exist before the
+      // files are destroyed for its survival to mean anything** — this used to
+      // be asserted as "not unread" after opening the gutted Entry, which
+      // demanded that a reader which found nothing to read record having read
+      // it. It does not, and should not: an open that failed is not a reading.
+      // What the invariant is actually about is that removing bytes leaves
+      // reading state alone (I14), so the state is written first and compared
+      // across the deletion.
+      await OfflineReadSession(
+        entryId: entryId,
+        offlineCopies: app.ui.offline,
+        reading: app.ui.reading,
+      ).saveProgress(
+        const ReadingPosition(anchorIndex: 2, offsetInAnchor: 0.5),
+      );
+      final before = await app.ui.reading.stateOf(entryId);
+      expect(
+        before.status,
+        isNot(ReadStatus.unread),
+        reason: 'the precondition: this Entry had been read into',
+      );
 
       // Simulate the OS or the user reclaiming the space behind our back.
       await fixture.stop();
@@ -267,10 +314,17 @@ void main() {
         isNotEmpty,
         reason: 'nor its Locations',
       );
+      final after = await app.ui.reading.stateOf(entryId);
       expect(
-        (await app.ui.reading.stateOf(entryId)).status,
-        isNot(ReadStatus.unread),
-        reason: 'nor the fact that it was opened',
+        after.status,
+        before.status,
+        reason: 'nor how far through it the reader had got',
+      );
+      expect(after.firstOpenedAt, before.firstOpenedAt);
+      expect(
+        (await app.ui.offline.activeCopyOf(entryId))?.anchorIndex,
+        isNotNull,
+        reason: 'and the copy row still remembers where the reader was',
       );
     },
     timeout: const Timeout(Duration(minutes: 10)),

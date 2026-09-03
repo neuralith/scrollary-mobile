@@ -170,15 +170,39 @@ void main() {
     await pumpFor(tester, const Duration(seconds: 1));
   }
 
-  /// *Add to queue*, then the start sheet — the same one the update check
-  /// shows, because this run may open pages too.
+  /// *Queue only* — the answer that writes the journey's first row and
+  /// starts nothing.
   ///
-  /// *Start in Browser* rather than the multitasking start: it is offered
-  /// whatever the build's entitlement, so it is the one a harness may press.
-  Future<void> queueAndAuthorise(WidgetTester tester) async {
+  /// **Queue only does not open a start sheet.** It is the answer that starts
+  /// nothing, so the sheet stays and re-draws for the row it just wrote: the
+  /// range block and the launches are replaced by *Queued - waiting for
+  /// Start* and `v2StartButton`. This helper used to tap *Queue only* and look
+  /// straight for `startInBrowser`, which is a launch **on the sheet** and had
+  /// gone with the block it lives in.
+  Future<void> queueOnly(WidgetTester tester) async {
     await tester.ensureVisible(key('saveScopeAddToQueue'));
     await pumpFor(tester, const Duration(milliseconds: 500));
     await tester.tap(key('saveScopeAddToQueue'), warnIfMissed: false);
+    await pumpFor(tester, const Duration(seconds: 3));
+  }
+
+  /// The sheet's own Start, then the gate.
+  ///
+  /// Pressing it closes the sheet and hands the launch question to the shell,
+  /// because nobody has answered it - and that is the gate this suite wants,
+  /// since a count taken from the Source opens pages.
+  ///
+  /// *Start in Browser* rather than the multitasking start: it is offered
+  /// whatever the build's entitlement, so it is the one a harness may press.
+  Future<void> authorise(WidgetTester tester) async {
+    expect(
+      key('v2StartButton'),
+      findsOneWidget,
+      reason: 'the sheet offers the explicit Start for the row it just wrote',
+    );
+    await tester.ensureVisible(key('v2StartButton'));
+    await pumpFor(tester, const Duration(milliseconds: 500));
+    await tester.tap(key('v2StartButton'), warnIfMissed: false);
     await pumpFor(tester, const Duration(seconds: 2));
 
     expect(
@@ -186,10 +210,15 @@ void main() {
       findsOneWidget,
       reason:
           'a count taken from the Source may open a page, so it is gated the '
-          'way the check is — before anything is opened',
+          'way the check is - before anything is opened',
     );
     await tester.tap(key('startInBrowser'), warnIfMissed: false);
     await pumpFor(tester, const Duration(seconds: 3));
+  }
+
+  Future<void> queueAndAuthorise(WidgetTester tester) async {
+    await queueOnly(tester);
+    await authorise(tester);
   }
 
   /// The one Collection this suite's flow creates, once it exists.
@@ -210,14 +239,29 @@ void main() {
       // typed into it.
       expect(await app.ui.queue.all(), isEmpty);
 
-      await queueAndAuthorise(tester);
-
-      final queued = await pumpUntilAsync(
-        tester,
-        () => app.ui.queue.all(),
-        (rows) => rows.length >= 5,
-        timeout: const Duration(minutes: 4),
+      // *Queue only* writes **one** row - the Entry the user is standing on,
+      // whose identity is already known. The other four do not exist yet and
+      // deliberately so: the count is a claim about the Source, and every
+      // address after this one is found while the downloading happens, one
+      // page at a time (V2-D56). A pre-walk that resolved all five first is
+      // exactly what that decision retired.
+      await queueOnly(tester);
+      expect(
+        await app.ui.queue.all(),
+        hasLength(1),
+        reason: 'one row now; the rest are found as the run reaches them',
       );
+      expect(
+        await app.ui.offline.allCopies(),
+        isEmpty,
+        reason: 'and nothing captures until an explicit Start',
+      );
+      expect(app.runner.isRunning, isFalse);
+
+      await authorise(tester);
+      await awaitQueueIdle(tester, app, timeout: const Duration(minutes: 6));
+
+      final queued = await app.ui.queue.all();
       expect(
         queued,
         hasLength(5),
@@ -236,7 +280,7 @@ void main() {
         entries,
         hasLength(5),
         reason:
-            'entries 1..5, each once — the count includes the page the '
+            'entries 1..5, each once - the count includes the page the '
             'user was on',
       );
 
@@ -270,23 +314,18 @@ void main() {
       for (final task in queued) {
         expect(
           task.state,
-          SaveTaskState.queued,
-          reason: 'a queued download waits for Start; nothing here started it',
+          SaveTaskState.completed,
+          reason:
+              'the journey captures each Entry on the page it opened to '
+              'identify it, so a finished run leaves every row settled',
         );
       }
 
-      // The half of the rule that matters most: reading a site forward is not
-      // downloading it.
+      // The deliverable is Entries on this device, not Entries discovered.
       expect(
-        await app.ui.offline.allCopies(),
-        isEmpty,
-        reason: 'nothing captures until an explicit Start',
-      );
-      expect(app.runner.isRunning, isFalse);
-      expect(
-        app.ui.queue.saveStartAuthorised,
-        isFalse,
-        reason: 'authorising the reading is not authorising the downloads',
+        (await app.ui.offline.allCopies()).where((c) => c.active),
+        hasLength(5),
+        reason: 'what the user asked for was five entries they can read',
       );
 
       debugPrint('[next] queued ${queued.length} rows for $urls');
@@ -305,16 +344,13 @@ void main() {
       await askForEntriesFromHere(tester, 5);
       await queueAndAuthorise(tester);
 
-      final queued = await pumpUntilAsync(
-        tester,
-        () => app.ui.queue.all(),
-        (rows) => rows.length >= 3,
-        timeout: const Duration(minutes: 4),
-      );
+      await awaitQueueIdle(tester, app, timeout: const Duration(minutes: 6));
+
+      final queued = await app.ui.queue.all();
       expect(
         queued,
         hasLength(3),
-        reason: 'entries 6, 7 and 8 — and nothing beyond the end of the chain',
+        reason: 'entries 6, 7 and 8 - and nothing beyond the end of the chain',
       );
 
       final collection = await theCollection();
@@ -328,64 +364,105 @@ void main() {
       }
       expect(urls, {for (var n = 6; n <= 8; n++) entry(n)});
 
+      // **Running out of Source is an answer, not a failure.** Three of the
+      // five asked for is what this site publishes after entry 6, and the run
+      // says so in the user's words rather than reporting an error.
       expect(
-        await app.ui.offline.allCopies(),
-        isEmpty,
-        reason: 'a short walk still downloads nothing on its own',
+        (await app.ui.offline.allCopies()).where((c) => c.active),
+        hasLength(3),
+        reason: 'the three that exist are on the device',
       );
+      for (final task in queued) {
+        expect(task.state, SaveTaskState.completed);
+      }
+      final summary = app.runner.lastRun;
+      expect(summary, isNotNull);
+      expect(
+        summary!.endNote,
+        contains('everything this site publishes'),
+        reason:
+            'a short answer about the Source, said as one - never as a '
+            'failure of the download',
+      );
+      expect(summary.failed, 0);
     },
     timeout: const Timeout(Duration(minutes: 10)),
   );
 
-  // ------------------------------------------------------------- AT MERGE
+  // ----------------------------------------------------------------- the stop
   //
-  // **The stop.** Reading a Source forward is content-affecting source
-  // automation, so it is user-started, visible, bounded *and cancellable* —
-  // and the cancellation seam does not exist on this branch. The compact
-  // running surface is `running_operation_panel.dart`, which draws its Stop
-  // over a controller publishing *is it running* and *stop it*
-  // (`QueueRunner`, `CheckController`). The walk needs the same two things
-  // published by whatever owns it, plus a third branch in that panel wired to
-  // its cancel, exactly as `_CheckRunning` is.
+  // Reading a Source forward is content-affecting source automation, so it is
+  // user-started, visible, bounded *and cancellable*.
   //
-  // This case is written against that seam and skipped until it lands. It
-  // asks for eight from entry 1 — a walk long enough to still be reading when
-  // the Stop is pressed — and asserts the two halves of a cooperative stop:
-  // it ends, and what it had already resolved is still in the library.
+  // This case was written against a seam that never landed under the name it
+  // expected — `panelStopReadingForward`, a third branch of the running panel
+  // for a walk of its own — and was skipped waiting for it. V2-D56 answered
+  // the question differently: **reading forward is no longer a state of its
+  // own.** It happens inside a download, between one Entry and the next, so
+  // the download is what the user started and what they stop.
   //
-  // Un-skip in the same change that adds `panelStopReadingForward` to the
-  // running panel.
+  // What is asserted here is the rule V2-D56 states — *a user's Stop is about
+  // the operation, not about the row that happened to be running* — through
+  // the same call the panel's dialog makes, `SaveQueueRepository.cancel` on
+  // the row being captured. The UI half is a separate matter and is reported
+  // as a defect rather than asserted here; see the case below.
   testWidgets(
-    'stopping a walk keeps what it had already found',
+    'cancelling the running row stops the traversal, and keeps what it found',
     (tester) async {
+      // A chain long enough that the walk is still going when it is stopped.
+      // A prose page on a loopback fixture captures in about two seconds, and
+      // the fixture's own delay is on image panels only.
+      fixture.entryCount = 40;
+      addTearDown(() => fixture.entryCount = 8);
       await boot(tester, startUrl: entry(1));
 
-      await askForEntriesFromHere(tester, 8);
+      await askForEntriesFromHere(tester, 40);
       await queueAndAuthorise(tester);
 
-      // The panel is docked under the WebView, so the walk is named and
-      // stoppable while it runs.
+      // The panel is docked under the WebView, so the run is named and
+      // stoppable while it drives the Browser.
       await pumpUntil(
         tester,
-        () => key('panelStopReadingForward').evaluate().isNotEmpty,
+        () => key('panelStopDownload').evaluate().isNotEmpty,
         timeout: const Duration(minutes: 2),
         reason: 'a run that opens pages is visible while it does',
       );
-      await tester.tap(key('panelStopReadingForward'), warnIfMissed: false);
-      await pumpFor(tester, const Duration(seconds: 3));
 
-      final settled = await pumpUntilAsync(
+      // Let it get past the first Entry, so "kept what it found" has
+      // something to be about, then stop the row that is running now.
+      await pumpUntilAsync(
+        tester,
+        () => app.ui.offline.allCopies(),
+        (copies) => copies.where((c) => c.active).length >= 2,
+        timeout: const Duration(minutes: 3),
+      );
+      final running = await pumpUntilAsync(
         tester,
         () => app.ui.queue.all(),
-        (rows) => rows.isNotEmpty,
+        (rows) => rows.any((t) => t.state == SaveTaskState.running),
         timeout: const Duration(minutes: 2),
       );
+      final target = running.firstWhere(
+        (t) => t.state == SaveTaskState.running,
+      );
+      final outcome = await app.ui.queue.cancel(target.id);
       expect(
-        settled.length,
-        lessThan(8),
-        reason: 'the stop was asked for before the count was reached',
+        outcome,
+        SaveCancelOutcome.stoppingRunning,
+        reason: 'the row was still running when the stop was asked for',
       );
 
+      // Stopping is cooperative everywhere: it lands at the next safe point.
+      await awaitQueueIdle(tester, app, timeout: const Duration(minutes: 4));
+
+      final settled = await app.ui.queue.all();
+      expect(
+        settled.length,
+        lessThan(40),
+        reason:
+            'a stop is about the operation, so the traversal stops with the '
+            'row and the entries after it are never resolved (V2-D56)',
+      );
       final collection = await theCollection();
       final entries = await app.ui.entries.entriesOf(collection!.id);
       expect(
@@ -393,7 +470,84 @@ void main() {
         settled.length,
         reason: 'a stopped walk keeps every Entry it had already resolved',
       );
-      expect(await app.ui.offline.allCopies(), isEmpty);
+      // **Nothing already on this device is removed by a stop**, which is what
+      // the panel's own wording promises.
+      expect(
+        (await app.ui.offline.allCopies()).where((c) => c.active),
+        isNotEmpty,
+        reason: 'everything already downloaded stays downloaded',
+      );
+      expect(app.runner.isRunning, isFalse);
+    },
+    timeout: const Timeout(Duration(minutes: 10)),
+  );
+
+  // ------------------------------------------------------- A PROVEN DEFECT
+  //
+  // **The panel's *Stop download* does not reliably stop a sequential run.**
+  //
+  // Measured on the iPhone 17 Pro simulator against this fixture, asking for
+  // 40 entries from entry 1: the panel's Stop was pressed and its dialog
+  // confirmed while the run was going, and the run finished all forty —
+  // `{completed: 40}`, 40 copies, `cancelled: 0`. Not one row was cancelled,
+  // so the stop never reached a running row at all.
+  //
+  // Why. `_SaveRunning` draws its Stop for `runner.activeTaskId`, resolves
+  // that id to a row through an async provider, and hands
+  // `stopRunningDownload` **that row snapshot**. A journeyed entry on this
+  // fixture is captured in about two seconds, so by the time the confirmation
+  // dialog is answered the snapshot names a row that has already completed;
+  // `cancel` reports `alreadyFinished`, the user is told "That download had
+  // already finished", and the operation they asked to stop carries on to the
+  // next Entry. Between two entries the control is disabled outright, because
+  // `activeTaskId` is null while the walk is opening the next page.
+  //
+  // This contradicts two standing rules: V2-D56's "a user's Stop is about the
+  // operation, not about the row that happened to be running when they
+  // pressed it", and CLAUDE.md's "never offer a stop that does not stop". The
+  // fix is not a test change — the stop has to be aimed at the operation
+  // (a stop on `QueueRunner` itself) rather than at a row id read a moment
+  // earlier — so this case is skipped rather than weakened, and un-skips in
+  // the change that adds it.
+  testWidgets(
+    'the panel\'s Stop ends the run the user is watching',
+    (tester) async {
+      fixture.entryCount = 40;
+      addTearDown(() => fixture.entryCount = 8);
+      await boot(tester, startUrl: entry(1));
+
+      await askForEntriesFromHere(tester, 40);
+      await queueAndAuthorise(tester);
+
+      await pumpUntil(
+        tester,
+        () => key('panelStopDownload').evaluate().isNotEmpty,
+        timeout: const Duration(minutes: 2),
+        reason: 'a run that opens pages is visible while it does',
+      );
+
+      // Pressed until the dialog it opens is actually on screen, which is the
+      // only proof the stop was asked for: the control is disabled while the
+      // walk is between entries.
+      final confirm = key('confirmStopDownload');
+      var asked = false;
+      for (var attempt = 0; attempt < 12 && !asked; attempt++) {
+        await tester.ensureVisible(key('panelStopDownload'));
+        await pumpFor(tester, const Duration(milliseconds: 300));
+        await tester.tap(key('panelStopDownload'), warnIfMissed: false);
+        await pumpFor(tester, const Duration(milliseconds: 700));
+        asked = confirm.evaluate().isNotEmpty;
+      }
+      expect(asked, isTrue, reason: 'the run must be stoppable while running');
+      await tester.tap(confirm, warnIfMissed: false);
+      await pumpFor(tester, const Duration(seconds: 2));
+
+      await awaitQueueIdle(tester, app, timeout: const Duration(minutes: 4));
+      expect(
+        (await app.ui.queue.all()).length,
+        lessThan(40),
+        reason: 'the operation the user stopped must not run to its count',
+      );
     },
     timeout: const Timeout(Duration(minutes: 10)),
     skip: true,

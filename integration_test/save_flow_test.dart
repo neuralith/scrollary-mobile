@@ -38,7 +38,6 @@
 //   is in place. The last case here asserts that outcome directly.
 import 'dart:io';
 
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
@@ -97,30 +96,113 @@ void main() {
     timeout: const Timeout(Duration(minutes: 5)),
   );
 
+  // ------------------------------------------------ the sheet, as it is now
+  //
+  // These three cases were written against a sheet that offered a **loose
+  // save** — `v2SaveStandalone`, a button beside "Add to a Collection…" that
+  // wrote an Entry belonging to nothing. V2-D69 retired it: a page the library
+  // does not hold yet is asked *one* question, which Collection this is, and
+  // the capture options belong to the sheet that answer hands back. There is
+  // no fallback to take any more, so the old route into the queue does not
+  // exist and these cases were asserting a control the product removed.
+  //
+  // What they are about has not changed, and is re-expressed here over the
+  // flow that shipped:
+  //
+  //   * queueing writes a row and starts nothing (the V1/V2 split);
+  //   * a launch closes the sheet and the surface underneath performs the
+  //     Start (V2-D67);
+  //   * the launch is **one** decision with three values, and nothing asks
+  //     again after it (V2-D52, V2-D62).
+  //
+  // **Why `/text/N` and not `/entry/N`.** Every answer the picker can give
+  // writes a Source, and a Source is `(host, path_key)`. `/entry/1`'s
+  // fingerprint strips the number and then `entry` as an entry word, leaving
+  // `/`, and `addressKeysRoot` refuses it because the path is two segments —
+  // so the sheet honestly offers nothing to save there. `/text` survives as a
+  // key. The image-sequence bytes are proved by the two cases below, which
+  // write their rows through the repositories.
+
+  /// One entry of the fixture's prose collection — the shape a Source can be
+  /// made from.
+  String textEntry(int n) => '${fixture.base}/text/$n';
+
+  Finder key(String value) => find.byKey(ValueKey(value));
+
+  /// Browser → Save → *Add to a Collection…* → *New collection* → this entry.
+  ///
+  /// Ends with the save sheet open on its launches: the range answered, the
+  /// name in the field, and nothing written yet.
+  Future<void> answerTheCollectionQuestion(
+    WidgetTester tester, {
+    int? fromHere,
+  }) async {
+    expect(
+      key('browserSaveAction'),
+      findsOneWidget,
+      reason: 'the save control is present on a page that is not restricted',
+    );
+    await tester.tap(key('browserSaveAction'), warnIfMissed: false);
+    await pumpFor(tester, const Duration(seconds: 3));
+
+    expect(
+      key('v2SaveStandalone'),
+      findsNothing,
+      reason: 'there is no loose save to fall back to any more (V2-D69)',
+    );
+    expect(
+      key('v2AddToCollection'),
+      findsOneWidget,
+      reason: 'which Collection this is, is the whole question',
+    );
+    await tester.tap(key('v2AddToCollection'), warnIfMissed: false);
+    await pumpFor(tester, const Duration(seconds: 2));
+
+    await tester.tap(key('collectionPickerNew'), warnIfMissed: false);
+    await pumpFor(tester, const Duration(seconds: 2));
+
+    // The picker's answer turns this same sheet into the one that saves: the
+    // name, the range and the launches, with no screen in between (V2-D57).
+    expect(key('collectionNameField'), findsOneWidget);
+    if (fromHere == null) {
+      await tester.tap(key('saveScopeThisEntry'), warnIfMissed: false);
+      await pumpFor(tester, const Duration(seconds: 1));
+      return;
+    }
+    // *The next N from here*: one sequential journey along this Source
+    // (V2-D56), which is also what gives a run long enough to be watched.
+    await tester.tap(key('saveScopeFromHere'), warnIfMissed: false);
+    await pumpFor(tester, const Duration(seconds: 1));
+    // The field does not autofocus — choosing a range is not asking for a
+    // keyboard over the launches — so this is the tap that raises it.
+    await tester.tap(key('saveCountField'), warnIfMissed: false);
+    await pumpFor(tester, const Duration(seconds: 1));
+    await tester.enterText(key('saveCountField'), '$fromHere');
+    await pumpFor(tester, const Duration(seconds: 1));
+    // OK, exactly as an iOS user has to: the number pad has no return key,
+    // and the bar it sits on is taking the room the launches need until it
+    // goes.
+    await tester.tap(key('saveCountOk'), warnIfMissed: false);
+    await pumpFor(tester, const Duration(seconds: 1));
+  }
+
+  /// Press one of the sheet's own controls, scrolling to it first — the sheet
+  /// asks three questions above them, so on a phone they start below the fold.
+  Future<void> press(WidgetTester tester, String optionKey) async {
+    await tester.ensureVisible(key(optionKey));
+    await pumpFor(tester, const Duration(milliseconds: 500));
+    await tester.tap(key(optionKey), warnIfMissed: false);
+    await pumpFor(tester, const Duration(seconds: 3));
+  }
+
   testWidgets(
-    'the save sheet queues the page, and nothing captures until Start',
+    'the sheet queues the page, and nothing captures until Start',
     (tester) async {
-      await boot(tester, startUrl: fixture.entry(1));
+      await boot(tester, startUrl: textEntry(1));
+      await answerTheCollectionQuestion(tester);
 
-      // Through the real control: the Browser's save action, which is absent
-      // rather than disabled on a restricted host and present here.
-      final saveAction = find.byKey(const ValueKey('browserSaveAction'));
-      expect(saveAction, findsOneWidget);
-      await tester.tap(saveAction, warnIfMissed: false);
-      await pumpFor(tester, const Duration(seconds: 3));
-
-      // A numbered fixture entry reads as one entry of a collection, so the
-      // sheet leads with "Add to a Collection…" and offers the loose save
-      // underneath. This test is about the queue, so it takes the loose one —
-      // the deliberate fallback, which is exactly what it is for.
-      final saveButton = find.byKey(const ValueKey('v2SaveStandalone'));
-      expect(
-        saveButton,
-        findsOneWidget,
-        reason: 'the sheet must offer a save for a page it can hold',
-      );
-      await tester.tap(saveButton, warnIfMissed: false);
-      await pumpFor(tester, const Duration(seconds: 3));
+      // *Queue only* — the answer that is complete and starts nothing.
+      await press(tester, 'saveScopeAddToQueue');
 
       // One row, waiting. This is the half of the flow V1 did not have.
       final queued = await app.ui.queue.all();
@@ -136,27 +218,40 @@ void main() {
         isEmpty,
         reason: 'and it must not have written any bytes',
       );
+      // The library half happened, and only the library half.
+      final root = await app.ui.folders.ensureRoot();
+      expect(
+        await app.ui.collections.inFolder(root.id),
+        hasLength(1),
+        reason: 'the picker\'s answer created exactly one Collection',
+      );
       expect(
         find.text('Queued — waiting for Start.'),
         findsOneWidget,
         reason: 'the sheet says so in the same words the queue does',
       );
-
-      // The sheet offers the explicit Start. It is asserted here and pressed in
-      // the next case, which is `skip`ped against a defect — see its header.
-      expect(find.byKey(const ValueKey('v2StartButton')), findsOneWidget);
+      expect(
+        key('v2StartButton'),
+        findsOneWidget,
+        reason: 'and offers the explicit Start for the row it just wrote',
+      );
 
       // Start through the shell's own `_startQueuedDownloads`, which is the
-      // one place V2 Browser automation is authorised from and what every
-      // Start control ultimately calls. The foreground gate decides *where the
-      // user waits* and never whether the work happens.
+      // one place V2 Browser automation is authorised from. The foreground
+      // gate decides *where the user waits* and never whether the work
+      // happens — and it is asked here because *Queue only* answered nothing
+      // about a launch.
       await startQueue(tester, app);
       await awaitQueueIdle(tester, app);
 
       final entryId = queued.single.entryId;
       final task = await app.latestTaskFor(entryId);
       expect(task!.state, SaveTaskState.completed);
-      expect(await app.storedImagesOf(entryId), kFixtureImagesPerEntry);
+      expect(
+        await app.ui.offline.activeCopyOf(entryId),
+        isNotNull,
+        reason: 'the row the sheet wrote became bytes on this device',
+      );
       expect(
         app.everHeldForBrowser,
         isFalse,
@@ -168,75 +263,50 @@ void main() {
 
   // ------------------------------------------------- the sheet's own launches
   //
-  // Both cases here are about the same rule (V2-D67): **a launch closes the
-  // save sheet, and the surface underneath performs the Start.**
+  // V2-D67: **a launch closes the save sheet, and the surface underneath
+  // performs the Start.** The sheet is a modal route over the Browser and
+  // `QueueRunner.start` does not return until the batch is done, so a sheet
+  // that awaited the starter itself sat over the page it had just sent the app
+  // to read.
   //
-  // This first one was skipped against a defect for as long as the sheet
-  // started the queue itself. `_V2SavePanelState._start` awaited the starter
-  // and then called `_refresh()`; the starter is the shell's
-  // `_startQueuedDownloads`, which for *Start in Browser* calls
-  // `showBrowserSurface`, which pops the routes above the shell — dismissing
-  // the very sheet the panel was in. `_refresh` then read `ref` on a disposed
-  // `ConsumerState` and threw `Bad state: Using "ref" when a widget is about
-  // to or has been unmounted is unsafe`, wedging the binding and taking every
-  // later case in the file with it. The panel now pops *first* and touches
-  // nothing afterwards, so the scenario runs.
+  // Both cases below press the launch **on the sheet**, which is where it
+  // lives now (V2-D62). That is also the assertion that matters most about it:
+  // the launch is one decision with three values, so answering it here must
+  // not produce a second question afterwards (V2-D52).
   testWidgets(
-    'the sheet\'s own Start button closes the sheet and authorises the queue',
+    'a start on the sheet closes it and runs, without asking twice',
     (tester) async {
-      await boot(tester, startUrl: fixture.entry(1));
+      await boot(tester, startUrl: textEntry(1));
+      await answerTheCollectionQuestion(tester);
 
-      await tester.tap(
-        find.byKey(const ValueKey('browserSaveAction')),
-        warnIfMissed: false,
-      );
-      await pumpFor(tester, const Duration(seconds: 3));
-      await tester.tap(
-        find.byKey(const ValueKey('v2SaveStandalone')),
-        warnIfMissed: false,
-      );
-      await pumpFor(tester, const Duration(seconds: 3));
+      await press(tester, 'startInBrowser');
 
-      await tester.tap(
-        find.byKey(const ValueKey('v2StartButton')),
-        warnIfMissed: false,
-      );
-      await pumpFor(tester, const Duration(seconds: 2));
-      // The sheet is gone before the gate is answered: nobody had said where
-      // they would wait, so this is the one Start that still asks.
       expect(
         find.byType(V2SavePanel),
         findsNothing,
         reason: 'the sheet closes on the way to the Start it asked for',
       );
-      await tester.tap(
-        find.byKey(const ValueKey('startInBrowser')),
-        warnIfMissed: false,
+      expect(
+        key('startInBrowser'),
+        findsNothing,
+        reason:
+            'the launch was answered on the sheet, so nothing asks a second '
+            'time where the user would like to wait (V2-D52)',
       );
-      await pumpFor(tester, const Duration(seconds: 3));
 
       await awaitQueueIdle(tester, app);
       final task = (await app.ui.queue.all()).single;
       expect(task.state, SaveTaskState.completed);
+      expect(await app.ui.offline.activeCopyOf(task.entryId), isNotNull);
     },
     timeout: const Timeout(Duration(minutes: 8)),
   );
 
-  // The defect this case exists for: *Start and keep using* took the
-  // branch that claims the Browser surface **without popping anything**, so the
-  // save sheet stayed on screen over the page for the whole run — the one
-  // launch whose entire promise is that the user carries straight on. It is
-  // run on the Pro arm because that is the only arm the row is offered on.
-  //
-  // It is entered through the sheet's *Start*, not through the sheet's launch
-  // rows, for a reason that is about the fixture and not about the flow: the
-  // launch rows appear under the range block, the range block appears once the
-  // page has a Collection, and this fixture is served from `127.0.0.1` — an
-  // address a Source cannot be identified by (see "The one substitution" in
-  // the README), so the domain refuses to adopt it into one. Both paths reach
-  // the same `SaveSheetStart` / `startQueuedDownloads` pair; the launch rows'
-  // own half is pinned in `test/library_ui/save_panel_test.dart`, over the
-  // real modal route and the real starter.
+  // The defect this case exists for: *Start and keep using* took the branch
+  // that claims the Browser surface **without popping anything**, so the save
+  // sheet stayed on screen over the page for the whole run — the one launch
+  // whose entire promise is that the user carries straight on. It runs on the
+  // Pro arm because that is the only arm the row is offered on.
   testWidgets(
     'a keep-using-the-app start closes the sheet and leaves the Browser '
     'usable while the work runs',
@@ -248,62 +318,54 @@ void main() {
       );
       await app.boot(tester);
       await showBrowser(tester);
-      await openPage(tester, app, fixture.entry(1));
+      await openPage(tester, app, textEntry(1));
 
-      await tester.tap(
-        find.byKey(const ValueKey('browserSaveAction')),
-        warnIfMissed: false,
-      );
-      await pumpFor(tester, const Duration(seconds: 3));
-      await tester.tap(
-        find.byKey(const ValueKey('v2SaveStandalone')),
-        warnIfMissed: false,
-      );
-      await pumpFor(tester, const Duration(seconds: 3));
-
-      await tester.tap(
-        find.byKey(const ValueKey('v2StartButton')),
-        warnIfMissed: false,
-      );
-      await pumpFor(tester, const Duration(seconds: 2));
+      await answerTheCollectionQuestion(tester, fromHere: 3);
       expect(
-        find.byType(V2SavePanel),
-        findsNothing,
-        reason: 'the sheet closes before anything is started, every time',
-      );
-
-      final keepUsing = find.byKey(const ValueKey('startKeepUsingApp'));
-      expect(
-        keepUsing,
+        key('startKeepUsingApp'),
         findsOneWidget,
         reason: 'the Pro arm is the one this row is offered on',
       );
-      await tester.tap(keepUsing);
-      await pumpFor(tester, const Duration(seconds: 4));
+      await press(tester, 'startKeepUsingApp');
 
-      // The whole of the bug, asserted: nothing of the save UI is left, the
-      // Browser is in front of the user with its own controls hit-testable
-      // rather than behind a modal barrier, and the work is under way.
+      // The whole of the bug, asserted: nothing of the save UI is left, no
+      // modal barrier stands between the user and the page, and the work is
+      // visible and stoppable from the Browser they are still on.
+      //
+      // Not `browserSaveAction`: **while a run runs that control is not drawn
+      // at all** (`BrowserSaveActions`, and the tooltip's own comment says
+      // so), so asserting it hit-testable asserted the absence of the run.
+      // What a user has instead is the docked panel, which is the surface this
+      // launch promises to leave them with.
       expect(find.byType(V2SavePanel), findsNothing);
       expect(
-        find.byKey(const ValueKey('browserSaveAction')).hitTestable(),
-        findsOneWidget,
-        reason: 'the page and its controls are usable while the work runs',
+        find.byType(ModalBarrier).hitTestable(),
+        findsNothing,
+        reason: 'nothing modal is left between the user and the page',
       );
-      expect(
-        app.runner.isRunning,
-        isTrue,
-        reason: 'and the launch the sheet closed on did start the work',
+      await pumpUntil(
+        tester,
+        () => key('panelStopDownload').hitTestable().evaluate().isNotEmpty,
+        timeout: const Duration(seconds: 60),
+        reason:
+            'the run is on screen under the page, and the user can end it '
+            'without leaving where they are',
       );
 
       await awaitQueueIdle(tester, app);
-      final task = (await app.ui.queue.all()).single;
-      expect(task.state, SaveTaskState.completed);
+      final copies = (await app.ui.offline.allCopies())
+          .where((c) => c.active)
+          .toList();
       expect(
-        await app.storedImagesOf(task.entryId),
-        kFixtureImagesPerEntry,
-        reason: 'the run went to completion with the sheet gone',
+        copies,
+        hasLength(3),
+        reason:
+            'the journey the sheet authorised ran to its count with the '
+            'sheet gone',
       );
+      for (final task in await app.ui.queue.all()) {
+        expect(task.state, SaveTaskState.completed);
+      }
     },
     timeout: const Timeout(Duration(minutes: 8)),
   );

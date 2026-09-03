@@ -41,6 +41,40 @@
 // is stubbed. The missing seam is reported as a blocker rather than papered
 // over here, and if `lib` ever lets a Source name its own origin this wrapper
 // should be deleted in the same change.
+// ## A PROVEN PRODUCT DEFECT — why this suite is red
+//
+// **A root Source can no longer recognise its own listing.** Four cases here
+// stop with `SourceCheckStop.listingUnrecognised` — "that was not this
+// Source's listing" — about the site's own home page.
+//
+// `BrowserSourceObservationSource._belongsTo` decides which links on a listing
+// are this Source's entries. For an ordinary Source it is a path-prefix test.
+// For a Source whose `path_key` is `/` it became `addressKeysRoot(href)` with
+// V2-D72, and `addressKeysRoot` requires the address to be **exactly one path
+// segment** that numbers an entry. This fixture — and any site whose listing
+// is its home page and whose entries live at `/entry/1`, `/works/alpha/12` and
+// the like — has multi-segment entry addresses, so not one link matches, the
+// listing reads as empty, and the check reports it was not this Source's page.
+//
+// That shape is not hypothetical: `addListingSource` writes `path_key = '/'`
+// whenever a user adds a site by its home page, which is an offered flow
+// (*Add this collection to your library*).
+//
+// V2-D72 was about which addresses **key** the root as a Source. The same
+// predicate now also decides **membership of a root listing**, and those are
+// different questions — the second already has `link.inNav` filtering and the
+// listing's own context to work from.
+//
+// Measured: reverting `_belongsTo` to its prefix test locally took this suite
+// from 1 pass / 4 fail to 3 pass / 2 fail on an iPhone 17 Pro simulator. The
+// assertions below are correct and are deliberately left failing rather than
+// weakened — the fix belongs in `lib/`, not here.
+//
+// (A second, unrelated defect shows up behind it once the first is patched:
+// `DeviceCapacityController.refresh` assigns `state` after an await with no
+// `ref.mounted` check, so a scope disposed mid-flight throws
+// `UnmountedRefException` into whichever case is next. The harness's own
+// `boot` comment already records it.)
 import 'dart:async';
 
 import 'package:flutter/widgets.dart';

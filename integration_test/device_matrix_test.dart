@@ -17,6 +17,28 @@
 // `LIVE_ENTRY_*` the live scenarios fall back to the in-process fixture and say
 // so; nothing skips silently and nothing invents a pass.
 //
+// ## TWO KNOWN BLOCKERS — read before treating a red run as evidence
+//
+// **1. The check race is blocked on a product defect.** It stops on
+// `SourceCheckStop.listingUnrecognised`, for the reason set out at the top of
+// `update_check_test.dart`: since V2-D72 a Source whose `path_key` is `/`
+// recognises only single-segment numbered addresses as its own, so a listing
+// that is a site's home page matches none of its `/entry/N` links.
+//
+// **2. Each scenario boots its own app, and repeated boots do not settle.**
+// Every scenario after the first times out in `phase=starting` at the
+// watchdog's cap, with drift warning that `LibraryDatabase` was constructed a
+// second time over the same executor. This is the limitation the harness's own
+// `boot` comment describes — an in-process relaunch is not sustainable on
+// either platform — and it was previously *hidden*, because a `Bad state: No
+// element` thrown by the shell-anchored helpers killed the whole `testWidgets`
+// on scenario 1 before anything else was attempted. With those helpers fixed
+// (`appAnchor`) all seven scenarios are now reached, which is what exposes it.
+//
+// Neither is a stale assertion, and neither is fixed by editing this file: the
+// first belongs in `lib/`, the second needs the matrix to stop sharing one
+// `testWidgets` across seven app lifetimes.
+//
 // ## Ported, retired and changed
 //
 // * **The check race** now runs a V2 `SourceCheck` rather than V1's

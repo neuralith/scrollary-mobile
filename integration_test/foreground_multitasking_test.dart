@@ -77,7 +77,7 @@ void main() {
   tearDown(() => app.shutdown());
 
   bool surfacePainted(WidgetTester tester) => ProviderScope.containerOf(
-    tester.element(libraryTab),
+    appAnchor(tester),
   ).read(browserSurfacePaintedProvider).value;
 
   /// Queue [n] and start, then wait until the capture is genuinely reading the
@@ -113,8 +113,27 @@ void main() {
       await openReader(tester, first);
       expect(find.byType(ReaderScreen), findsOneWidget);
 
+      // **Sampled while the run is going, not after it.** The shell keeps the
+      // WebView painted *for as long as the loop runs* and releases it when
+      // the work is done — so reading the flag after `awaitQueueIdle` asked
+      // whether the mechanism was still engaged once it was no longer needed,
+      // and the honest answer to that is no.
+      var paintedThroughout = true;
+      var samples = 0;
+      while (app.runner.isRunning) {
+        if (!surfacePainted(tester)) paintedThroughout = false;
+        samples++;
+        await tester.pump(const Duration(milliseconds: 200));
+        await Future<void>.delayed(const Duration(milliseconds: 80));
+      }
       await awaitQueueIdle(tester, app);
 
+      expect(
+        samples,
+        greaterThan(0),
+        reason:
+            'the sampler must have overlapped the run, or it proves nothing',
+      );
       expect(
         find.byType(ReaderScreen),
         findsOneWidget,
@@ -126,7 +145,7 @@ void main() {
         reason: 'the run never had to ask for the Browser back',
       );
       expect(
-        surfacePainted(tester),
+        paintedThroughout,
         isTrue,
         reason:
             'the WebView kept being drawn under the Reader — the whole of the '
@@ -215,13 +234,18 @@ void main() {
     timeout: const Timeout(Duration(minutes: 12)),
   );
 
+  // The gate is one rule with two arms, and they are two cases rather than
+  // one. They used to share a body — Free, then `app.shutdown()`, then a
+  // second `boot` in the same test — and the second boot never got the Browser
+  // back ("the Browser never revealed and settled"), which failed the Pro arm
+  // for a reason that has nothing to do with the gate. A case per arm gets a
+  // clean app each, which is what every other case in this file has.
   testWidgets(
-    'the leave gate asks a Free user, and never a multitasking one',
+    'the leave gate asks a Free user, and the held run resumes whole',
     (tester) async {
-      // Free first: leaving the Browser mid-capture must offer the choice.
       await boot(tester, multitasking: false);
       await openPage(tester, app, fixture.entry(1));
-      await startCaptureOf(tester, 1);
+      final held = await startCaptureOf(tester, 1);
 
       expect(
         await showLibrary(tester),
@@ -230,13 +254,37 @@ void main() {
             'a Browser-dependent phase would be stranded, so the gate asks — '
             'and *Pause and leave* is the answer offered to everyone',
       );
+      // **Pause and leave pauses it**, which is the whole of what the gate is
+      // warning about — so the queue does not fall idle while the user is on
+      // the Library, and waiting for it there timed out on the product working
+      // as designed. The user comes back, and the held run resumes whole.
+      expect(
+        app.runner.isRunning,
+        isTrue,
+        reason: 'the run is held, not abandoned',
+      );
+      await showBrowser(tester);
       await awaitQueueIdle(tester, app, timeout: const Duration(minutes: 3));
-      await app.shutdown();
+      // Deliberately not asserting `everHeldForBrowser`: whether the capture
+      // actually had to wait depends on which phase it was in when the user
+      // left, and one that had already finished reading the page completes
+      // without ever asking. The hold itself is the subject of the case above,
+      // which arranges it.
+      expect(
+        (await app.latestTaskFor(held))!.state,
+        SaveTaskState.completed,
+        reason: 'the capture it paused finished whole on the way back',
+      );
+    },
+    timeout: const Timeout(Duration(minutes: 10)),
+  );
 
-      // Pro, preference on: nothing is at risk, so nothing is asked.
+  testWidgets(
+    'the leave gate never asks a multitasking one',
+    (tester) async {
       await boot(tester, multitasking: true);
       await openPage(tester, app, fixture.entry(1));
-      await startCaptureOf(tester, 1);
+      final carried = await startCaptureOf(tester, 1);
 
       expect(
         await showLibrary(tester),
@@ -247,8 +295,13 @@ void main() {
       );
       await awaitQueueIdle(tester, app, timeout: const Duration(minutes: 3));
       expect(app.everHeldForBrowser, isFalse);
+      expect(
+        (await app.latestTaskFor(carried))!.state,
+        SaveTaskState.completed,
+        reason: 'and it finished from the Library, never asking to come back',
+      );
     },
-    timeout: const Timeout(Duration(minutes: 14)),
+    timeout: const Timeout(Duration(minutes: 10)),
   );
 
   testWidgets(

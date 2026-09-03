@@ -197,6 +197,10 @@ void main() {
         const ReadingPosition(anchorIndex: 2, offsetInAnchor: 0.4),
       );
 
+      // **The actions sheet is the three-dot control's alone** (V2-D71). A tap
+      // on the row is a reading gesture — it opens the Entry — so driving the
+      // sheet from the row opened the reader and found no menu. The menu is
+      // `entryMenu-<id>`, beside the row it belongs to.
       Future<void> openSheet() async {
         await showLibrary(tester);
         final row = find.byKey(ValueKey('entryRow-$entryId'));
@@ -207,7 +211,13 @@ void main() {
         );
         await tester.ensureVisible(row);
         await pumpFor(tester, const Duration(milliseconds: 400));
-        await tester.tap(row, warnIfMissed: false);
+        final menu = find.byKey(ValueKey('entryMenu-$entryId'));
+        expect(
+          menu,
+          findsOneWidget,
+          reason: 'the row carries the control its actions live behind',
+        );
+        await tester.tap(menu, warnIfMissed: false);
         await pumpFor(tester, const Duration(seconds: 2));
       }
 

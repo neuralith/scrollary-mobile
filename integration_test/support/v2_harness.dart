@@ -519,6 +519,16 @@ class V2App {
     String title = '',
     String? collectionId,
   }) async {
+    // **An address the library already holds is that Entry, not a new one.**
+    // `url_key` is unique within a library (I-invariants), so a suite that
+    // seeded a Collection's Locations and then asked to queue one of them was
+    // refused with "url_key is unique within a library" — a harness
+    // assumption, not a product rule. Reusing what is there is also what the
+    // app itself does on this path.
+    final held = await RecognitionIndex(library).lookupUrl(normalizeUrl(url));
+    if (held != null) {
+      return (entryId: held.entry.id, locationId: held.location.id);
+    }
     final root = await ui.folders.ensureRoot();
     final (entry, violation) = collectionId == null
         ? await ui.entries.createStandalone(
@@ -668,21 +678,33 @@ Future<bool> showLibrary(WidgetTester tester) async {
   return true;
 }
 
-/// Push the reader over the shell, the way the app's own entry opener does.
+/// A mounted element to read the router and the provider container from.
 ///
-/// Anchored on the bottom bar because it is the one thing that is never
-/// offstage — the shell's tab children are, by design, and a finder skips
-/// those.
+/// **Not the bottom bar alone.** It was chosen as "the one thing that is never
+/// offstage", and that is true only while the shell is the top route: the
+/// reader is pushed *over* it, and while the reader is up the tab bar is not
+/// in the tree at all — so any helper anchored on it threw `Bad state: No
+/// element` on exactly the assertions that are about leaving the shell. The
+/// shell is preferred when it is there, and whatever is on top of it is used
+/// when it is not.
+Element appAnchor(WidgetTester tester) {
+  for (final finder in [libraryTab, browserTab, find.byType(Navigator)]) {
+    final found = finder.evaluate();
+    if (found.isNotEmpty) return found.first;
+  }
+  // Nothing mounted at all is a real failure, and this reports it as one.
+  return tester.element(libraryTab);
+}
+
+/// Push the reader over the shell, the way the app's own entry opener does.
 Future<void> openReader(WidgetTester tester, String entryId) async {
-  final context = tester.element(libraryTab);
-  GoRouter.of(context).push('/reader/$entryId');
+  GoRouter.of(appAnchor(tester)).push('/reader/$entryId');
   await pumpFor(tester, const Duration(seconds: 3));
 }
 
 /// Pop whatever is above the shell.
 Future<void> popRoute(WidgetTester tester) async {
-  final context = tester.element(libraryTab);
-  final router = GoRouter.of(context);
+  final router = GoRouter.of(appAnchor(tester));
   if (router.routerDelegate.currentConfiguration.matches.length <= 1) return;
   router.pop();
   await pumpFor(tester, const Duration(seconds: 2));

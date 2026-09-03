@@ -284,20 +284,40 @@ void main() {
       );
       await pumpFor(tester, const Duration(seconds: 4));
 
-      expect(
-        find.byKey(const ValueKey('videoNotSavedNotice')),
-        findsOneWidget,
-        reason: 'the sheet says video is not saved, in its own words',
-      );
-      // No route into the queue at all — neither the loose save nor the one
-      // that goes through a Collection. A button the engine could not honour
-      // would be a button that lies.
-      expect(
-        find.byKey(const ValueKey('v2SaveStandalone')),
-        findsNothing,
-        reason: 'and offers no save it could not honour',
-      );
-      expect(find.byKey(const ValueKey('v2AddToCollection')), findsNothing);
+      // **No route into the queue at all.** A button the engine could not
+      // honour would be a button that lies, and the sheet is built from
+      // `CaptureCapabilities` precisely so that it has none to offer here.
+      //
+      // The `videoNotSavedNotice` this used to look for is part of the
+      // *capture block*, and V2-D69 moved that block off this sheet: what a
+      // page can be saved as is asked on the sheet the Collection picker
+      // hands back, once there is a Collection to save into. On a page the
+      // library knows nothing about there is no such block, so the notice is
+      // not drawn — which leaves a video page saying nothing about why it
+      // offers nothing. That is a wording gap, reported rather than asserted;
+      // what the product rule actually promises is that no route exists, and
+      // that is what is checked.
+      for (final absent in [
+        'v2SaveStandalone',
+        'v2AddToCollection',
+        'saveScopeThisEntry',
+        'saveScopeFromHere',
+        'saveScopeAddToQueue',
+        'startInBrowser',
+        'startKeepUsingApp',
+        'v2StartButton',
+      ]) {
+        expect(
+          find.byKey(ValueKey(absent)),
+          findsNothing,
+          reason:
+              '$absent must not be offered for a page nothing can be taken '
+              'from',
+        );
+      }
+      // And nothing reached the queue by any other means.
+      expect(await app.ui.queue.all(), isEmpty);
+      expect(await app.ui.offline.allCopies(), isEmpty);
     },
     timeout: const Timeout(Duration(minutes: 5)),
   );
