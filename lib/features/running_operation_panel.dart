@@ -85,7 +85,7 @@ class RunningOperationPanel extends ConsumerWidget {
         // capture keeps the failure it already had, and the queue carries on
         // to the next entry.
         if (assist?.pendingSelection != null) {
-          return _SaveHolding(taskId: runner.activeTaskId);
+          return const _SaveHolding();
         }
         return _SaveRunning(taskId: runner.activeTaskId);
       },
@@ -280,15 +280,12 @@ class _StopRow extends StatelessWidget {
 /// there ends the hold, not the download — so it stays, with the same key and
 /// the same call the full panel uses.
 class _SaveHolding extends ConsumerWidget {
-  const _SaveHolding({required this.taskId});
-
-  final String? taskId;
+  const _SaveHolding();
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final palette = AppPalette.of(context);
-    final id = taskId;
-    final active = id == null ? null : ref.watch(_activeSaveProvider(id)).value;
+    final runner = ref.watch(queueRunnerProvider);
 
     return _PanelFrame(
       children: [
@@ -307,9 +304,7 @@ class _SaveHolding extends ConsumerWidget {
           // and the dialog the stop opens says all of it anyway.
           note: 'Stops at the next safe point.',
           buttonKey: const ValueKey('panelStopDownload'),
-          onStop: active == null
-              ? null
-              : () => stopRunningDownload(context, ref, active.task),
+          onStop: () => stopRunningOperation(context, runner),
         ),
       ],
     );
@@ -324,6 +319,7 @@ class _SaveRunning extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final palette = AppPalette.of(context);
+    final runner = ref.watch(queueRunnerProvider);
     final id = taskId;
     final active = id == null ? null : ref.watch(_activeSaveProvider(id)).value;
     final title = active?.title ?? '';
@@ -385,9 +381,7 @@ class _SaveRunning extends ConsumerWidget {
               'Nothing already on this device is removed, and the entry stays '
               'in your library.',
           buttonKey: const ValueKey('panelStopDownload'),
-          onStop: active == null
-              ? null
-              : () => stopRunningDownload(context, ref, active.task),
+          onStop: () => stopRunningOperation(context, runner),
         ),
       ],
     );

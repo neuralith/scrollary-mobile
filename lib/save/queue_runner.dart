@@ -215,6 +215,46 @@ class QueueRunner extends ChangeNotifier {
   /// The row being worked on, for surfaces that want to name it.
   String? get activeTaskId => _activeTaskId;
 
+  /// Stop this run — the **operation**, not a row.
+  ///
+  /// The rule is V2-D56's and it is quoted on [_stopped]: a user's Stop is
+  /// about the thing they started, so it ends the traversal, the rows behind
+  /// it and the rest of the drain. What was missing was any way to *say* that:
+  /// every Stop control cancelled a row id and relied on the loop noticing
+  /// that row's verdict, which is not the same thing and failed in two ways a
+  /// sequential capture makes ordinary.
+  ///
+  /// A row id read a moment ago is **not** the operation. Between two Entries
+  /// there is no running row at all — the walk is opening the next page — and
+  /// while one is running it may finish before the user answers the
+  /// confirmation, at which point cancelling it reports `alreadyFinished` and
+  /// the run carries on to the next Entry. Measured against the fixture: forty
+  /// entries asked for, Stop pressed and confirmed, forty completed and not
+  /// one row cancelled.
+  ///
+  /// So the flag is raised here, first and unconditionally, and the row is a
+  /// second step rather than the mechanism: it is cancelled when there is one
+  /// so the capture in flight is interrupted at its next safe point instead of
+  /// running to the end of the page. With no row the flag alone ends the run
+  /// at the next boundary.
+  ///
+  /// Cooperative, like every stop in this app: it returns as soon as the
+  /// operation has been *asked*, and rows still queued stay queued —
+  /// stopping removes nothing and fails nothing.
+  Future<void> stop() async {
+    if (_disposed || !_running || _stopped) return;
+    _stopped = true;
+    notifyListeners();
+    final id = _activeTaskId;
+    if (id == null) return;
+    // The row's own verdict, written the moment it is asked for, is what makes
+    // a cancellation survive a kill — and what tells the capture to stop.
+    await queue.cancel(id);
+  }
+
+  /// True once a stop has been asked for and the run has not ended yet.
+  bool get isStopping => _running && _stopped;
+
   /// Capture drives the Browser for its whole read phase; the shell keeps the
   /// surface painted for as long as the loop runs.
   bool get needsRenderedBrowser => _running;
@@ -272,6 +312,14 @@ class QueueRunner extends ChangeNotifier {
         // `startedAt` on a capture that never started, and a row that says it
         // began is a row a reader has to be told to distrust.
         if (await _settleIfOutOfSpace(eligible.first)) break;
+
+        // **The stop is re-read here, not only at the top of the loop.**
+        // Asking the queue what is eligible and asking the device for free
+        // space are both awaits, and a Stop pressed during either of them
+        // would otherwise not be seen until this row had already been claimed
+        // and opened — one more Entry downloaded after the user stopped,
+        // which is exactly what "nothing after it is opened" rules out.
+        if (_disposed || _stopped) break;
 
         final claimed = await queue.claim(eligible.first.id);
         // Lost to a cancel that got there first: skip and carry on — the

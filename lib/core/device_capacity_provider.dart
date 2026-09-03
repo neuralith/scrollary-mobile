@@ -45,6 +45,18 @@ class DeviceCapacityController extends AsyncNotifier<DeviceCapacity> {
   /// twenty channel calls for a number that moves by a rounding error each
   /// time. Callers that know the disk just changed materially — a cleanup, a
   /// finished save — pass [force].
+  ///
+  /// **The scope may be gone by the time the platform answers.** A capacity
+  /// read is a channel round trip, and the container it belongs to can be
+  /// disposed while one is in flight — a shell rebuild, an app shutting down,
+  /// a test tearing its scope down between cases. Assigning `state` after that
+  /// await threw `UnmountedRefException`, and because the throw lands in
+  /// whatever is running when the future completes, it surfaced as a failure
+  /// somewhere else entirely.
+  ///
+  /// So the reading is taken into a local and written only if this notifier is
+  /// still mounted. Dropping it is the whole correction: the number describes
+  /// a device, nobody is left to show it, and the next mount reads afresh.
   Future<void> refresh({bool force = false}) async {
     final last = _lastRead;
     if (!force &&
@@ -52,6 +64,8 @@ class DeviceCapacityController extends AsyncNotifier<DeviceCapacity> {
         DateTime.now().difference(last) < kCapacityRefreshInterval) {
       return;
     }
-    state = await AsyncValue.guard(_read);
+    final reading = await AsyncValue.guard(_read);
+    if (!ref.mounted) return;
+    state = reading;
   }
 }

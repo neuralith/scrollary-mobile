@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -24,6 +26,33 @@ class _FakeDeviceStorage implements DeviceStorage {
 
   @override
   Future<int?> freeBytes() async => capacityValue.freeBytes;
+
+  @override
+  Future<bool> excludeFromBackup(String absolutePath) async => false;
+}
+
+/// A storage double whose next read can be held open, so a test can dispose
+/// the scope while the platform call is still in flight.
+class _HeldDeviceStorage implements DeviceStorage {
+  Completer<void>? _gate;
+  int calls = 0;
+
+  /// Hold the *next* `capacity()` until the returned completer is completed.
+  Completer<void> holdNext() => _gate = Completer<void>();
+
+  @override
+  Future<DeviceCapacity> capacity() async {
+    calls++;
+    final gate = _gate;
+    if (gate != null) {
+      _gate = null;
+      await gate.future;
+    }
+    return const DeviceCapacity(totalBytes: 100, freeBytes: 50);
+  }
+
+  @override
+  Future<int?> freeBytes() async => 50;
 
   @override
   Future<bool> excludeFromBackup(String absolutePath) async => false;
@@ -67,6 +96,40 @@ void main() {
         const DeviceCapacity(totalBytes: 100, freeBytes: 100).usedPercent,
         0,
       );
+    });
+  });
+
+  // A refresh is a platform round trip, and the scope it belongs to can go
+  // while one is in flight — a shell rebuild, a test tearing down, an app
+  // shutting down. `refresh` assigned `state` after that await with no guard,
+  // so the disposal threw `UnmountedRefException` **into whatever ran next**;
+  // in the device suites that meant a passing case failing on the previous
+  // case's teardown, which is a report about the harness and not the product.
+  group('a refresh that outlives its scope', () {
+    test('writes nothing back once the provider is gone', () async {
+      final device = _HeldDeviceStorage();
+      final container = ProviderContainer(
+        overrides: [deviceStorageProvider.overrideWithValue(device)],
+      );
+      addTearDown(container.dispose);
+
+      // The build's own read settles first, so the held call is the refresh's.
+      await container.read(deviceCapacityProvider.future);
+      expect(device.calls, 1);
+
+      final gate = device.holdNext();
+      final refreshing = container
+          .read(deviceCapacityProvider.notifier)
+          .refresh(force: true);
+      await Future<void>.delayed(Duration.zero);
+      expect(device.calls, 2, reason: 'the platform call is in flight');
+
+      // The scope goes while the platform is still answering.
+      container.dispose();
+      gate.complete();
+
+      // The assignment lands here, and must be a no-op rather than a throw.
+      await refreshing;
     });
   });
 

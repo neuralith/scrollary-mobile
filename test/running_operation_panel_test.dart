@@ -232,12 +232,18 @@ void main() {
 
       expect(find.text('One item'), findsOneWidget);
       expect(find.text(''), findsNothing);
+      // **The stop is still offered.** This used to require the opposite —
+      // that a panel with no row to name disabled its Stop — and that was the
+      // defect written down as a rule: between two Entries of a sequential
+      // capture there is never a row to name, which is precisely when a user
+      // watching the Browser move wants to end it. The Stop is about the
+      // operation (V2-D56), and the operation is running, so it is live.
       expect(
         tester.widget<OutlinedButton>(stopDownload).onPressed,
-        isNull,
+        isNotNull,
         reason:
-            'a stop with no row to act on does not pretend it can stop '
-            'anything',
+            'a run the user can see is a run the user can end, named row or '
+            'not — never offer a stop that does not stop',
       );
 
       h.runner.debugSetRunning(false);
