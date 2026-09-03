@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../browser/browser_controller.dart';
 import '../capability/foreground_gate.dart';
 import '../core/config.dart';
+import '../core/url_utils.dart';
 import '../data/recognition_index.dart';
 import '../domain/domain.dart';
 import '../library/collection_identity.dart' show PageHints;
@@ -680,11 +681,28 @@ class _V2SavePanelState extends ConsumerState<V2SavePanel> {
     var hints = const PageHints();
     try {
       final probe = await browser.probe(withLinks: true);
-      capabilities = detectCaptureCapabilities(
-        probe,
-        config: kDefaultSaveConfig,
-      );
-      hints = probe.pageHints;
+      // **A probe is evidence about the address it was taken at.** This sheet's
+      // identity is the snapshot it was opened with, and the WebView behind it
+      // can move while the probe is in flight — a meta refresh, a
+      // `location.replace`, an SPA route landing late. A probe from somewhere
+      // else would offer this page another page's capture modes and, through
+      // `pageHints` → `readPageShape` → `_suggestedTitle`, name a new
+      // Collection after a work the user was never looking at.
+      //
+      // Discarded rather than reconciled: "not analysed" is the state this
+      // sheet is designed to open in — it offers every mode and says the page
+      // was not classified — so a page the sheet cannot vouch for degrades to
+      // an answer it already knows how to give, and the engine re-measures the
+      // settled page anyway.
+      if (normalizeUrl(probe.url) != normalizeUrl(widget.url)) {
+        capabilities = const CaptureCapabilities.unanalysed();
+      } else {
+        capabilities = detectCaptureCapabilities(
+          probe,
+          config: kDefaultSaveConfig,
+        );
+        hints = probe.pageHints;
+      }
     } catch (_) {
       capabilities = const CaptureCapabilities.unanalysed();
     }
