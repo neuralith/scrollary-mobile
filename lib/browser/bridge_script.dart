@@ -60,13 +60,47 @@ window.__wr = window.__wr || (function () {
     return parts.join(' ');
   }
 
+  // Whether this element has a layout box at all.
+  //
+  // `innerText` is only the layout-aware reading for an element that is
+  // **being rendered**. For one that is not, it is *defined* to return
+  // `textContent` — the glued reading, with no error raised and nothing in the
+  // string to say the boundaries are gone. So this question has to be asked
+  // before `innerText`'s answer is trusted, and it is asked in the same terms
+  // the fallback is defined in: an element with no layout box has no client
+  // rects, and one that is rendered has at least one.
+  function isRendered(el) {
+    if (!el || !el.getClientRects) return false;
+    try { return el.getClientRects().length > 0; } catch (e) { return false; }
+  }
+
   /// The visible text of one element, with the boundaries between its parts
   /// preserved and whitespace collapsed. Every place that reads an element in
   /// order to *name* something goes through here.
+  ///
+  /// Rendered-ness is not an optimisation here, it is the correctness
+  /// condition. `probe` reads **every** `a[href]` on the page rather than only
+  /// the ones on screen, and a listing routinely carries rows that have no
+  /// layout box: a card its own stylesheet hides at this width, a panel behind
+  /// an inactive tab, a row template waiting to be cloned. On such a row
+  /// `innerText` silently degrades to the glued reading — a label written as
+  ///
+  ///     <a><span>Entry 214</span><span>6 minutes</span></a>
+  ///
+  /// with no whitespace between the two elements reads back as
+  /// `"Entry 2146 minutes"`, and entry 214 becomes entry 2146. That is the
+  /// same defect this function was written to remove, arriving by a quieter
+  /// route: the call site looks correct, and the reading is wrong only for the
+  /// rows nobody was looking at.
+  ///
+  /// `joinTextNodes` is asked for those instead. It over-separates rather than
+  /// glues, which is the safe direction — see its own note.
   function elementText(el) {
     if (!el) return '';
     var t = null;
-    try { t = el.innerText; } catch (e) { t = null; }
+    if (isRendered(el)) {
+      try { t = el.innerText; } catch (e) { t = null; }
+    }
     if (typeof t !== 'string' || !t.trim()) t = joinTextNodes(el);
     return t.replace(/\s+/g, ' ').trim();
   }

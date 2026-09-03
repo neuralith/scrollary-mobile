@@ -52,16 +52,12 @@ void main() {
         kMultiSourceSites.map((s) => s.id),
         reason: 'the manifest and the Dart constants must agree',
       );
-      expect(
-        sites.map((s) => s['scenario']).toSet(),
-        {
-          kScenarioCleanMerge,
-          kScenarioDeadSource,
-          kScenarioRenumberingConflict,
-          kScenarioNonNumeric,
-        },
-        reason: 'all four scenarios are represented',
-      );
+      expect(sites.map((s) => s['scenario']).toSet(), {
+        kScenarioCleanMerge,
+        kScenarioDeadSource,
+        kScenarioRenumberingConflict,
+        kScenarioNonNumeric,
+      }, reason: 'all four scenarios are represented');
     });
 
     test('names reserved example hosts only', () {
@@ -95,10 +91,49 @@ void main() {
       final (status, body) = await get(a.indexPath);
       expect(status, 200);
       for (var n = a.firstPart!; n <= a.lastPart!; n++) {
-        expect(body, contains('>Part $n</a>'));
+        expect(body, contains('<span class="label">Part $n</span>'));
         expect(body, contains('href="${a.partPath(n)}"'));
       }
-      expect(body, isNot(contains('>Part 11</a>')));
+      expect(body, isNot(contains('<span class="label">Part 11</span>')));
+    });
+
+    /// The index writes its rows the way real listings write them, because a
+    /// listing that separates its own label from its own metadata cannot
+    /// reproduce the defect that reads them as one number.
+    ///
+    /// Two properties carry it, and both are asserted rather than described:
+    /// the two elements are adjacent with **no whitespace between them**, so
+    /// nothing but layout separates them; and one row of the index has no
+    /// layout box at all, which is the case where `innerText` stops being the
+    /// layout-aware reading and returns the welded characters instead.
+    test('the rows carry metadata the way a real listing does', () async {
+      final a = site('alpha');
+      final (_, body) = await get(a.indexPath);
+
+      for (var n = a.firstPart!; n <= a.lastPart!; n++) {
+        expect(
+          body,
+          contains('<span class="label">Part $n</span><span class="meta">'),
+          reason:
+              'a space here would separate the two on its own and the row '
+              'would parse correctly however it was read',
+        );
+      }
+
+      expect(
+        body,
+        contains('<style>.label,.meta{display:block}</style>'),
+        reason: 'layout is the only thing separating the label from the age',
+      );
+
+      expect(
+        body,
+        contains('<li style="display:none"><a href="${a.partPath(10)}"'),
+        reason:
+            'the last row is linked and readable but not rendered — the row '
+            'the reading used to get wrong, and the only kind that can catch '
+            'it coming back',
+      );
     });
 
     test('an alpha part page prints its label and links onward', () async {
