@@ -774,10 +774,6 @@ class $SourcesTable extends Sources with TableInfo<$SourcesTable, SourceRow> {
   @override
   Set<GeneratedColumn> get $primaryKey => {id};
   @override
-  List<Set<GeneratedColumn>> get uniqueKeys => [
-    {collectionId, host, pathKey},
-  ];
-  @override
   SourceRow map(Map<String, dynamic> data, {String? tablePrefix}) {
     final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
     return SourceRow(
@@ -1335,6 +1331,30 @@ class $CollectionsTable extends Collections
         type: DriftSqlType.string,
         requiredDuringInsert: false,
       );
+  static const VerificationMeta _captureModeMeta = const VerificationMeta(
+    'captureMode',
+  );
+  @override
+  late final GeneratedColumn<String> captureMode = GeneratedColumn<String>(
+    'capture_mode',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+    defaultValue: const Constant(''),
+  );
+  static const VerificationMeta _entrySortMeta = const VerificationMeta(
+    'entrySort',
+  );
+  @override
+  late final GeneratedColumn<String> entrySort = GeneratedColumn<String>(
+    'entry_sort',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+    defaultValue: const Constant(''),
+  );
   static const VerificationMeta _sortKeyMeta = const VerificationMeta(
     'sortKey',
   );
@@ -1379,6 +1399,8 @@ class $CollectionsTable extends Collections
     orderingBasis,
     lifecycle,
     preferredSourceId,
+    captureMode,
+    entrySort,
     sortKey,
     revision,
     updatedAt,
@@ -1457,6 +1479,21 @@ class $CollectionsTable extends Collections
         ),
       );
     }
+    if (data.containsKey('capture_mode')) {
+      context.handle(
+        _captureModeMeta,
+        captureMode.isAcceptableOrUnknown(
+          data['capture_mode']!,
+          _captureModeMeta,
+        ),
+      );
+    }
+    if (data.containsKey('entry_sort')) {
+      context.handle(
+        _entrySortMeta,
+        entrySort.isAcceptableOrUnknown(data['entry_sort']!, _entrySortMeta),
+      );
+    }
     if (data.containsKey('sort_key')) {
       context.handle(
         _sortKeyMeta,
@@ -1518,6 +1555,14 @@ class $CollectionsTable extends Collections
         DriftSqlType.string,
         data['${effectivePrefix}preferred_source_id'],
       ),
+      captureMode: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}capture_mode'],
+      )!,
+      entrySort: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}entry_sort'],
+      )!,
       sortKey: attachedDatabase.typeMapping.read(
         DriftSqlType.int,
         data['${effectivePrefix}sort_key'],
@@ -1548,6 +1593,23 @@ class CollectionRow extends DataClass implements Insertable<CollectionRow> {
   final String orderingBasis;
   final String lifecycle;
   final String? preferredSourceId;
+
+  /// What this Collection is normally saved as (V2-D53), and what order its
+  /// Entries are drawn in — two answers the user gave about the work, and two
+  /// answers that follow them to their other devices.
+  ///
+  /// Columns rather than `settings` rows: both are per-Collection state, and
+  /// a key-value row keyed by a local id could neither sync nor survive the
+  /// Collection being merged into another. Empty string is **unset** — a
+  /// question nobody has answered, which is not the same as an answer that
+  /// happens to be the default; `captureModeFromName` and `parseEntrySort`
+  /// both resolve an unreadable value to null for that reason.
+  ///
+  /// Opaque on the wire: the server stores and echoes both and interprets
+  /// neither (contracts/openapi.yaml `Collection`), so a new sort field is a
+  /// client release and not a backend one.
+  final String captureMode;
+  final String entrySort;
   final int sortKey;
   final int? revision;
   final DateTime updatedAt;
@@ -1560,6 +1622,8 @@ class CollectionRow extends DataClass implements Insertable<CollectionRow> {
     required this.orderingBasis,
     required this.lifecycle,
     this.preferredSourceId,
+    required this.captureMode,
+    required this.entrySort,
     required this.sortKey,
     this.revision,
     required this.updatedAt,
@@ -1579,6 +1643,8 @@ class CollectionRow extends DataClass implements Insertable<CollectionRow> {
     if (!nullToAbsent || preferredSourceId != null) {
       map['preferred_source_id'] = Variable<String>(preferredSourceId);
     }
+    map['capture_mode'] = Variable<String>(captureMode);
+    map['entry_sort'] = Variable<String>(entrySort);
     map['sort_key'] = Variable<int>(sortKey);
     if (!nullToAbsent || revision != null) {
       map['revision'] = Variable<int>(revision);
@@ -1601,6 +1667,8 @@ class CollectionRow extends DataClass implements Insertable<CollectionRow> {
       preferredSourceId: preferredSourceId == null && nullToAbsent
           ? const Value.absent()
           : Value(preferredSourceId),
+      captureMode: Value(captureMode),
+      entrySort: Value(entrySort),
       sortKey: Value(sortKey),
       revision: revision == null && nullToAbsent
           ? const Value.absent()
@@ -1625,6 +1693,8 @@ class CollectionRow extends DataClass implements Insertable<CollectionRow> {
       preferredSourceId: serializer.fromJson<String?>(
         json['preferredSourceId'],
       ),
+      captureMode: serializer.fromJson<String>(json['captureMode']),
+      entrySort: serializer.fromJson<String>(json['entrySort']),
       sortKey: serializer.fromJson<int>(json['sortKey']),
       revision: serializer.fromJson<int?>(json['revision']),
       updatedAt: serializer.fromJson<DateTime>(json['updatedAt']),
@@ -1642,6 +1712,8 @@ class CollectionRow extends DataClass implements Insertable<CollectionRow> {
       'orderingBasis': serializer.toJson<String>(orderingBasis),
       'lifecycle': serializer.toJson<String>(lifecycle),
       'preferredSourceId': serializer.toJson<String?>(preferredSourceId),
+      'captureMode': serializer.toJson<String>(captureMode),
+      'entrySort': serializer.toJson<String>(entrySort),
       'sortKey': serializer.toJson<int>(sortKey),
       'revision': serializer.toJson<int?>(revision),
       'updatedAt': serializer.toJson<DateTime>(updatedAt),
@@ -1657,6 +1729,8 @@ class CollectionRow extends DataClass implements Insertable<CollectionRow> {
     String? orderingBasis,
     String? lifecycle,
     Value<String?> preferredSourceId = const Value.absent(),
+    String? captureMode,
+    String? entrySort,
     int? sortKey,
     Value<int?> revision = const Value.absent(),
     DateTime? updatedAt,
@@ -1671,6 +1745,8 @@ class CollectionRow extends DataClass implements Insertable<CollectionRow> {
     preferredSourceId: preferredSourceId.present
         ? preferredSourceId.value
         : this.preferredSourceId,
+    captureMode: captureMode ?? this.captureMode,
+    entrySort: entrySort ?? this.entrySort,
     sortKey: sortKey ?? this.sortKey,
     revision: revision.present ? revision.value : this.revision,
     updatedAt: updatedAt ?? this.updatedAt,
@@ -1691,6 +1767,10 @@ class CollectionRow extends DataClass implements Insertable<CollectionRow> {
       preferredSourceId: data.preferredSourceId.present
           ? data.preferredSourceId.value
           : this.preferredSourceId,
+      captureMode: data.captureMode.present
+          ? data.captureMode.value
+          : this.captureMode,
+      entrySort: data.entrySort.present ? data.entrySort.value : this.entrySort,
       sortKey: data.sortKey.present ? data.sortKey.value : this.sortKey,
       revision: data.revision.present ? data.revision.value : this.revision,
       updatedAt: data.updatedAt.present ? data.updatedAt.value : this.updatedAt,
@@ -1708,6 +1788,8 @@ class CollectionRow extends DataClass implements Insertable<CollectionRow> {
           ..write('orderingBasis: $orderingBasis, ')
           ..write('lifecycle: $lifecycle, ')
           ..write('preferredSourceId: $preferredSourceId, ')
+          ..write('captureMode: $captureMode, ')
+          ..write('entrySort: $entrySort, ')
           ..write('sortKey: $sortKey, ')
           ..write('revision: $revision, ')
           ..write('updatedAt: $updatedAt')
@@ -1725,6 +1807,8 @@ class CollectionRow extends DataClass implements Insertable<CollectionRow> {
     orderingBasis,
     lifecycle,
     preferredSourceId,
+    captureMode,
+    entrySort,
     sortKey,
     revision,
     updatedAt,
@@ -1741,6 +1825,8 @@ class CollectionRow extends DataClass implements Insertable<CollectionRow> {
           other.orderingBasis == this.orderingBasis &&
           other.lifecycle == this.lifecycle &&
           other.preferredSourceId == this.preferredSourceId &&
+          other.captureMode == this.captureMode &&
+          other.entrySort == this.entrySort &&
           other.sortKey == this.sortKey &&
           other.revision == this.revision &&
           other.updatedAt == this.updatedAt);
@@ -1755,6 +1841,8 @@ class CollectionsCompanion extends UpdateCompanion<CollectionRow> {
   final Value<String> orderingBasis;
   final Value<String> lifecycle;
   final Value<String?> preferredSourceId;
+  final Value<String> captureMode;
+  final Value<String> entrySort;
   final Value<int> sortKey;
   final Value<int?> revision;
   final Value<DateTime> updatedAt;
@@ -1768,6 +1856,8 @@ class CollectionsCompanion extends UpdateCompanion<CollectionRow> {
     this.orderingBasis = const Value.absent(),
     this.lifecycle = const Value.absent(),
     this.preferredSourceId = const Value.absent(),
+    this.captureMode = const Value.absent(),
+    this.entrySort = const Value.absent(),
     this.sortKey = const Value.absent(),
     this.revision = const Value.absent(),
     this.updatedAt = const Value.absent(),
@@ -1782,6 +1872,8 @@ class CollectionsCompanion extends UpdateCompanion<CollectionRow> {
     required String orderingBasis,
     this.lifecycle = const Value.absent(),
     this.preferredSourceId = const Value.absent(),
+    this.captureMode = const Value.absent(),
+    this.entrySort = const Value.absent(),
     this.sortKey = const Value.absent(),
     this.revision = const Value.absent(),
     required DateTime updatedAt,
@@ -1800,6 +1892,8 @@ class CollectionsCompanion extends UpdateCompanion<CollectionRow> {
     Expression<String>? orderingBasis,
     Expression<String>? lifecycle,
     Expression<String>? preferredSourceId,
+    Expression<String>? captureMode,
+    Expression<String>? entrySort,
     Expression<int>? sortKey,
     Expression<int>? revision,
     Expression<DateTime>? updatedAt,
@@ -1814,6 +1908,8 @@ class CollectionsCompanion extends UpdateCompanion<CollectionRow> {
       if (orderingBasis != null) 'ordering_basis': orderingBasis,
       if (lifecycle != null) 'lifecycle': lifecycle,
       if (preferredSourceId != null) 'preferred_source_id': preferredSourceId,
+      if (captureMode != null) 'capture_mode': captureMode,
+      if (entrySort != null) 'entry_sort': entrySort,
       if (sortKey != null) 'sort_key': sortKey,
       if (revision != null) 'revision': revision,
       if (updatedAt != null) 'updated_at': updatedAt,
@@ -1830,6 +1926,8 @@ class CollectionsCompanion extends UpdateCompanion<CollectionRow> {
     Value<String>? orderingBasis,
     Value<String>? lifecycle,
     Value<String?>? preferredSourceId,
+    Value<String>? captureMode,
+    Value<String>? entrySort,
     Value<int>? sortKey,
     Value<int?>? revision,
     Value<DateTime>? updatedAt,
@@ -1844,6 +1942,8 @@ class CollectionsCompanion extends UpdateCompanion<CollectionRow> {
       orderingBasis: orderingBasis ?? this.orderingBasis,
       lifecycle: lifecycle ?? this.lifecycle,
       preferredSourceId: preferredSourceId ?? this.preferredSourceId,
+      captureMode: captureMode ?? this.captureMode,
+      entrySort: entrySort ?? this.entrySort,
       sortKey: sortKey ?? this.sortKey,
       revision: revision ?? this.revision,
       updatedAt: updatedAt ?? this.updatedAt,
@@ -1878,6 +1978,12 @@ class CollectionsCompanion extends UpdateCompanion<CollectionRow> {
     if (preferredSourceId.present) {
       map['preferred_source_id'] = Variable<String>(preferredSourceId.value);
     }
+    if (captureMode.present) {
+      map['capture_mode'] = Variable<String>(captureMode.value);
+    }
+    if (entrySort.present) {
+      map['entry_sort'] = Variable<String>(entrySort.value);
+    }
     if (sortKey.present) {
       map['sort_key'] = Variable<int>(sortKey.value);
     }
@@ -1904,6 +2010,8 @@ class CollectionsCompanion extends UpdateCompanion<CollectionRow> {
           ..write('orderingBasis: $orderingBasis, ')
           ..write('lifecycle: $lifecycle, ')
           ..write('preferredSourceId: $preferredSourceId, ')
+          ..write('captureMode: $captureMode, ')
+          ..write('entrySort: $entrySort, ')
           ..write('sortKey: $sortKey, ')
           ..write('revision: $revision, ')
           ..write('updatedAt: $updatedAt, ')
@@ -2910,12 +3018,16 @@ class LocationRow extends DataClass implements Insertable<LocationRow> {
   /// of one Collection can publish the same Entry on different days, and the
   /// Entry has no one answer.
   ///
-  /// **Local-only, deliberately.** It is absent from `contracts/evidence.yaml`
-  /// and from the change feed, so nothing writes it to the outbox and nothing
-  /// reads it from a pull. The contract is frozen at Gate B and changes only
-  /// through `contracts/README.md`'s protocol; until it does, this is a fact
-  /// this device read for itself. Null is ordinary and permanent for a page
-  /// nobody has downloaded, and for every page whose site prints no date.
+  /// **It synchronises**, through `contracts/openapi.yaml`'s `Location`. It
+  /// has to: `ordering_basis: publicationDate` is library state that already
+  /// crossed, so a Collection could be ordered by publication date on one
+  /// device and by nothing at all on another, which is the same list in two
+  /// orders. Writing it therefore moves the row's `updated_at` like any other
+  /// synced field — it is the last-writer-wins clock, and this device does
+  /// hold newer information about the row.
+  ///
+  /// Null is ordinary and permanent for a page nobody has opened, and for
+  /// every page whose site prints no date.
   final DateTime? publishedAt;
   final DateTime discoveredAt;
   final String discoveryBasis;
@@ -8223,6 +8335,282 @@ class SyncStateCompanion extends UpdateCompanion<SyncStateRow> {
   }
 }
 
+class $CollectionCheckStatesTable extends CollectionCheckStates
+    with TableInfo<$CollectionCheckStatesTable, CollectionCheckRow> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $CollectionCheckStatesTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _collectionIdMeta = const VerificationMeta(
+    'collectionId',
+  );
+  @override
+  late final GeneratedColumn<String> collectionId = GeneratedColumn<String>(
+    'collection_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _checkedAtMeta = const VerificationMeta(
+    'checkedAt',
+  );
+  @override
+  late final GeneratedColumn<DateTime> checkedAt = GeneratedColumn<DateTime>(
+    'checked_at',
+    aliasedName,
+    true,
+    type: DriftSqlType.dateTime,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _failedMeta = const VerificationMeta('failed');
+  @override
+  late final GeneratedColumn<bool> failed = GeneratedColumn<bool>(
+    'failed',
+    aliasedName,
+    false,
+    type: DriftSqlType.bool,
+    requiredDuringInsert: false,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'CHECK ("failed" IN (0, 1))',
+    ),
+    defaultValue: const Constant(false),
+  );
+  @override
+  List<GeneratedColumn> get $columns => [collectionId, checkedAt, failed];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'collection_check_states';
+  @override
+  VerificationContext validateIntegrity(
+    Insertable<CollectionCheckRow> instance, {
+    bool isInserting = false,
+  }) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('collection_id')) {
+      context.handle(
+        _collectionIdMeta,
+        collectionId.isAcceptableOrUnknown(
+          data['collection_id']!,
+          _collectionIdMeta,
+        ),
+      );
+    } else if (isInserting) {
+      context.missing(_collectionIdMeta);
+    }
+    if (data.containsKey('checked_at')) {
+      context.handle(
+        _checkedAtMeta,
+        checkedAt.isAcceptableOrUnknown(data['checked_at']!, _checkedAtMeta),
+      );
+    }
+    if (data.containsKey('failed')) {
+      context.handle(
+        _failedMeta,
+        failed.isAcceptableOrUnknown(data['failed']!, _failedMeta),
+      );
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {collectionId};
+  @override
+  CollectionCheckRow map(Map<String, dynamic> data, {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return CollectionCheckRow(
+      collectionId: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}collection_id'],
+      )!,
+      checkedAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.dateTime,
+        data['${effectivePrefix}checked_at'],
+      ),
+      failed: attachedDatabase.typeMapping.read(
+        DriftSqlType.bool,
+        data['${effectivePrefix}failed'],
+      )!,
+    );
+  }
+
+  @override
+  $CollectionCheckStatesTable createAlias(String alias) {
+    return $CollectionCheckStatesTable(attachedDatabase, alias);
+  }
+}
+
+class CollectionCheckRow extends DataClass
+    implements Insertable<CollectionCheckRow> {
+  final String collectionId;
+  final DateTime? checkedAt;
+  final bool failed;
+  const CollectionCheckRow({
+    required this.collectionId,
+    this.checkedAt,
+    required this.failed,
+  });
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['collection_id'] = Variable<String>(collectionId);
+    if (!nullToAbsent || checkedAt != null) {
+      map['checked_at'] = Variable<DateTime>(checkedAt);
+    }
+    map['failed'] = Variable<bool>(failed);
+    return map;
+  }
+
+  CollectionCheckStatesCompanion toCompanion(bool nullToAbsent) {
+    return CollectionCheckStatesCompanion(
+      collectionId: Value(collectionId),
+      checkedAt: checkedAt == null && nullToAbsent
+          ? const Value.absent()
+          : Value(checkedAt),
+      failed: Value(failed),
+    );
+  }
+
+  factory CollectionCheckRow.fromJson(
+    Map<String, dynamic> json, {
+    ValueSerializer? serializer,
+  }) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return CollectionCheckRow(
+      collectionId: serializer.fromJson<String>(json['collectionId']),
+      checkedAt: serializer.fromJson<DateTime?>(json['checkedAt']),
+      failed: serializer.fromJson<bool>(json['failed']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'collectionId': serializer.toJson<String>(collectionId),
+      'checkedAt': serializer.toJson<DateTime?>(checkedAt),
+      'failed': serializer.toJson<bool>(failed),
+    };
+  }
+
+  CollectionCheckRow copyWith({
+    String? collectionId,
+    Value<DateTime?> checkedAt = const Value.absent(),
+    bool? failed,
+  }) => CollectionCheckRow(
+    collectionId: collectionId ?? this.collectionId,
+    checkedAt: checkedAt.present ? checkedAt.value : this.checkedAt,
+    failed: failed ?? this.failed,
+  );
+  CollectionCheckRow copyWithCompanion(CollectionCheckStatesCompanion data) {
+    return CollectionCheckRow(
+      collectionId: data.collectionId.present
+          ? data.collectionId.value
+          : this.collectionId,
+      checkedAt: data.checkedAt.present ? data.checkedAt.value : this.checkedAt,
+      failed: data.failed.present ? data.failed.value : this.failed,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('CollectionCheckRow(')
+          ..write('collectionId: $collectionId, ')
+          ..write('checkedAt: $checkedAt, ')
+          ..write('failed: $failed')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode => Object.hash(collectionId, checkedAt, failed);
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is CollectionCheckRow &&
+          other.collectionId == this.collectionId &&
+          other.checkedAt == this.checkedAt &&
+          other.failed == this.failed);
+}
+
+class CollectionCheckStatesCompanion
+    extends UpdateCompanion<CollectionCheckRow> {
+  final Value<String> collectionId;
+  final Value<DateTime?> checkedAt;
+  final Value<bool> failed;
+  final Value<int> rowid;
+  const CollectionCheckStatesCompanion({
+    this.collectionId = const Value.absent(),
+    this.checkedAt = const Value.absent(),
+    this.failed = const Value.absent(),
+    this.rowid = const Value.absent(),
+  });
+  CollectionCheckStatesCompanion.insert({
+    required String collectionId,
+    this.checkedAt = const Value.absent(),
+    this.failed = const Value.absent(),
+    this.rowid = const Value.absent(),
+  }) : collectionId = Value(collectionId);
+  static Insertable<CollectionCheckRow> custom({
+    Expression<String>? collectionId,
+    Expression<DateTime>? checkedAt,
+    Expression<bool>? failed,
+    Expression<int>? rowid,
+  }) {
+    return RawValuesInsertable({
+      if (collectionId != null) 'collection_id': collectionId,
+      if (checkedAt != null) 'checked_at': checkedAt,
+      if (failed != null) 'failed': failed,
+      if (rowid != null) 'rowid': rowid,
+    });
+  }
+
+  CollectionCheckStatesCompanion copyWith({
+    Value<String>? collectionId,
+    Value<DateTime?>? checkedAt,
+    Value<bool>? failed,
+    Value<int>? rowid,
+  }) {
+    return CollectionCheckStatesCompanion(
+      collectionId: collectionId ?? this.collectionId,
+      checkedAt: checkedAt ?? this.checkedAt,
+      failed: failed ?? this.failed,
+      rowid: rowid ?? this.rowid,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (collectionId.present) {
+      map['collection_id'] = Variable<String>(collectionId.value);
+    }
+    if (checkedAt.present) {
+      map['checked_at'] = Variable<DateTime>(checkedAt.value);
+    }
+    if (failed.present) {
+      map['failed'] = Variable<bool>(failed.value);
+    }
+    if (rowid.present) {
+      map['rowid'] = Variable<int>(rowid.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('CollectionCheckStatesCompanion(')
+          ..write('collectionId: $collectionId, ')
+          ..write('checkedAt: $checkedAt, ')
+          ..write('failed: $failed, ')
+          ..write('rowid: $rowid')
+          ..write(')'))
+        .toString();
+  }
+}
+
 class $PageHintsTable extends PageHints
     with TableInfo<$PageHintsTable, PageHintRow> {
   @override
@@ -10156,6 +10544,8 @@ abstract class _$LibraryDatabase extends GeneratedDatabase {
   late final $HistoryTable history = $HistoryTable(this);
   late final $OutboxTable outbox = $OutboxTable(this);
   late final $SyncStateTable syncState = $SyncStateTable(this);
+  late final $CollectionCheckStatesTable collectionCheckStates =
+      $CollectionCheckStatesTable(this);
   late final $PageHintsTable pageHints = $PageHintsTable(this);
   late final $SavedSitesTable savedSites = $SavedSitesTable(this);
   late final $FaviconsTable favicons = $FaviconsTable(this);
@@ -10178,6 +10568,7 @@ abstract class _$LibraryDatabase extends GeneratedDatabase {
     history,
     outbox,
     syncState,
+    collectionCheckStates,
     pageHints,
     savedSites,
     favicons,
@@ -10787,6 +11178,8 @@ typedef $$CollectionsTableCreateCompanionBuilder =
       required String orderingBasis,
       Value<String> lifecycle,
       Value<String?> preferredSourceId,
+      Value<String> captureMode,
+      Value<String> entrySort,
       Value<int> sortKey,
       Value<int?> revision,
       required DateTime updatedAt,
@@ -10802,6 +11195,8 @@ typedef $$CollectionsTableUpdateCompanionBuilder =
       Value<String> orderingBasis,
       Value<String> lifecycle,
       Value<String?> preferredSourceId,
+      Value<String> captureMode,
+      Value<String> entrySort,
       Value<int> sortKey,
       Value<int?> revision,
       Value<DateTime> updatedAt,
@@ -10854,6 +11249,16 @@ class $$CollectionsTableFilterComposer
 
   ColumnFilters<String> get preferredSourceId => $composableBuilder(
     column: $table.preferredSourceId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get captureMode => $composableBuilder(
+    column: $table.captureMode,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get entrySort => $composableBuilder(
+    column: $table.entrySort,
     builder: (column) => ColumnFilters(column),
   );
 
@@ -10922,6 +11327,16 @@ class $$CollectionsTableOrderingComposer
     builder: (column) => ColumnOrderings(column),
   );
 
+  ColumnOrderings<String> get captureMode => $composableBuilder(
+    column: $table.captureMode,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get entrySort => $composableBuilder(
+    column: $table.entrySort,
+    builder: (column) => ColumnOrderings(column),
+  );
+
   ColumnOrderings<int> get sortKey => $composableBuilder(
     column: $table.sortKey,
     builder: (column) => ColumnOrderings(column),
@@ -10977,6 +11392,14 @@ class $$CollectionsTableAnnotationComposer
     builder: (column) => column,
   );
 
+  GeneratedColumn<String> get captureMode => $composableBuilder(
+    column: $table.captureMode,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get entrySort =>
+      $composableBuilder(column: $table.entrySort, builder: (column) => column);
+
   GeneratedColumn<int> get sortKey =>
       $composableBuilder(column: $table.sortKey, builder: (column) => column);
 
@@ -11026,6 +11449,8 @@ class $$CollectionsTableTableManager
                 Value<String> orderingBasis = const Value.absent(),
                 Value<String> lifecycle = const Value.absent(),
                 Value<String?> preferredSourceId = const Value.absent(),
+                Value<String> captureMode = const Value.absent(),
+                Value<String> entrySort = const Value.absent(),
                 Value<int> sortKey = const Value.absent(),
                 Value<int?> revision = const Value.absent(),
                 Value<DateTime> updatedAt = const Value.absent(),
@@ -11039,6 +11464,8 @@ class $$CollectionsTableTableManager
                 orderingBasis: orderingBasis,
                 lifecycle: lifecycle,
                 preferredSourceId: preferredSourceId,
+                captureMode: captureMode,
+                entrySort: entrySort,
                 sortKey: sortKey,
                 revision: revision,
                 updatedAt: updatedAt,
@@ -11054,6 +11481,8 @@ class $$CollectionsTableTableManager
                 required String orderingBasis,
                 Value<String> lifecycle = const Value.absent(),
                 Value<String?> preferredSourceId = const Value.absent(),
+                Value<String> captureMode = const Value.absent(),
+                Value<String> entrySort = const Value.absent(),
                 Value<int> sortKey = const Value.absent(),
                 Value<int?> revision = const Value.absent(),
                 required DateTime updatedAt,
@@ -11067,6 +11496,8 @@ class $$CollectionsTableTableManager
                 orderingBasis: orderingBasis,
                 lifecycle: lifecycle,
                 preferredSourceId: preferredSourceId,
+                captureMode: captureMode,
+                entrySort: entrySort,
                 sortKey: sortKey,
                 revision: revision,
                 updatedAt: updatedAt,
@@ -14167,6 +14598,189 @@ typedef $$SyncStateTableProcessedTableManager =
       SyncStateRow,
       PrefetchHooks Function()
     >;
+typedef $$CollectionCheckStatesTableCreateCompanionBuilder =
+    CollectionCheckStatesCompanion Function({
+      required String collectionId,
+      Value<DateTime?> checkedAt,
+      Value<bool> failed,
+      Value<int> rowid,
+    });
+typedef $$CollectionCheckStatesTableUpdateCompanionBuilder =
+    CollectionCheckStatesCompanion Function({
+      Value<String> collectionId,
+      Value<DateTime?> checkedAt,
+      Value<bool> failed,
+      Value<int> rowid,
+    });
+
+class $$CollectionCheckStatesTableFilterComposer
+    extends Composer<_$LibraryDatabase, $CollectionCheckStatesTable> {
+  $$CollectionCheckStatesTableFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnFilters<String> get collectionId => $composableBuilder(
+    column: $table.collectionId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<DateTime> get checkedAt => $composableBuilder(
+    column: $table.checkedAt,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<bool> get failed => $composableBuilder(
+    column: $table.failed,
+    builder: (column) => ColumnFilters(column),
+  );
+}
+
+class $$CollectionCheckStatesTableOrderingComposer
+    extends Composer<_$LibraryDatabase, $CollectionCheckStatesTable> {
+  $$CollectionCheckStatesTableOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnOrderings<String> get collectionId => $composableBuilder(
+    column: $table.collectionId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<DateTime> get checkedAt => $composableBuilder(
+    column: $table.checkedAt,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<bool> get failed => $composableBuilder(
+    column: $table.failed,
+    builder: (column) => ColumnOrderings(column),
+  );
+}
+
+class $$CollectionCheckStatesTableAnnotationComposer
+    extends Composer<_$LibraryDatabase, $CollectionCheckStatesTable> {
+  $$CollectionCheckStatesTableAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  GeneratedColumn<String> get collectionId => $composableBuilder(
+    column: $table.collectionId,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<DateTime> get checkedAt =>
+      $composableBuilder(column: $table.checkedAt, builder: (column) => column);
+
+  GeneratedColumn<bool> get failed =>
+      $composableBuilder(column: $table.failed, builder: (column) => column);
+}
+
+class $$CollectionCheckStatesTableTableManager
+    extends
+        RootTableManager<
+          _$LibraryDatabase,
+          $CollectionCheckStatesTable,
+          CollectionCheckRow,
+          $$CollectionCheckStatesTableFilterComposer,
+          $$CollectionCheckStatesTableOrderingComposer,
+          $$CollectionCheckStatesTableAnnotationComposer,
+          $$CollectionCheckStatesTableCreateCompanionBuilder,
+          $$CollectionCheckStatesTableUpdateCompanionBuilder,
+          (
+            CollectionCheckRow,
+            BaseReferences<
+              _$LibraryDatabase,
+              $CollectionCheckStatesTable,
+              CollectionCheckRow
+            >,
+          ),
+          CollectionCheckRow,
+          PrefetchHooks Function()
+        > {
+  $$CollectionCheckStatesTableTableManager(
+    _$LibraryDatabase db,
+    $CollectionCheckStatesTable table,
+  ) : super(
+        TableManagerState(
+          db: db,
+          table: table,
+          createFilteringComposer: () =>
+              $$CollectionCheckStatesTableFilterComposer(
+                $db: db,
+                $table: table,
+              ),
+          createOrderingComposer: () =>
+              $$CollectionCheckStatesTableOrderingComposer(
+                $db: db,
+                $table: table,
+              ),
+          createComputedFieldComposer: () =>
+              $$CollectionCheckStatesTableAnnotationComposer(
+                $db: db,
+                $table: table,
+              ),
+          updateCompanionCallback:
+              ({
+                Value<String> collectionId = const Value.absent(),
+                Value<DateTime?> checkedAt = const Value.absent(),
+                Value<bool> failed = const Value.absent(),
+                Value<int> rowid = const Value.absent(),
+              }) => CollectionCheckStatesCompanion(
+                collectionId: collectionId,
+                checkedAt: checkedAt,
+                failed: failed,
+                rowid: rowid,
+              ),
+          createCompanionCallback:
+              ({
+                required String collectionId,
+                Value<DateTime?> checkedAt = const Value.absent(),
+                Value<bool> failed = const Value.absent(),
+                Value<int> rowid = const Value.absent(),
+              }) => CollectionCheckStatesCompanion.insert(
+                collectionId: collectionId,
+                checkedAt: checkedAt,
+                failed: failed,
+                rowid: rowid,
+              ),
+          withReferenceMapper: (p0) => p0
+              .map((e) => (e.readTable(table), BaseReferences(db, table, e)))
+              .toList(),
+          prefetchHooksCallback: null,
+        ),
+      );
+}
+
+typedef $$CollectionCheckStatesTableProcessedTableManager =
+    ProcessedTableManager<
+      _$LibraryDatabase,
+      $CollectionCheckStatesTable,
+      CollectionCheckRow,
+      $$CollectionCheckStatesTableFilterComposer,
+      $$CollectionCheckStatesTableOrderingComposer,
+      $$CollectionCheckStatesTableAnnotationComposer,
+      $$CollectionCheckStatesTableCreateCompanionBuilder,
+      $$CollectionCheckStatesTableUpdateCompanionBuilder,
+      (
+        CollectionCheckRow,
+        BaseReferences<
+          _$LibraryDatabase,
+          $CollectionCheckStatesTable,
+          CollectionCheckRow
+        >,
+      ),
+      CollectionCheckRow,
+      PrefetchHooks Function()
+    >;
 typedef $$PageHintsTableCreateCompanionBuilder =
     PageHintsCompanion Function({
       required String id,
@@ -15185,6 +15799,8 @@ class $LibraryDatabaseManager {
       $$OutboxTableTableManager(_db, _db.outbox);
   $$SyncStateTableTableManager get syncState =>
       $$SyncStateTableTableManager(_db, _db.syncState);
+  $$CollectionCheckStatesTableTableManager get collectionCheckStates =>
+      $$CollectionCheckStatesTableTableManager(_db, _db.collectionCheckStates);
   $$PageHintsTableTableManager get pageHints =>
       $$PageHintsTableTableManager(_db, _db.pageHints);
   $$SavedSitesTableTableManager get savedSites =>

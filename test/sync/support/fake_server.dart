@@ -4,12 +4,22 @@
 /// clock, arbitration, the single-winner download-request claim and the
 /// terminal-only resolve.
 ///
+/// **It refuses an unknown field, exactly as the service does.** The real
+/// merge is an allowlist (`internal/sync/fields.go`), and a field it does not
+/// know is `validation_failed` rather than a silent drop — so a client that
+/// sends one has its intent parked forever. A fake that accepted anything
+/// would let that ship. The vocabulary is read from `contracts/openapi.yaml`,
+/// never restated here, which makes every push test in this directory a parity
+/// test between the app's payloads and the contract.
+///
 /// Deterministic and network-local; the real service is exercised by the
 /// integration lane, never by these unit tests.
 library;
 
 import 'dart:convert';
 import 'dart:io';
+
+import 'contract_vocabulary.dart';
 
 class FakeBackend {
   int revision = 0;
@@ -41,6 +51,12 @@ class FakeBackend {
 
   /// Rejects any upsert whose fields contain this marker key.
   static const rejectMarker = 'reject_me';
+
+  /// What each entity kind may carry, from the contract. Read once.
+  static final Map<String, Set<String>> vocabulary = contractMutableFields();
+
+  /// Every field this server refused, so a test can say which one it was.
+  final List<String> refusedFields = [];
 
   Map<String, Object?> Function(Map<String, Object?> request)? onArbitrate;
 
@@ -304,6 +320,16 @@ class FakeBackend {
     final fields = Map<String, Object?>.from(envelope['fields']! as Map);
     if (fields.containsKey(rejectMarker)) {
       return rejected('invariant_violation');
+    }
+    // The allowlist, as the service applies it. `reject_me` above is checked
+    // first because it is this fake's own marker and is not contract
+    // vocabulary; everything after it is.
+    final allowed = vocabulary[kind]!;
+    for (final key in fields.keys) {
+      if (!allowed.contains(key)) {
+        refusedFields.add('$kind.$key');
+        return rejected('validation_failed');
+      }
     }
     final existing = store[key];
     if (existing != null) {

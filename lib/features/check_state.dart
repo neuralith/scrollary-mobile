@@ -6,21 +6,33 @@
 /// library screens. The function survived with no caller, so a Collection has
 /// been unable to say whether it had ever been checked, or what came of it.
 ///
-/// **Session memory, not a column.** V1 persisted four columns per collection.
-/// V2 keeps this for as long as the app is running and no longer, for the same
-/// reason V2-D43 keeps collapsed Folders in memory: the schema is frozen at
-/// version 1 with no migration path, and a check is cheap to repeat. *Not
-/// checked yet* is the honest state on a fresh launch, and it is exactly what
-/// a user who has not checked since launching sees.
+/// **What survives a restart, and what does not.** The conclusion — when this
+/// device last checked, and whether that check failed — is a row in
+/// `collection_check_states` and comes back on the next launch, because a
+/// Collection checked five minutes ago saying *Not checked yet* is simply
+/// wrong. Two things stay session memory on purpose:
+///
+/// * **`checking`.** A check interrupted by a kill is not still running, and
+///   a restored *Checking…* would be a spinner over nothing.
+/// * **`newEntryIds`.** They answer "what arrived while you were looking",
+///   which stops being a useful sentence once you have stopped looking; after
+///   a restart those are simply Entries in the library.
+///
+/// It is device state and never synchronises (V2_SYNC.md §4.8): what this
+/// device did is not a claim about what another one has done.
 ///
 /// Never gated: what the device did is not a paid feature
 /// (docs/V2_CAPABILITY_PARITY.md).
 library;
 
+import 'dart:async';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'package:flutter/material.dart';
 
+import '../data/collection_check_repository.dart';
+import '../library_ui/providers.dart' show libraryDatabaseProvider;
 import '../recognition/check.dart';
 import '../ui/palette.dart';
 import '../ui/status_style.dart';
@@ -61,12 +73,41 @@ class CollectionCheckState {
   bool get hasNews => newEntryIds.isNotEmpty;
 }
 
-/// Every Collection's last check, for this run of the app.
+/// Every Collection's last check.
+///
+/// The in-memory map stays the read model — every reader of [of] is a widget
+/// asking during a build, and a build cannot await. [durable] is written
+/// through on each conclusion and read back once by [restore].
 class CheckStateStore extends ChangeNotifier {
+  CheckStateStore([this._durable]);
+
+  /// Where a conclusion is written and read back. Null in a test that only
+  /// wants the read model, which is why it is optional rather than required.
+  final CollectionCheckRepository? _durable;
   final Map<String, CollectionCheckState> _byCollection = {};
 
   CollectionCheckState of(String collectionId) =>
       _byCollection[collectionId] ?? const CollectionCheckState();
+
+  /// Loads what earlier runs concluded. Called once, at launch.
+  ///
+  /// A Collection this run has already touched keeps what it has: a check that
+  /// started while the read was in flight knows more than the row does, and
+  /// overwriting it would blank a live chip.
+  Future<void> restore() async {
+    final stored = await _durable?.load();
+    if (stored == null || stored.isEmpty) return;
+    var changed = false;
+    for (final MapEntry(key: id, value: row) in stored.entries) {
+      if (_byCollection.containsKey(id)) continue;
+      _byCollection[id] = CollectionCheckState(
+        failed: row.failed,
+        checkedAt: row.checkedAt?.toUtc(),
+      );
+      changed = true;
+    }
+    if (changed) notifyListeners();
+  }
 
   /// A check has started. Keeps whatever the previous one concluded, so the
   /// row does not blank while it reads.
@@ -95,6 +136,9 @@ class CheckStateStore extends ChangeNotifier {
         newEntryIds: previous.newEntryIds,
       );
       notifyListeners();
+      // Nothing durable changed: a check that never ran has not concluded
+      // anything about the Collection, and must not clear the last one that
+      // did.
       return;
     }
 
@@ -103,14 +147,28 @@ class CheckStateStore extends ChangeNotifier {
     // not load is the same lie the old single sentence told.
     final concluded = outcome.stopReason == null;
     final found = outcome.newEntryIds.toSet();
-    _byCollection[collectionId] = CollectionCheckState(
+    final next = CollectionCheckState(
       failed: !concluded && found.isEmpty,
       checkedAt: concluded ? at : of(collectionId).checkedAt,
       newEntryIds: found.isNotEmpty
           ? found
           : (concluded ? const {} : of(collectionId).newEntryIds),
     );
+    _byCollection[collectionId] = next;
     notifyListeners();
+    // Written after the notify, and not awaited: what the row says is what the
+    // next launch reads, and the chip in front of the user must not wait for a
+    // disk write to change.
+    unawaited(
+      _durable
+              ?.record(
+                collectionId,
+                checkedAt: next.checkedAt,
+                failed: next.failed,
+              )
+              .catchError((Object _) {}) ??
+          Future<void>.value(),
+    );
   }
 
   /// The user has seen what the check found.
@@ -126,10 +184,13 @@ class CheckStateStore extends ChangeNotifier {
   }
 }
 
-/// The one store, for this run of the app.
+/// The one store. Restores what earlier runs concluded as it is built.
 final checkStateProvider = Provider<CheckStateStore>((ref) {
-  final store = CheckStateStore();
+  final store = CheckStateStore(
+    CollectionCheckRepository(ref.watch(libraryDatabaseProvider)),
+  );
   ref.onDispose(store.dispose);
+  unawaited(store.restore());
   return store;
 });
 

@@ -22,7 +22,6 @@ import '../data/entry_repository.dart';
 import '../data/folder_repository.dart';
 import '../data/offline_copy_repository.dart';
 import '../data/reading_state_repository.dart';
-import '../data/local_settings.dart';
 import '../data/schema.dart';
 import '../domain/collection.dart';
 import '../domain/reading_state.dart';
@@ -110,9 +109,7 @@ final saveQueueRepoProvider = Provider<SaveQueueRepository>(
 /// because this file is the library UX's own composition and is the only
 /// thing that reads it.
 final entrySortPreferenceProvider = Provider<EntrySortPreferenceStore>(
-  (ref) => EntrySortPreferenceStore(
-    LocalSettingsStore(ref.watch(libraryDatabaseProvider)),
-  ),
+  (ref) => EntrySortPreferenceStore(ref.watch(libraryDatabaseProvider)),
 );
 
 final fileStoreProvider = Provider<FileStore>(
@@ -537,12 +534,19 @@ Future<Set<String>> _entriesWithAnActiveCopy(LibraryDatabase db) async {
 /// Collection screen does.
 ///
 /// **Earliest active Location first, then first answer wins.** The ordering is
-/// `discovered_at` ascending, so [addedAt] is the earliest — the moment this
-/// Entry entered the library, which is what "date added" means. The other
-/// three take the first row that *has* one rather than the first row: a site
-/// that printed no label is not evidence that no site did, and an Entry
-/// carries a second address precisely because the first one did not answer
-/// everything.
+/// `discovered_at` ascending — and then by `id`, which is what makes the
+/// reduction **deterministic**: every column it reads synchronises, so two
+/// devices holding the same Locations must reduce them to the same facts, and
+/// two addresses discovered in the same millisecond would otherwise be ordered
+/// by whatever SQLite happened to return. A Collection ordered by publication
+/// date would then be in two orders on two devices, which is the same list
+/// disagreeing with itself.
+///
+/// [addedAt] is the earliest — the moment this Entry entered the library,
+/// which is what "date added" means. The other three take the first row that
+/// *has* one rather than the first row: a site that printed no label is not
+/// evidence that no site did, and an Entry carries a second address precisely
+/// because the first one did not answer everything.
 class _EntryLocationFacts {
   const _EntryLocationFacts({
     this.label,
@@ -567,7 +571,10 @@ Future<Map<String, _EntryLocationFacts>> _locationFacts(
             ..where(
               (l) => l.entryId.isIn(entryIds) & l.lifecycle.equals('active'),
             )
-            ..orderBy([(l) => OrderingTerm.asc(l.discoveredAt)]))
+            ..orderBy([
+              (l) => OrderingTerm.asc(l.discoveredAt),
+              (l) => OrderingTerm.asc(l.id),
+            ]))
           .get();
   final labels = <String, String>{};
   final numbers = <String, double>{};

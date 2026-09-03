@@ -13,6 +13,7 @@ import 'features/operation_lane.dart';
 import 'ui/app_page.dart';
 
 import 'core/local_reset.dart';
+import 'data/collection_preference_adoption.dart';
 import 'features/activity_screen.dart';
 import 'features/browser_history_screen.dart';
 import 'features/browser_screen.dart';
@@ -187,6 +188,17 @@ class _WebReaderAppState extends ConsumerState<WebReaderApp>
     _router.routerDelegate.addListener(_recomputeSurface);
     WidgetsBinding.instance.addObserver(this);
     _recomputeSurface();
+    // Preferences an older build wrote as settings rows move onto the
+    // Collections that now own them, before the first drain: adopting one
+    // writes an outbox intent, and doing it after the drain would leave the
+    // answer sitting on this device until the next mutation happened to wake
+    // the scheduler. Ordinarily a no-op — there is nothing to move — so it is
+    // not awaited and a failure is not fatal to launch.
+    unawaited(
+      adoptLegacyCollectionPreferences(
+        v2.library,
+      ).catchError((Object _) => const AdoptedPreferences()),
+    );
     // The app is up and in front. Nothing before this frame is an opportunity:
     // a scheduler that assumed a foreground would run before anything told it
     // to.

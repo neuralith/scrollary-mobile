@@ -14,8 +14,12 @@ import 'package:web_reader/domain/collection.dart';
 import 'package:web_reader/domain/entry.dart';
 import 'package:web_reader/domain/reading_state.dart';
 import 'package:web_reader/domain/source.dart' as domain;
+import 'package:web_reader/library/entry_sort.dart';
+import 'package:web_reader/library/entry_sort_preference.dart';
 import 'package:web_reader/recognition/evidence.dart';
 import 'package:web_reader/recognition/recognise.dart';
+import 'package:web_reader/save/capture_mode.dart';
+import 'package:web_reader/save/capture_preference.dart';
 
 import 'support/e2e_support.dart';
 
@@ -112,6 +116,22 @@ void main() {
       fraction: 0.9,
     );
 
+    // The three fields this alignment put on the wire, written on device A.
+    await a.entries.recordLocationPublishedAt(
+      turkishLocationId,
+      DateTime.utc(2026, 3, 14),
+    );
+    await CapturePreferenceStore(
+      a.db,
+    ).remember(collectionId, CaptureMode.imageSequence);
+    await EntrySortPreferenceStore(a.db).remember(
+      collectionId,
+      const EntrySort(
+        EntrySortField.publishDate,
+        EntrySortDirection.descending,
+      ),
+    );
+
     await a.sync();
     await b.sync();
   });
@@ -128,11 +148,9 @@ void main() {
     expect(await raw.entities('entry'), hasLength(1));
     final locations = await raw.entities('location');
     expect(locations, hasLength(2));
-    expect(
-      locations.values.map((l) => l['entry_id']).toSet(),
-      {sharedEntryId},
-      reason: 'an Entry is not a URL: both addresses are the same Entry',
-    );
+    expect(locations.values.map((l) => l['entry_id']).toSet(), {
+      sharedEntryId,
+    }, reason: 'an Entry is not a URL: both addresses are the same Entry');
     expect(locations.values.map((l) => l['source_id']).toSet(), {
       turkishSourceId,
       englishSourceId,
@@ -151,6 +169,60 @@ void main() {
       ReadStatus.reading,
       reason: 'reading state is portable: it belongs to the Entry',
     );
+  });
+
+  // Against the real Go service, not a fake of it: the merge there is an
+  // allowlist that rejects an unknown field, and a rejected intent is parked
+  // on the device forever. This is the assertion that the app's payloads and
+  // the service's vocabulary are the same vocabulary.
+  test(
+    'a publication date and a Collection\'s answers reach device B',
+    () async {
+      final locations = await raw.entities('location');
+      expect(
+        DateTime.parse(
+          locations[turkishLocationId]!['published_at']! as String,
+        ).isAtSameMomentAs(DateTime.utc(2026, 3, 14)),
+        isTrue,
+        reason: 'the service stored the date, so it was never rejected',
+      );
+
+      final onB = await b.entries.locationById(turkishLocationId);
+      expect(
+        onB!.publishedAt!.isAtSameMomentAs(DateTime.utc(2026, 3, 14)),
+        isTrue,
+        reason:
+            'ordering_basis publicationDate already crossed; the dates it '
+            'orders by cross with it now',
+      );
+
+      expect(
+        await CapturePreferenceStore(b.db).of(collectionId),
+        CaptureMode.imageSequence,
+        reason: 'what a Collection is normally saved as is about the work',
+      );
+      expect(
+        await EntrySortPreferenceStore(b.db).of(collectionId),
+        const EntrySort(
+          EntrySortField.publishDate,
+          EntrySortDirection.descending,
+        ),
+        reason: 'a list arranged by hand stays arranged on the next device',
+      );
+    },
+  );
+
+  test('nothing the app pushed was refused', () async {
+    for (final device in [a, b]) {
+      expect(
+        await device.outbox.rejected(),
+        isEmpty,
+        reason:
+            'a rejection is deterministic and the drain parks the row: one '
+            'field the service does not know is a change lost forever',
+      );
+      expect(await device.outbox.pendingCount(), 0);
+    }
   });
 
   test('measurements stay scoped to the rendering they measured', () async {

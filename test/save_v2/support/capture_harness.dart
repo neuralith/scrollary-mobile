@@ -15,7 +15,6 @@ import 'package:web_reader/save/entry_capture.dart';
 import 'package:web_reader/save/page_capture_source.dart';
 import 'package:web_reader/save/queue_repository.dart';
 import 'package:web_reader/reading_v2/offline_read.dart';
-import 'package:web_reader/data/local_settings.dart';
 import 'package:web_reader/save/capture_mode.dart';
 import 'package:web_reader/save/capture_policy.dart';
 import 'package:web_reader/save/capture_preference.dart';
@@ -50,7 +49,7 @@ class CaptureHarness {
     Directory('${root.path}/${FileStore.libraryFolderName}').createSync();
     Directory('${root.path}/${FileStore.tmpFolderName}').createSync();
     queue = SaveQueueRepository(repos.db, now: repos.tick);
-    preferences = CapturePreferenceStore(LocalSettingsStore(repos.db));
+    preferences = CapturePreferenceStore(repos.db);
   }
 
   late final RepoHarness repos;

@@ -150,6 +150,9 @@ in [docs/DECISIONS.md](docs/DECISIONS.md).
   Collection** (*Remove after finishing* · *Keep downloaded*, changeable and
   clearable from the Collection menu) and which is **device-local**, in
   `local_settings`, because it is a decision about these bytes on this device.
+  It is the one Collection preference that stays local: what the Collection is
+  normally *saved* as and what order its Entries are *drawn* in are answers
+  about the work and are synced columns on the Collection (V2-D73).
   Three decisions stay apart — did you finish it, where are you going, what
   happens to its files — and **nothing is freed until the destination has
   genuinely opened**: a package whose files are gone applies nothing, because
@@ -227,6 +230,15 @@ Rules that still bind: the port checklist
 change to a ported file; the shared contract (`contracts/`) is frozen and
 changes only through `contracts/README.md`'s protocol; the guard tests in
 `test/` gate every change in either half.
+
+**A synced field is written out by hand in both halves, and the service
+*rejects* a field it does not know** — so an intent carrying one is parked on
+the device forever, not silently dropped (V2-D73, docs/V2_SYNC.md §8.1a). Two
+tests hold the halves together: `test/sync/support/contract_vocabulary.dart`
+reads `contracts/openapi.yaml` and the fake service applies it, so every push
+test is a parity test; `internal/sync/vocabulary_test.go` does the same for the
+service's own allowlist. Push is strict and pull is tolerant, which is why the
+**service ships before the client** that sends a new field.
 
 Three things future agents get wrong here:
 

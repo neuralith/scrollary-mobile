@@ -11,6 +11,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:web_reader/data/data_violations.dart';
 import 'package:web_reader/domain/entry.dart';
 import 'package:web_reader/domain/invariants.dart';
+import 'package:web_reader/domain/sync_kinds.dart';
 
 import 'support/repo_harness.dart';
 
@@ -268,7 +269,7 @@ void main() {
   });
 
   group('the publish date a reading established', () {
-    test('is stored on the Location, and stays out of the outbox', () async {
+    test('is stored on the Location and pushed as a sparse field', () async {
       final seeded = await h.seedLibrary();
       final before = await h.outboxCount();
       final published = DateTime.utc(2026, 3, 14);
@@ -283,20 +284,31 @@ void main() {
       // Instants, not objects: drift stores a unix timestamp and reads it
       // back in local time, so the round trip is never the same `DateTime`.
       expect(row!.publishedAt!.isAtSameMomentAs(published), isTrue);
+
       expect(
         await h.outboxCount(),
-        before,
+        before + 1,
         reason:
-            'published_at is not in contracts/evidence.yaml, so nothing may '
-            'try to push it',
+            'published_at is a Location field in contracts/openapi.yaml, so a '
+            'device that read a date owes it to the others',
       );
+      final intent = (await h.outbox.pendingAfter(0, limit: 50)).last;
+      expect(intent.entityKind, SyncedEntityKind.location.name);
+      expect(intent.entityId, seeded.location.id);
       expect(
-        row.updatedAt,
-        seeded.location.updatedAt,
+        jsonDecode(intent.payload),
+        {'published_at': published.toIso8601String()},
         reason:
-            'the row clock is the last-writer-wins clock; moving it for a '
-            'field that never syncs would let this device beat a legitimate '
-            'remote update',
+            'sparse: the intent carries the one field that changed, so '
+            'nothing else on the row is re-asserted at this clock',
+      );
+
+      expect(
+        row.updatedAt.isAfter(seeded.location.updatedAt),
+        isTrue,
+        reason:
+            'the row clock is the last-writer-wins clock and this device now '
+            'holds newer information about the row',
       );
     });
 
@@ -335,12 +347,20 @@ void main() {
         final corrected = DateTime.utc(2026, 3, 15);
 
         await h.entries.recordLocationPublishedAt(seeded.location.id, first);
+        final afterFirst = await h.outboxCount();
         await h.entries.recordLocationPublishedAt(seeded.location.id, first);
         expect(
           (await h.entries.locationById(
             seeded.location.id,
           ))!.publishedAt!.isAtSameMomentAs(first),
           isTrue,
+        );
+        expect(
+          await h.outboxCount(),
+          afterFirst,
+          reason:
+              're-reading an unchanged page is not news, and must not spend a '
+              'revision or wake the drain',
         );
 
         await h.entries.recordLocationPublishedAt(

@@ -443,6 +443,12 @@ class SyncPuller {
       orderingBasis: e['ordering_basis']! as String,
       lifecycle: e['lifecycle']! as String,
       preferredSourceId: preferred,
+      // Opaque preference tokens: taken as written and never parsed here. A
+      // value this build cannot read is the reader's to resolve to "unset"
+      // (`parseEntrySort`, `captureModeFromName`), which is what lets a device
+      // on an older build hold a newer one's answer without losing it.
+      captureMode: (e['capture_mode'] as String?) ?? '',
+      entrySort: (e['entry_sort'] as String?) ?? '',
       sortKey: (e['sort_key']! as num).toInt(),
       revision: (e['revision']! as num).toInt(),
       updatedAt: updatedAt,
@@ -612,6 +618,7 @@ class SyncPuller {
       urlKey: urlKey,
       sourceLabel: (e['source_label'] as String?) ?? '',
       sourceNumber: (e['source_number'] as num?)?.toDouble(),
+      publishedAt: _time(e['published_at']),
       discoveredAt: _time(e['discovered_at'])!,
       discoveryBasis: (e['discovery_basis'] as String?) ?? '',
       lifecycle: e['lifecycle']! as String,

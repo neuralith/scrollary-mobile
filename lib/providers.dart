@@ -89,11 +89,11 @@ final localSettingsProvider = Provider<LocalSettingsStore>(
 
 /// What each Collection is normally captured as.
 ///
-/// Over the same settings table: a capture preference is an application fact
-/// about a Collection, not a library one, and the frozen schema has no column
-/// for it and needs none.
+/// Over the Collection row that owns it: what a Collection is normally saved
+/// as is an answer about the work, so it travels with the work (V2-D53, and
+/// contracts/openapi.yaml `Collection.capture_mode`).
 final capturePreferenceProvider = Provider<CapturePreferenceStore>(
-  (ref) => CapturePreferenceStore(ref.watch(localSettingsProvider)),
+  (ref) => CapturePreferenceStore(ref.watch(libraryDatabaseProvider)),
 );
 
 /// What a Collection does with a finished Entry's downloaded copy.

@@ -24,7 +24,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:web_reader/core/config.dart';
 import 'package:web_reader/core/url_utils.dart';
-import 'package:web_reader/data/local_settings.dart';
 import 'package:web_reader/data/recognition_index.dart';
 import 'package:web_reader/data/schema.dart';
 import 'package:web_reader/domain/collection.dart';
@@ -280,11 +279,10 @@ void main() {
     await drain(tester);
 
     expect(await copies(), hasLength(2));
-    expect(
-      journal.steps.where((s) => s.startsWith('capture')),
-      [captured(101), captured(102)],
-      reason: 'nothing after the end of the source was invented',
-    );
+    expect(journal.steps.where((s) => s.startsWith('capture')), [
+      captured(101),
+      captured(102),
+    ], reason: 'nothing after the end of the source was invented');
 
     final run = runner.lastRun!;
     expect(
@@ -498,7 +496,7 @@ void main() {
     );
 
     // What the sheet would have loaded and passed on, without asking again.
-    final preferences = CapturePreferenceStore(LocalSettingsStore(h.db));
+    final preferences = CapturePreferenceStore(h.db);
     await preferences.remember(collection.id, CaptureMode.imageSequence);
     final remembered = await preferences.of(collection.id);
     expect(remembered, CaptureMode.imageSequence);

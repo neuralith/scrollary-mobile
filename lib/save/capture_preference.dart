@@ -9,12 +9,19 @@
 /// forcing an impossible save" — and the preference it stops was never
 /// written.
 ///
-/// **Device-local, in the settings table.** The schema is frozen at version 1
-/// with no migration path (CLAUDE.md, "The database has no history"), and this
-/// is exactly what `LocalSettingsStore` documents itself as being for: "a
-/// setting is a string under a key its owner names, so a new preference is a
-/// constant beside the thing it configures rather than a column, a migration
-/// and an entry in a registry three layers away".
+/// **On the Collection row, and it synchronises.** It began in the settings
+/// table because the schema was frozen; it is a column now because the answer
+/// is about the *work*, not about this device — someone who said "always
+/// images" on their phone has said it about the Collection, and being asked
+/// again on their tablet is the question they already answered. The wire form
+/// is an opaque token the service stores and never interprets
+/// (contracts/openapi.yaml `Collection.capture_mode`), so the vocabulary below
+/// stays the client's.
+///
+/// This is **not** the shape of every Collection preference. What happens to a
+/// finished Entry's files stays device-local (V2-D59), because that decides
+/// what happens to bytes on one device and a phone must not decide for a
+/// tablet with room to keep them.
 ///
 /// **A preference proposes; the page disposes.** Nothing here consults a page,
 /// and nothing here can force a mode: what is stored is what the user asked
@@ -24,16 +31,16 @@
 /// that page.
 library;
 
-import '../data/local_settings.dart';
+import '../data/collection_repository.dart';
+import '../data/schema.dart';
 import 'capture_mode.dart';
 
-/// The settings key a Collection's preference lives under.
-///
-/// Namespaced by the Collection's own id, so there is one row per Collection
-/// and forgetting one cannot touch another. Exposed for the test that pins the
-/// spelling: a key that changes silently is a preference that silently
-/// vanishes.
-String captureModeKeyFor(String collectionId) => 'capture_mode.$collectionId';
+/// The settings key this preference used to live under, kept for exactly one
+/// reader: [adoptLegacyCollectionPreferences], which moves a value written by
+/// an older build onto the Collection row and deletes the row it came from.
+/// Nothing else may read or write it.
+String legacyCaptureModeKeyFor(String collectionId) =>
+    'capture_mode.$collectionId';
 
 /// *Ask each time*, stored.
 ///
@@ -48,9 +55,25 @@ const String kAskEachTime = 'askEachTime';
 
 /// Reads and writes what a Collection is normally captured as.
 class CapturePreferenceStore {
-  const CapturePreferenceStore(this._settings);
+  CapturePreferenceStore(LibraryDatabase db)
+    : _db = db,
+      _collections = CollectionRepository(db);
 
-  final LocalSettingsStore _settings;
+  final LibraryDatabase _db;
+  final CollectionRepository _collections;
+
+  /// The stored token, or null where there is no Collection or no answer.
+  ///
+  /// Empty string and a missing row read the same, because both mean nobody
+  /// has said.
+  Future<String?> _stored(String? collectionId) async {
+    if (collectionId == null || collectionId.isEmpty) return null;
+    final row = await (_db.select(
+      _db.collections,
+    )..where((c) => c.id.equals(collectionId))).getSingleOrNull();
+    final value = row?.captureMode ?? '';
+    return value.isEmpty ? null : value;
+  }
 
   /// What this Collection is normally captured as, or null when the user has
   /// never said.
@@ -59,12 +82,8 @@ class CapturePreferenceStore {
   /// — `captureModeFromName` refuses to fall back to a value, because there is
   /// no "safest" capture mode and an unreadable preference has to mean "ask
   /// detection again" rather than "quietly save something else".
-  Future<CaptureMode?> of(String? collectionId) async {
-    if (collectionId == null || collectionId.isEmpty) return null;
-    return captureModeFromName(
-      await _settings.get(captureModeKeyFor(collectionId)),
-    );
-  }
+  Future<CaptureMode?> of(String? collectionId) async =>
+      captureModeFromName(await _stored(collectionId));
 
   /// Whether the user has answered *what to save* for this Collection at all.
   ///
@@ -75,8 +94,7 @@ class CapturePreferenceStore {
   /// [of]'s business: what to *propose* is a mode or nothing, and that is all
   /// the capture seam ever asks for.
   Future<bool> isAnswered(String? collectionId) async {
-    if (collectionId == null || collectionId.isEmpty) return false;
-    final stored = await _settings.get(captureModeKeyFor(collectionId));
+    final stored = await _stored(collectionId);
     return stored == kAskEachTime || captureModeFromName(stored) != null;
   }
 
@@ -88,7 +106,7 @@ class CapturePreferenceStore {
   /// sheet that was opened and dismissed has said nothing about the work.
   Future<void> remember(String? collectionId, CaptureMode mode) async {
     if (collectionId == null || collectionId.isEmpty) return;
-    await _settings.set(captureModeKeyFor(collectionId), mode.name);
+    await _collections.setCaptureMode(collectionId, mode.name);
   }
 
   /// *Ask each time*: keep proposing what each page can offer, and record that
@@ -98,13 +116,16 @@ class CapturePreferenceStore {
   /// save — which is the whole point of the label.
   Future<void> askEachTime(String? collectionId) async {
     if (collectionId == null || collectionId.isEmpty) return;
-    await _settings.set(captureModeKeyFor(collectionId), kAskEachTime);
+    await _collections.setCaptureMode(collectionId, kAskEachTime);
   }
 
   /// Drop the answer entirely, as though it had never been given.
   ///
   /// For a Collection that is going away (V2-D60), not for a user changing
-  /// their mind — [askEachTime] is that.
-  Future<void> forget(String collectionId) =>
-      _settings.remove(captureModeKeyFor(collectionId));
+  /// their mind — [askEachTime] is that. Clearing is a write like any other
+  /// and travels: a Collection whose answer was dropped here has no answer
+  /// anywhere.
+  Future<void> forget(String collectionId) async {
+    await _collections.setCaptureMode(collectionId, '');
+  }
 }

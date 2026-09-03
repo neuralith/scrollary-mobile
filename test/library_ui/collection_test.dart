@@ -14,7 +14,6 @@ import 'package:web_reader/domain/collection.dart';
 import 'package:web_reader/domain/entry.dart';
 import 'package:web_reader/domain/reading_state.dart';
 import 'package:web_reader/library_ui/collection_screen.dart';
-import 'package:web_reader/data/local_settings.dart';
 import 'package:web_reader/library_ui/library_widgets.dart';
 import 'package:web_reader/save/capture_mode.dart';
 import 'package:web_reader/save/capture_preference.dart';
@@ -417,7 +416,7 @@ void main() {
     // The rows go by cascade; a setting keyed by the collection's id has no
     // foreign key to take it along, so the removal drops it (V2-D60).
     final s = await seed();
-    final preferences = CapturePreferenceStore(LocalSettingsStore(h.db));
+    final preferences = CapturePreferenceStore(h.db);
     await preferences.remember(s.collection.id, CaptureMode.imageSequence);
 
     await tester.pumpWidget(
@@ -439,7 +438,7 @@ void main() {
     // Archiving is "stop keeping this current", not "forget what it is":
     // following it again must not start asking the question over.
     final s = await seed();
-    final preferences = CapturePreferenceStore(LocalSettingsStore(h.db));
+    final preferences = CapturePreferenceStore(h.db);
     await preferences.remember(s.collection.id, CaptureMode.imageSequence);
 
     await tester.pumpWidget(

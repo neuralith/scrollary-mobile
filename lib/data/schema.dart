@@ -69,6 +69,23 @@ class Collections extends Table {
   TextColumn get orderingBasis => text()();
   TextColumn get lifecycle => text().withDefault(const Constant('active'))();
   TextColumn get preferredSourceId => text().nullable()();
+
+  /// What this Collection is normally saved as (V2-D53), and what order its
+  /// Entries are drawn in — two answers the user gave about the work, and two
+  /// answers that follow them to their other devices.
+  ///
+  /// Columns rather than `settings` rows: both are per-Collection state, and
+  /// a key-value row keyed by a local id could neither sync nor survive the
+  /// Collection being merged into another. Empty string is **unset** — a
+  /// question nobody has answered, which is not the same as an answer that
+  /// happens to be the default; `captureModeFromName` and `parseEntrySort`
+  /// both resolve an unreadable value to null for that reason.
+  ///
+  /// Opaque on the wire: the server stores and echoes both and interprets
+  /// neither (contracts/openapi.yaml `Collection`), so a new sort field is a
+  /// client release and not a backend one.
+  TextColumn get captureMode => text().withDefault(const Constant(''))();
+  TextColumn get entrySort => text().withDefault(const Constant(''))();
   IntColumn get sortKey => integer().withDefault(const Constant(0))();
   IntColumn get revision => integer().nullable()();
   DateTimeColumn get updatedAt => dateTime()();
@@ -89,6 +106,17 @@ class Collections extends Table {
 
 /// One Collection as published on one site. `(host, path_key)` is identity —
 /// V1's `collection_key`, one level down.
+///
+/// **That identity is unique library-wide, not per Collection** (I18): a site
+/// publishes one work, and which work is the user's answer (V2-D45). The
+/// unique index `idx_sources_identity` in [LibraryDatabase]'s `onCreate` is
+/// where it is enforced, and the service enforces the same rule with the same
+/// scope, so neither side can hold a Source state the other cannot. A
+/// Collection-scoped constraint would be implied by it and is deliberately
+/// absent: two spellings of one rule is how they come apart.
+///
+/// [host] is stored folded to lower case (DNS is case-insensitive); [pathKey]
+/// is stored exactly as read, because RFC 3986 paths are case-sensitive.
 @DataClassName('SourceRow')
 class Sources extends Table {
   TextColumn get id => text()();
@@ -108,13 +136,9 @@ class Sources extends Table {
   Set<Column> get primaryKey => {id};
 
   @override
-  List<Set<Column>> get uniqueKeys => [
-    {collectionId, host, pathKey},
-  ];
-
-  @override
   List<String> get customConstraints => [
     "CHECK (lifecycle IN ('active','dormant','dead','resolvedInto'))",
+    'CHECK (host = lower(host))',
     'FOREIGN KEY (collection_id) REFERENCES collections (id) '
         'ON DELETE CASCADE',
     'FOREIGN KEY (resolved_into_source_id) REFERENCES sources (id) '
@@ -174,12 +198,16 @@ class Locations extends Table {
   /// of one Collection can publish the same Entry on different days, and the
   /// Entry has no one answer.
   ///
-  /// **Local-only, deliberately.** It is absent from `contracts/evidence.yaml`
-  /// and from the change feed, so nothing writes it to the outbox and nothing
-  /// reads it from a pull. The contract is frozen at Gate B and changes only
-  /// through `contracts/README.md`'s protocol; until it does, this is a fact
-  /// this device read for itself. Null is ordinary and permanent for a page
-  /// nobody has downloaded, and for every page whose site prints no date.
+  /// **It synchronises**, through `contracts/openapi.yaml`'s `Location`. It
+  /// has to: `ordering_basis: publicationDate` is library state that already
+  /// crossed, so a Collection could be ordered by publication date on one
+  /// device and by nothing at all on another, which is the same list in two
+  /// orders. Writing it therefore moves the row's `updated_at` like any other
+  /// synced field — it is the last-writer-wins clock, and this device does
+  /// hold newer information about the row.
+  ///
+  /// Null is ordinary and permanent for a page nobody has opened, and for
+  /// every page whose site prints no date.
   DateTimeColumn get publishedAt => dateTime().nullable()();
   DateTimeColumn get discoveredAt => dateTime()();
   TextColumn get discoveryBasis => text().withDefault(const Constant(''))();
@@ -430,6 +458,39 @@ class SyncState extends Table {
   List<String> get customConstraints => ['CHECK (id = 1)'];
 }
 
+/// What this device's last update check of a Collection came to.
+///
+/// **Device state, and never synced.** Per-Source check timestamps are on
+/// V2_SYNC.md §4.8's list of what does not cross, and the reason holds: a
+/// phone that checked an hour ago has said nothing about what a tablet has
+/// done. The kind is deliberately absent from [SyncedEntityKind], so an
+/// intent about one of these rows cannot be expressed.
+///
+/// It is a table rather than session memory because *Not checked yet* on
+/// every launch is not what a device that checked five minutes ago should
+/// say. What is **not** stored is the run in progress: [checking] has no
+/// column, because a check that was interrupted by a kill is not still
+/// running and a restart must not claim it is.
+///
+/// The set of Entries a check found is likewise session-only. It answers
+/// "what arrived while you were looking", and after a restart those Entries
+/// are simply Entries in the library.
+@DataClassName('CollectionCheckRow')
+class CollectionCheckStates extends Table {
+  TextColumn get collectionId => text()();
+  DateTimeColumn get checkedAt => dateTime().nullable()();
+  BoolColumn get failed => boolean().withDefault(const Constant(false))();
+
+  @override
+  Set<Column> get primaryKey => {collectionId};
+
+  @override
+  List<String> get customConstraints => [
+    'FOREIGN KEY (collection_id) REFERENCES collections (id) '
+        'ON DELETE CASCADE',
+  ];
+}
+
 /// What a person taught by tapping an element. Empty on a clean install;
 /// nothing seeds it. Carried over from V1 unchanged.
 @DataClassName('PageHintRow')
@@ -512,6 +573,7 @@ class LocalSettings extends Table {
     History,
     Outbox,
     SyncState,
+    CollectionCheckStates,
     PageHints,
     SavedSites,
     Favicons,

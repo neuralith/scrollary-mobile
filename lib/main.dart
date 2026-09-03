@@ -15,6 +15,7 @@ import 'providers.dart';
 import 'storage/file_store.dart';
 import 'data/local_settings.dart';
 import 'data/recognition_index.dart';
+import 'data/collection_check_repository.dart';
 import 'data/schema.dart' show LibraryDatabase;
 import 'data/reading_state_repository.dart';
 import 'features/check_controller.dart';
@@ -265,8 +266,13 @@ class AppStartup {
   /// What the entry being captured is doing right now.
   OperationProgress get progress => _progress;
 
-  /// What each Collection's last check came to, for this run of the app.
-  final CheckStateStore _checkState = CheckStateStore();
+  /// What each Collection's last check came to.
+  ///
+  /// Built without durable backing and given it in [_open], because the
+  /// database it reads does not exist until then. A store that never gets
+  /// there still works — it simply starts every Collection at *Not checked
+  /// yet*, which is what a device with no library has to say anyway.
+  CheckStateStore _checkState = CheckStateStore();
   CheckStateStore get checkState => _checkState;
 
   LibraryCheckController? _libraryCheck;
@@ -294,6 +300,13 @@ class AppStartup {
 
     final browser = BrowserController();
     final settings = LocalSettingsStore(library);
+
+    // What earlier runs concluded about each Collection's last check. Restored
+    // rather than started blank: a Collection checked five minutes ago saying
+    // "Not checked yet" is simply wrong. Not awaited — the shell paints from
+    // an empty store and the chips arrive when the read does.
+    _checkState = CheckStateStore(CollectionCheckRepository(library));
+    unawaited(_checkState.restore());
 
     // Read before the app builds, not watched: the shell decides how to
     // composite the Browser on its first frame, and a capability that arrived
@@ -352,7 +365,7 @@ class AppStartup {
         fileStore: fileStore,
         // What each Collection is normally saved as, asked at capture time
         // whatever wrote the row (V2-D58).
-        capturePreferences: CapturePreferenceStore(LocalSettingsStore(library)),
+        capturePreferences: CapturePreferenceStore(library),
         source: SaveEnginePageCaptureSource(
           browser: browser,
           engineFor: (sink) {

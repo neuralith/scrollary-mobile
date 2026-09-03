@@ -210,7 +210,9 @@ class UiHarness {
   /// [sourceNumber] is what a site printed, and it is **not** an ordinal
   /// (V2-D15): a test that seeds one is seeding evidence, and the Entry it
   /// belongs to stays exactly as placed or unplaced as it was.
-  /// [publishedAt] is written through the local-only writer a capture uses.
+  /// [publishedAt] is written through the same writer a capture uses — which
+  /// records a sync intent, because a printed date is evidence every device
+  /// should have.
   Future<LocationRow> location(
     String entryId,
     String url, {

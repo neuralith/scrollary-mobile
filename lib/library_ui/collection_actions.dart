@@ -295,18 +295,14 @@ Future<void> _removeCollectionFromLibrary(
   // Waiting work first: a task whose Entry is about to go would be cascaded
   // away as a row rather than cancelled as a decision.
   await cancelWaitingDownloadsOf(ref, view.collection.id);
+  // The Collection's answers about itself — what it is normally saved as, and
+  // what order its Entries are drawn in — are columns on the row this removes,
+  // so they go with it and there is nothing to forget separately. **Archiving
+  // keeps them**, as it always did: archiving is "stop keeping this current",
+  // not "forget what it is", and it writes `lifecycle` and nothing else.
   final violation = await ref
       .read(collectionRepoProvider)
       .removeCollection(view.collection.id);
-  // The Collection's rows go by cascade; its capture preference is a setting
-  // keyed by its id and has no foreign key to take it along, so it is dropped
-  // here — only on the deliberate removal, and only once that removal actually
-  // happened. **Archiving keeps it**: archiving is "stop keeping this
-  // current", not "forget what it is", and restoring one that had lost its
-  // answer would silently start asking again.
-  if (violation == null) {
-    await ref.read(capturePreferenceProvider).forget(view.collection.id);
-  }
   if (!context.mounted) return;
   showLibraryMessage(
     context,
