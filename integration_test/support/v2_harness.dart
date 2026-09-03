@@ -39,6 +39,7 @@ import 'package:web_reader/capability/foreground_multitasking.dart';
 import 'package:web_reader/core/config.dart';
 import 'package:web_reader/core/url_utils.dart';
 import 'package:web_reader/data/asset_origin_repository.dart';
+import 'package:web_reader/data/local_settings.dart';
 import 'package:web_reader/data/recognition_index.dart';
 import 'package:web_reader/data/schema.dart';
 import 'package:web_reader/domain/domain.dart';
