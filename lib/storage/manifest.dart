@@ -225,6 +225,7 @@ class EntryManifest {
     this.publishedAt,
     this.sourceMarker,
     this.entryNumber,
+    this.renderedFromPage,
   });
 
   factory EntryManifest.fromJson(Map<String, dynamic> json) {
@@ -269,6 +270,7 @@ class EntryManifest {
           : DateTime.tryParse(json['publishedAt'] as String),
       sourceMarker: json['sourceMarker'] as String?,
       entryNumber: (json['entryNumber'] as num?)?.toDouble(),
+      renderedFromPage: json['renderedFromPage'] == true ? true : null,
       assets: (json['assets'] as List<dynamic>? ?? const [])
           .map((e) => EntryAsset.fromJson(Map<String, dynamic>.from(e as Map)))
           .toList(),
@@ -334,6 +336,21 @@ class EntryManifest {
   final String? sourceMarker;
   final double? entryNumber;
 
+  /// True when these images are a **rendering of the page**, not the page's
+  /// own files.
+  ///
+  /// Written only by the rendered fallback (`save/rendered_capture.dart`),
+  /// which runs when a host serves its pictures to the browser and to nothing
+  /// else. The distinction is durable and belongs in the package: a reader
+  /// has to be able to say so, and a future re-save has to be able to tell
+  /// that replacing this with real files is an improvement rather than a
+  /// change of format.
+  ///
+  /// Null rather than false when the package holds originals, so "these are
+  /// the site's own files" and "nobody recorded either way" stay one value —
+  /// the same choice `captureModeIsUserSet` makes.
+  final bool? renderedFromPage;
+
   /// The entry's ordered pages, or — for a structured document — its stored
   /// inline images, which the document's image blocks point at by `index`.
   final List<EntryAsset> assets;
@@ -383,6 +400,7 @@ class EntryManifest {
       'publishedAt': publishedAt!.toUtc().toIso8601String(),
     if (sourceMarker != null) 'sourceMarker': sourceMarker,
     if (entryNumber != null) 'entryNumber': entryNumber,
+    if (renderedFromPage == true) 'renderedFromPage': true,
     'assets': assets.map((a) => a.toJson()).toList(),
   };
 
@@ -420,6 +438,7 @@ class EntryManifest {
     publishedAt: publishedAt,
     sourceMarker: sourceMarker,
     entryNumber: entryNumber,
+    renderedFromPage: renderedFromPage,
     assets: assets ?? this.assets,
   );
 }

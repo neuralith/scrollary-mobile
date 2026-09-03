@@ -451,8 +451,9 @@ String? entryLabelFrom({
 ///    separates `/quiet-harbour-part-12` from `/parts`, which strips
 ///    identically and is an index.
 ///
-/// One answer decides both identity and membership, because it is one
-/// question: an address either keys this root or it is not on it (V2-D72).
+/// This answers **identity** only — where a Source may be created. Whether a
+/// link on a root Source's own listing is one of its entries is a different
+/// question with different evidence, and [addressIsRootMember] answers it.
 bool addressKeysRoot(String url) {
   if (collectionFingerprint(url) != '/') return false;
   final segments = Uri.tryParse(
@@ -460,6 +461,75 @@ bool addressKeysRoot(String url) {
   )?.pathSegments.where((s) => s.trim().isNotEmpty);
   if (segments == null || segments.length != 1) return false;
   return parseEntryNumber(url: url) != null;
+}
+
+/// Whether an address a root Source's **listing linked to** is one of its
+/// entries.
+///
+/// **Why this is not [addressKeysRoot].** V2-D72 answered both questions with
+/// one predicate, on the reasoning that an address either keys the root or is
+/// not on it. That holds for identity and fails for membership, because the
+/// two are asked in different places with different evidence:
+///
+/// * Identity is asked of an address **on its own**, to decide whether to
+///   create a Source at `/`. It has to be strict: a wrong yes invents a Source
+///   that claims a whole host.
+/// * Membership is asked of a link **on a page this Source already declares as
+///   its listing** — the user said so by adding the site (`addListingSource`
+///   writes `path_key = '/'` for a home page), or discovery did. The listing
+///   context is the evidence, and the link has already survived the host check
+///   and the nav filter.
+///
+/// Requiring identity for membership broke every root Source whose entries are
+/// not single-segment: a site whose listing is its home page and whose entries
+/// live at `/entry/1` or `/works/alpha/12` matched none of its own links, the
+/// reading came back empty, and the check reported the site's own front page
+/// as "not this Source's listing".
+///
+/// What survives from V2-D72 is the reason its second condition existed: the
+/// root is a prefix of every address on the host, so membership may not be a
+/// prefix test either — the about page, the tag index and the contact form
+/// would join the work. So the rule is **the entry reading itself**: an
+/// address belongs when the listing printed a number for it or the address
+/// carries one, by the same [EntryIdentityReading] the listing's own rows are
+/// built from. `/about` and `/contact` carry no number and stay out;
+/// `/entry/1` and `/works/alpha/12` are in.
+///
+/// **An entry word has to be involved**, which is what keeps the rule as
+/// narrow as V2-D72 meant it to be. A number on its own is not evidence of an
+/// entry: a real listing is full of `/page/2`, `/archive/2024` and a "2" on a
+/// pagination control, and `_numberInUrl`'s last resort — any bare number in
+/// the final segment — would take every one of them. So:
+///
+/// * a number the **listing printed** counts, because [parseEntryNumber] only
+///   reads one beside an entry word in prose: `Chapter 12` is a number, the
+///   `2` under a page list is not;
+/// * a number in the **address** counts only where the address also names an
+///   entry — `/entry/1`, `/quiet-harbour-part-12` — never `/page/2`.
+///
+/// [label] is the text the listing printed for the link. Empty is ordinary —
+/// an image-only link — and then the address answers alone.
+bool addressIsRootMember({required String url, String label = ''}) {
+  // **Never narrower than the key.** An address that keys the root is one of
+  // its Entries by construction, and a site publishing at `/12` — V2-D72's
+  // own shape — carries no entry word to find. Starting here makes this a
+  // strict widening of what shipped: nothing that is a member today stops
+  // being one.
+  if (addressKeysRoot(url)) return true;
+  if (parseEntryNumber(title: label) != null) return true;
+  return _pathNamesAnEntry(url) && parseEntryNumber(url: url) != null;
+}
+
+/// Whether the address itself uses one of the entry words, anywhere in its
+/// path. The qualifier on the address half of [addressIsRootMember].
+bool _pathNamesAnEntry(String url) {
+  final path = Uri.tryParse(url)?.path ?? url;
+  if (path.isEmpty) return false;
+  return RegExp(
+    _entryWordPattern,
+    caseSensitive: false,
+    unicode: true,
+  ).hasMatch(path);
 }
 
 /// Work out which collection an entry belongs to, and what to call it.

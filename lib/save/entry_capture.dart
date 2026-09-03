@@ -337,6 +337,7 @@ class EntryCaptureService {
     final manifest = EntryManifest(
       schemaVersion: EntryManifest.currentSchemaVersion,
       artifact: outcome.artifact,
+      renderedFromPage: outcome.renderedFromPage,
       captureMode: outcome.captureMode?.name,
       // Null rather than false: the manifest omits the field entirely unless
       // a person chose the mode, so "detection picked it" and "nobody has

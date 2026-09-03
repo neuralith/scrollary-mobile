@@ -9,9 +9,15 @@
 ///
 /// The root is also a prefix of every other address on the host, so the two
 /// halves of this file are inseparable: what makes the root a key, and what
-/// keeps `/about-us` out of it. Membership of a root Source is decided by the
-/// same derivation that made the root a key — an address that carries an
-/// entry number and nothing above it — never by the path prefix.
+/// keeps `/about-us` out of it. Membership is **never** the path prefix.
+///
+/// It is also not the same question as the key. Identity is asked of an
+/// address on its own, to decide whether a Source may be created at `/`, and
+/// is strict for that reason. Membership is asked of a link on a page this
+/// Source already declares as its listing, and is answered by the entry
+/// reading — a number the listing printed, or one the address carries
+/// (`addressIsRootMember`). Answering membership with the identity rule is
+/// what broke every root Source whose Entries are not single-segment.
 ///
 /// Hosts are the reserved `.example` names the rest of the recognition suites
 /// use. No real site is named here, and nothing here is site-specific.
@@ -403,6 +409,68 @@ void main() {
       );
 
       expect(observation.listings.map((l) => l.url), [flatEntryUrl(1)]);
+    });
+
+    // The regression this split exists for. A site whose listing is its home
+    // page — which is what `addListingSource` writes a root Source for — and
+    // whose Entries live one segment below matched **none** of its own links,
+    // because membership was asking the identity rule and that requires a
+    // single segment. The reading came back empty and the check reported the
+    // site's own front page as "not this Source's listing".
+    test('Entries below a segment are still this root listing\'s', () async {
+      final landed = 'https://$kFlatHost/';
+      final browser = FakeBrowser()..setUrl('about:blank');
+      browser.addPage(
+        landed,
+        pageWith(landed, [
+          'https://$kFlatHost/entry/1',
+          'https://$kFlatHost/entry/2',
+          'https://$kFlatHost/about-us/',
+          'https://$kFlatHost/tag/action/',
+        ]),
+      );
+
+      final observation = await BrowserSourceObservationSource(browser).observe(
+        source: rootSource(),
+        pageUrl: null,
+        shouldContinue: () => true,
+      );
+
+      expect(observation.listRecognised, isTrue);
+      expect(observation.listings.map((l) => l.url), [
+        'https://$kFlatHost/entry/1',
+        'https://$kFlatHost/entry/2',
+      ], reason: 'an address that names an entry and numbers it is one');
+    });
+
+    // And the narrowness survives. **A number is not evidence of an entry.**
+    // `_numberInUrl`'s last resort takes any bare number in the final segment,
+    // and a real listing is full of them — pagination, year archives, a "2"
+    // under the list. Membership asks for an entry *word* as well, so none of
+    // these joins the work.
+    test('numbers that are not entry numbers stay out', () async {
+      final landed = 'https://$kFlatHost/';
+      final browser = FakeBrowser()..setUrl('about:blank');
+      browser.addPage(
+        landed,
+        pageWith(landed, [
+          'https://$kFlatHost/entry/1',
+          'https://$kFlatHost/page/2',
+          'https://$kFlatHost/archive/2024',
+          'https://$kFlatHost/newsletter/signup',
+          'https://$kFlatHost/help/how-to-read',
+        ]),
+      );
+
+      final observation = await BrowserSourceObservationSource(browser).observe(
+        source: rootSource(),
+        pageUrl: null,
+        shouldContinue: () => true,
+      );
+
+      expect(observation.listings.map((l) => l.url), [
+        'https://$kFlatHost/entry/1',
+      ]);
     });
 
     test('a link that leaves the host is still refused', () async {

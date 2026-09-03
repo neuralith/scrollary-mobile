@@ -33,6 +33,7 @@ import '../features/cleanup_dialogs.dart';
 import '../features/operation_lane.dart';
 import 'collection_models.dart';
 import 'library_widgets.dart';
+import '../save/queue_runner.dart';
 import 'run_summary.dart' show runSummarySourceProvider;
 import 'providers.dart';
 
@@ -361,6 +362,59 @@ Future<void> stopRunningDownload(
   WidgetRef ref,
   SaveTask task,
 ) async {
+  if (!await _confirmStop(context)) return;
+
+  final outcome = await ref.read(saveQueueRepoProvider).cancel(task.id);
+  if (!context.mounted) return;
+  showLibraryMessage(
+    context,
+    outcome == SaveCancelOutcome.stoppingRunning
+        ? 'Stopping at the next safe point.'
+        : 'That download had already finished.',
+  );
+}
+
+/// Stop the download **operation** that is running now.
+///
+/// The counterpart of [stopRunningDownload], and the one the running panel
+/// uses. The difference is what is being stopped, and it is V2-D56's: a row
+/// picked out of Activity is a row, but the Stop on the panel over a moving
+/// Browser is about *the thing the user started* — which for a count taken
+/// from a Source is a journey that writes one row at a time.
+///
+/// Aiming that at a row id could not work, and did not. The panel resolves
+/// `activeTaskId` through a future, so between two Entries there is no row to
+/// name and the control was simply disabled, and while one is running it can
+/// finish before the confirmation is answered — after which cancelling it says
+/// "already finished" and the run continues. Measured against the fixture: a
+/// confirmed Stop left all forty entries downloaded and no row cancelled.
+///
+/// So this asks [QueueRunner.stop], which raises the operation's own flag and
+/// then cancels whatever row is in flight. Same words, same dialog, same
+/// cooperative promise — it stops at the next safe point, removes nothing, and
+/// leaves every Entry in the library.
+/// [runner] is passed rather than resolved here, exactly as
+/// [stopRunningDownload] is passed its row: the surface drawing the Stop is
+/// already watching the run it belongs to, and the alternative — reading the
+/// nullable seam Activity's summary card uses — is null on every composition
+/// but the app's own, which would make this control silently do nothing.
+Future<void> stopRunningOperation(
+  BuildContext context,
+  QueueRunner runner,
+) async {
+  if (!runner.isRunning) {
+    showLibraryMessage(context, 'That download had already finished.');
+    return;
+  }
+  if (!await _confirmStop(context)) return;
+
+  await runner.stop();
+  if (!context.mounted) return;
+  showLibraryMessage(context, 'Stopping at the next safe point.');
+}
+
+/// The one question both stops ask, in the one wording.
+Future<bool> _confirmStop(BuildContext context) async {
   final confirmed = await showDialog<bool>(
     context: context,
     builder: (dialogContext) => AlertDialog(
@@ -384,16 +438,7 @@ Future<void> stopRunningDownload(
       ],
     ),
   );
-  if (confirmed != true || !context.mounted) return;
-
-  final outcome = await ref.read(saveQueueRepoProvider).cancel(task.id);
-  if (!context.mounted) return;
-  showLibraryMessage(
-    context,
-    outcome == SaveCancelOutcome.stoppingRunning
-        ? 'Stopping at the next safe point.'
-        : 'That download had already finished.',
-  );
+  return confirmed == true && context.mounted;
 }
 
 /// *Retry*: put a failed download back at the end of the queue.

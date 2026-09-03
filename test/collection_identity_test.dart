@@ -231,6 +231,82 @@ void main() {
       expect(keys, {'/'});
     });
 
+    // **Identity and membership are two questions.** They were one predicate
+    // (V2-D72), which is right for the key and wrong for the list: a root
+    // Source whose Entries live below a segment matched none of its own
+    // links. These pin the split — the key stays strict, the list is read by
+    // the entry reading.
+    test('an address below a segment keys no root but can be one of its '
+        'Entries', () {
+      const entry = 'https://x.example/entry/1';
+      expect(
+        addressKeysRoot(entry),
+        isFalse,
+        reason: 'two segments never key the root — the key rule is unchanged',
+      );
+      expect(
+        addressIsRootMember(url: entry, label: 'Entry 1'),
+        isTrue,
+        reason: 'but a listing that says so is what makes it a member',
+      );
+    });
+
+    test('membership still keeps the rest of the site out', () {
+      for (final url in [
+        'https://x.example/about-us/',
+        'https://x.example/contact/',
+        'https://x.example/tag/action/',
+        'https://x.example/parts/',
+        // **A number is not an entry number.** The address reading's last
+        // resort takes any bare number in the final segment, and a real
+        // listing links to plenty: pagination, year archives, a numbered tag.
+        // Membership asks for an entry word as well.
+        'https://x.example/page/2',
+        'https://x.example/archive/2024',
+        'https://x.example/tag/90s',
+      ]) {
+        expect(
+          addressIsRootMember(url: url),
+          isFalse,
+          reason: '$url names no entry, so it joins no work',
+        );
+      }
+    });
+
+    test('every address that keys the root is one of its Entries', () {
+      // Membership is a **widening** of the key, never a narrowing: V2-D72's
+      // own shape publishes at `/12`, which carries no entry word for the
+      // address half to find, and a site that works today must go on working.
+      for (final url in [
+        'https://x.example/12',
+        'https://x.example/quiet-harbour-chapter-561/',
+        'https://x.example/bolum-88',
+      ]) {
+        expect(addressKeysRoot(url), isTrue, reason: 'precondition for $url');
+        expect(
+          addressIsRootMember(url: url),
+          isTrue,
+          reason: '$url keys the root, so it is on it',
+        );
+      }
+    });
+
+    test('a label the listing printed answers where the address does not', () {
+      // Sites that address entries by slug still print a number beside them.
+      expect(
+        addressIsRootMember(
+          url: 'https://x.example/read/the-quiet-morning',
+          label: 'Chapter 12',
+        ),
+        isTrue,
+      );
+      expect(
+        addressIsRootMember(url: 'https://x.example/read/the-quiet-morning'),
+        isFalse,
+        reason: 'and with nothing printed, the address answers alone',
+      );
+    });
+
     test('the root is claimed only where the address numbers an entry', () {
       // `/chapters/` strips exactly as an entry segment does, so the
       // fingerprint alone would call it the root. It is an index, and the

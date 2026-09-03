@@ -13,6 +13,7 @@ import 'core/startup.dart';
 import 'features/splash_screen.dart';
 import 'providers.dart';
 import 'storage/file_store.dart';
+import 'data/asset_origin_repository.dart';
 import 'data/local_settings.dart';
 import 'data/recognition_index.dart';
 import 'data/collection_check_repository.dart';
@@ -34,6 +35,7 @@ import 'save/capture_preference.dart';
 import 'save/entry_capture.dart';
 import 'save/page_capture_source.dart';
 import 'save/page_hint_repository.dart';
+import 'save/rendered_consent.dart';
 import 'save/queue_runner.dart';
 import 'save/save_engine.dart';
 import 'core/config.dart';
@@ -379,6 +381,22 @@ class AppStartup {
                 config: kDefaultSaveConfig,
               ),
               sink: sink,
+              // What this device has watched asset hosts do. Without it every
+              // reading from a host that refuses pays the whole discovery cost
+              // again — one doomed request per panel, every time.
+              assetOrigins: AssetOriginRepository(library),
+              // Asked once per Source and remembered; unanswered means no.
+              // The shell owns the question because it is the only thing that
+              // can put it on screen — while none is mounted, `ask` is null
+              // and the gate declines rather than deciding for the user.
+              renderedConsent: RenderedFallbackGate(
+                index: RecognitionIndex(library),
+                store: RenderedFallbackConsentStore(
+                  LocalSettingsStore(library),
+                ),
+                ask: (url) async =>
+                    await _v2?.askRenderedFallback?.call(url) ?? false,
+              ).call,
               // The two callbacks the V2 composition never passed. Without
               // them the engine's progress and log lines were not merely
               // unrendered — they were never produced.

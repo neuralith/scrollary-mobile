@@ -482,33 +482,28 @@ void main() {
     timeout: const Timeout(Duration(minutes: 10)),
   );
 
-  // ------------------------------------------------------- A PROVEN DEFECT
+  // ------------------------------------------------- the Stop, through the UI
   //
-  // **The panel's *Stop download* does not reliably stop a sequential run.**
+  // The case above stops the operation through the same call the dialog makes.
+  // This one presses the control, and it is the half that was broken.
   //
-  // Measured on the iPhone 17 Pro simulator against this fixture, asking for
-  // 40 entries from entry 1: the panel's Stop was pressed and its dialog
-  // confirmed while the run was going, and the run finished all forty —
-  // `{completed: 40}`, 40 copies, `cancelled: 0`. Not one row was cancelled,
-  // so the stop never reached a running row at all.
+  // Measured before the fix, asking for 40 entries from entry 1: the panel's
+  // Stop was pressed and its dialog confirmed while the run was going, and the
+  // run finished all forty — `{completed: 40}`, 40 copies, `cancelled: 0`. Not
+  // one row was cancelled, so the stop never reached a running row at all.
   //
-  // Why. `_SaveRunning` draws its Stop for `runner.activeTaskId`, resolves
-  // that id to a row through an async provider, and hands
-  // `stopRunningDownload` **that row snapshot**. A journeyed entry on this
-  // fixture is captured in about two seconds, so by the time the confirmation
-  // dialog is answered the snapshot names a row that has already completed;
-  // `cancel` reports `alreadyFinished`, the user is told "That download had
-  // already finished", and the operation they asked to stop carries on to the
-  // next Entry. Between two entries the control is disabled outright, because
-  // `activeTaskId` is null while the walk is opening the next page.
+  // Why. `_SaveRunning` drew its Stop for `runner.activeTaskId`, resolved that
+  // id to a row through an async provider, and handed `stopRunningDownload`
+  // **that row snapshot**. A journeyed entry captures in about two seconds, so
+  // by the time the confirmation was answered the snapshot named a row that
+  // had already completed; `cancel` reported `alreadyFinished`, the user was
+  // told "That download had already finished", and the operation they asked to
+  // stop carried on. Between two entries the control was disabled outright,
+  // because `activeTaskId` is null while the walk opens the next page.
   //
-  // This contradicts two standing rules: V2-D56's "a user's Stop is about the
-  // operation, not about the row that happened to be running when they
-  // pressed it", and CLAUDE.md's "never offer a stop that does not stop". The
-  // fix is not a test change — the stop has to be aimed at the operation
-  // (a stop on `QueueRunner` itself) rather than at a row id read a moment
-  // earlier — so this case is skipped rather than weakened, and un-skips in
-  // the change that adds it.
+  // The Stop is now aimed at the operation (`QueueRunner.stop`), which is what
+  // V2-D56 says it is about, so neither window exists: there is nothing to go
+  // stale and nothing to be missing.
   testWidgets(
     'the panel\'s Stop ends the run the user is watching',
     (tester) async {
@@ -548,8 +543,13 @@ void main() {
         lessThan(40),
         reason: 'the operation the user stopped must not run to its count',
       );
+      expect(app.runner.isRunning, isFalse);
+      // Nothing already downloaded is removed by a stop.
+      expect(
+        (await app.ui.offline.allCopies()).where((c) => c.active),
+        isNotEmpty,
+      );
     },
     timeout: const Timeout(Duration(minutes: 10)),
-    skip: true,
   );
 }

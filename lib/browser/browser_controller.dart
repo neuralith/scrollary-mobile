@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io' show Platform;
+import 'dart:ui' as ui;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/scheduler.dart';
@@ -907,6 +908,56 @@ class BrowserController extends ChangeNotifier {
 
   Future<void> scrollTo(int y) async {
     await _call(kCallScrollTo, args: {'y': y});
+  }
+
+  /// What the WebView is showing right now, as JPEG bytes.
+  ///
+  /// The compositor's own output — the one thing about a page this class can
+  /// read without the page's cooperation, and deliberately so: it is what the
+  /// screen already shows the person looking at it, never the files behind it.
+  /// Null when nothing is attached, or when the platform declines (a surface
+  /// that has never been painted has nothing to hand back).
+  ///
+  /// **[targetPixelWidth] is in pixels and the conversion belongs here**,
+  /// because the factor is a property of the device and this class is the only
+  /// thing in `lib/` that is allowed to know about devices. The platform's
+  /// `snapshotWidth` is in *points* and is multiplied by the screen scale, so
+  /// asking for 720 points on a 3x screen produces a 2160px image — measured,
+  /// and the opposite of what a caller trying to save space intends.
+  ///
+  /// JPEG rather than PNG, and that is a size decision with a measurement
+  /// behind it: a full-scale viewport of a reading page encodes to ~1.7MB as
+  /// PNG and ~0.4MB as JPEG, and a long reading needs a hundred of them.
+  Future<Uint8List?> captureViewport({
+    int? targetPixelWidth,
+    int quality = 82,
+  }) async {
+    final view = _webView;
+    if (view == null) return null;
+    final scale = _screenScale();
+    final points = targetPixelWidth == null || scale <= 0
+        ? null
+        : targetPixelWidth / scale;
+    try {
+      return await view.takeScreenshot(
+        screenshotConfiguration: ScreenshotConfiguration(
+          compressFormat: CompressFormat.JPEG,
+          quality: quality,
+          snapshotWidth: points,
+        ),
+      );
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Device pixels per logical point, or 0 when it cannot be read.
+  double _screenScale() {
+    try {
+      return ui.PlatformDispatcher.instance.views.first.devicePixelRatio;
+    } catch (_) {
+      return 0;
+    }
   }
 
   /// Fallback asset read: pull the bytes through the page itself.

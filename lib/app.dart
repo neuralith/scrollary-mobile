@@ -513,6 +513,7 @@ class _ShellState extends ConsumerState<_Shell> {
     _sourceCheck.addListener(_onAutomationChanged);
     ref.read(v2ServicesProvider)
       ..startQueue = _startQueuedDownloads
+      ..askRenderedFallback = _askRenderedFallback
       ..checkCollection = (id, name) =>
           startCollectionCheck(context, ref, id, collectionName: name);
     _tabRequest = ref.read(shellTabRequestProvider);
@@ -540,6 +541,50 @@ class _ShellState extends ConsumerState<_Shell> {
   /// the work happens: dismissing it, or *Not now*, leaves every row queued
   /// exactly where it was, and the visible-Browser start is fully functional
   /// without Pro.
+  /// Ask whether this site may be kept as a rendering of its pages.
+  ///
+  /// Reached only when a capture has already established that the site will
+  /// not hand over its files, and only about a page that could actually be
+  /// rendered — so the question is never hypothetical. Asked **once per
+  /// Source**: `RenderedFallbackGate` stores the answer, and the next Entry
+  /// from the same site is not asked again either way.
+  ///
+  /// The wording says what the app would keep and what is lost by keeping it.
+  /// It does not characterise the site, and it does not suggest that saying no
+  /// can be worked around — because it cannot.
+  Future<bool> _askRenderedFallback(String pageUrl) async {
+    if (!mounted) return false;
+    final answer = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Save this site as pictures of the page?'),
+        content: const Text(
+          'This site sends its images to the browser and nowhere else, so they '
+          'cannot be downloaded. Scrollary can instead keep the pages as they '
+          'appear on screen — readable offline and in order, but re-encoded '
+          'and at screen quality rather than the original files.\n\n'
+          'Your answer is remembered for this site, on this device.',
+        ),
+        actions: [
+          TextButton(
+            key: const ValueKey('declineRenderedFallback'),
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('No, skip it'),
+          ),
+          TextButton(
+            key: const ValueKey('allowRenderedFallback'),
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('Save as pictures'),
+          ),
+        ],
+      ),
+    );
+    // A dismissed dialog is not consent. It is recorded as a decline by the
+    // gate, which is the honest reading of "the user closed the question" —
+    // and the Collection menu is where an answer is changed.
+    return answer ?? false;
+  }
+
   Future<void> _startQueuedDownloads({StartWhere? decided}) async {
     if (!mounted) return;
     final queue = ref.read(saveQueueRepoProvider);

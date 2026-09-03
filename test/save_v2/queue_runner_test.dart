@@ -280,6 +280,109 @@ void main() {
     });
   });
 
+  // ─── the Stop the user presses ─────────────────────────────────────────
+  //
+  // The rule is V2-D56's: **a user's Stop is about the operation, not about
+  // the row that happened to be running when they pressed it.** The group
+  // above pins the other half — cancelling one row is one row — and these pin
+  // that the operation has a stop of its own, because it did not, and the
+  // panel's Stop was aiming a row id at it. Measured against the device
+  // fixture before this existed: forty entries asked for, Stop confirmed
+  // mid-run, forty downloaded and not one row cancelled.
+  group('stopping the operation stops the operation', () {
+    test('a stop ends the run and leaves the rest queued', () async {
+      final running = await queueEntry(102);
+      final untouched = await queueEntry(103);
+      final gate = source.holdAt(urlFor(102));
+
+      final draining = runner.start();
+      await pumpUntil(() => source.started.length == 1, 'the first capture');
+
+      await runner.stop();
+      expect(runner.isStopping, isTrue, reason: 'asked, not yet landed');
+
+      gate.complete();
+      await draining;
+
+      expect(
+        source.started,
+        [urlFor(102)],
+        reason: 'nothing after the stop was claimed',
+      );
+      expect(
+        (await queue.byId(running.id))!.state,
+        SaveTaskState.cancelled,
+        reason: 'the row in flight was told, so the capture could stop',
+      );
+      final waiting = await queue.byId(untouched.id);
+      expect(
+        waiting!.state,
+        SaveTaskState.queued,
+        reason: 'stopping says nothing about work nobody has touched',
+      );
+      expect(waiting.stopReason, isNull);
+      expect(runner.isRunning, isFalse);
+      expect(runner.isStopping, isFalse, reason: 'the run is over');
+    });
+
+    // The window the panel could not act in at all: between one Entry and the
+    // next there is no running row, so a stop aimed at a row id had nothing to
+    // aim at and the control was disabled. The operation is still stoppable.
+    test('a stop with no row in flight still ends the run', () async {
+      final first = await queueEntry(102);
+      final untouched = await queueEntry(103);
+      final capture = source.holdAt(urlFor(102));
+
+      final draining = runner.start();
+      await pumpUntil(() => source.started.length == 1, 'the first capture');
+
+      // Hold the loop where it next looks for work, then let the row in
+      // flight finish: that lands it between rows, with nothing to cancel.
+      final betweenRows = queue.holdNextEligible();
+      capture.complete();
+      await pumpUntil(() => runner.activeTaskId == null, 'the row to settle');
+      expect(
+        runner.isRunning,
+        isTrue,
+        reason: 'the run is still going — it is simply between Entries',
+      );
+
+      await runner.stop();
+      betweenRows.complete();
+      await draining;
+
+      expect(runner.isRunning, isFalse);
+      expect(
+        source.started,
+        [urlFor(102)],
+        reason: 'the row after the stop was never opened',
+      );
+      expect(
+        (await queue.byId(first.id))!.state,
+        SaveTaskState.completed,
+        reason: 'the Entry that had already finished keeps its verdict',
+      );
+      final waiting = await queue.byId(untouched.id);
+      expect(
+        waiting!.state,
+        SaveTaskState.queued,
+        reason: 'what it never reached is still waiting, not failed',
+      );
+    });
+
+    test('a stop before anything runs is a no-op', () async {
+      await queueEntry(102);
+      await runner.stop();
+      expect(runner.isRunning, isFalse);
+      expect(runner.isStopping, isFalse);
+      expect(
+        (await queue.pending()),
+        hasLength(1),
+        reason: 'nothing was cancelled by a stop with nothing to stop',
+      );
+    });
+  });
+
   group('a claim that lost is skipped, not revived', () {
     test('a row cancelled inside the claim window is passed over', () async {
       final first = await queueEntry(102);
@@ -526,6 +629,27 @@ class _RacedQueue extends SaveQueueRepository {
 
   /// The row a cancel beats, once.
   String? loseClaimFor;
+
+  Completer<void>? _eligibleGate;
+
+  /// Hold the loop open at its next look for work.
+  ///
+  /// That is the moment **between two rows**: the one before it has its
+  /// verdict and nothing is in flight. It is a blink in an ordinary drain and
+  /// a whole page load in a sequential capture, where the walk is opening the
+  /// next Entry — and it is the window the panel's Stop could not act in at
+  /// all, because there was no row id to aim at.
+  Completer<void> holdNextEligible() => _eligibleGate = Completer<void>();
+
+  @override
+  Future<List<SaveTask>> eligible() async {
+    final gate = _eligibleGate;
+    if (gate != null) {
+      _eligibleGate = null;
+      await gate.future;
+    }
+    return super.eligible();
+  }
 
   @override
   Future<SaveTask?> claim(String id) async {

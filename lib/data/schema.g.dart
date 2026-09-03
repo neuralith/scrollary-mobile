@@ -10318,6 +10318,577 @@ class FaviconsCompanion extends UpdateCompanion<FaviconRow> {
   }
 }
 
+class $AssetOriginsTable extends AssetOrigins
+    with TableInfo<$AssetOriginsTable, AssetOriginRow> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $AssetOriginsTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _originMeta = const VerificationMeta('origin');
+  @override
+  late final GeneratedColumn<String> origin = GeneratedColumn<String>(
+    'origin',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _verdictMeta = const VerificationMeta(
+    'verdict',
+  );
+  @override
+  late final GeneratedColumn<String> verdict = GeneratedColumn<String>(
+    'verdict',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+    defaultValue: const Constant('unknown'),
+  );
+  static const VerificationMeta _refusedCapturesMeta = const VerificationMeta(
+    'refusedCaptures',
+  );
+  @override
+  late final GeneratedColumn<int> refusedCaptures = GeneratedColumn<int>(
+    'refused_captures',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+    defaultValue: const Constant(0),
+  );
+  static const VerificationMeta _lastRefusedLocationKeyMeta =
+      const VerificationMeta('lastRefusedLocationKey');
+  @override
+  late final GeneratedColumn<String> lastRefusedLocationKey =
+      GeneratedColumn<String>(
+        'last_refused_location_key',
+        aliasedName,
+        true,
+        type: DriftSqlType.string,
+        requiredDuringInsert: false,
+      );
+  static const VerificationMeta _lastServedAtMeta = const VerificationMeta(
+    'lastServedAt',
+  );
+  @override
+  late final GeneratedColumn<DateTime> lastServedAt = GeneratedColumn<DateTime>(
+    'last_served_at',
+    aliasedName,
+    true,
+    type: DriftSqlType.dateTime,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _firstRefusedAtMeta = const VerificationMeta(
+    'firstRefusedAt',
+  );
+  @override
+  late final GeneratedColumn<DateTime> firstRefusedAt =
+      GeneratedColumn<DateTime>(
+        'first_refused_at',
+        aliasedName,
+        true,
+        type: DriftSqlType.dateTime,
+        requiredDuringInsert: false,
+      );
+  static const VerificationMeta _establishedAtMeta = const VerificationMeta(
+    'establishedAt',
+  );
+  @override
+  late final GeneratedColumn<DateTime> establishedAt =
+      GeneratedColumn<DateTime>(
+        'established_at',
+        aliasedName,
+        true,
+        type: DriftSqlType.dateTime,
+        requiredDuringInsert: false,
+      );
+  static const VerificationMeta _updatedAtMeta = const VerificationMeta(
+    'updatedAt',
+  );
+  @override
+  late final GeneratedColumn<DateTime> updatedAt = GeneratedColumn<DateTime>(
+    'updated_at',
+    aliasedName,
+    false,
+    type: DriftSqlType.dateTime,
+    requiredDuringInsert: true,
+  );
+  @override
+  List<GeneratedColumn> get $columns => [
+    origin,
+    verdict,
+    refusedCaptures,
+    lastRefusedLocationKey,
+    lastServedAt,
+    firstRefusedAt,
+    establishedAt,
+    updatedAt,
+  ];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'asset_origins';
+  @override
+  VerificationContext validateIntegrity(
+    Insertable<AssetOriginRow> instance, {
+    bool isInserting = false,
+  }) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('origin')) {
+      context.handle(
+        _originMeta,
+        origin.isAcceptableOrUnknown(data['origin']!, _originMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_originMeta);
+    }
+    if (data.containsKey('verdict')) {
+      context.handle(
+        _verdictMeta,
+        verdict.isAcceptableOrUnknown(data['verdict']!, _verdictMeta),
+      );
+    }
+    if (data.containsKey('refused_captures')) {
+      context.handle(
+        _refusedCapturesMeta,
+        refusedCaptures.isAcceptableOrUnknown(
+          data['refused_captures']!,
+          _refusedCapturesMeta,
+        ),
+      );
+    }
+    if (data.containsKey('last_refused_location_key')) {
+      context.handle(
+        _lastRefusedLocationKeyMeta,
+        lastRefusedLocationKey.isAcceptableOrUnknown(
+          data['last_refused_location_key']!,
+          _lastRefusedLocationKeyMeta,
+        ),
+      );
+    }
+    if (data.containsKey('last_served_at')) {
+      context.handle(
+        _lastServedAtMeta,
+        lastServedAt.isAcceptableOrUnknown(
+          data['last_served_at']!,
+          _lastServedAtMeta,
+        ),
+      );
+    }
+    if (data.containsKey('first_refused_at')) {
+      context.handle(
+        _firstRefusedAtMeta,
+        firstRefusedAt.isAcceptableOrUnknown(
+          data['first_refused_at']!,
+          _firstRefusedAtMeta,
+        ),
+      );
+    }
+    if (data.containsKey('established_at')) {
+      context.handle(
+        _establishedAtMeta,
+        establishedAt.isAcceptableOrUnknown(
+          data['established_at']!,
+          _establishedAtMeta,
+        ),
+      );
+    }
+    if (data.containsKey('updated_at')) {
+      context.handle(
+        _updatedAtMeta,
+        updatedAt.isAcceptableOrUnknown(data['updated_at']!, _updatedAtMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_updatedAtMeta);
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {origin};
+  @override
+  AssetOriginRow map(Map<String, dynamic> data, {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return AssetOriginRow(
+      origin: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}origin'],
+      )!,
+      verdict: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}verdict'],
+      )!,
+      refusedCaptures: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}refused_captures'],
+      )!,
+      lastRefusedLocationKey: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}last_refused_location_key'],
+      ),
+      lastServedAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.dateTime,
+        data['${effectivePrefix}last_served_at'],
+      ),
+      firstRefusedAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.dateTime,
+        data['${effectivePrefix}first_refused_at'],
+      ),
+      establishedAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.dateTime,
+        data['${effectivePrefix}established_at'],
+      ),
+      updatedAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.dateTime,
+        data['${effectivePrefix}updated_at'],
+      )!,
+    );
+  }
+
+  @override
+  $AssetOriginsTable createAlias(String alias) {
+    return $AssetOriginsTable(attachedDatabase, alias);
+  }
+}
+
+class AssetOriginRow extends DataClass implements Insertable<AssetOriginRow> {
+  /// `scheme://host[:port]`, lowercased. The unit the answer belongs to.
+  final String origin;
+
+  /// `unknown` · `suspected` · `refusing`. See `AssetOriginVerdict`.
+  final String verdict;
+
+  /// Captures — not assets — that this origin refused, counted once per
+  /// Location so re-saving the same page cannot promote a verdict on its own.
+  final int refusedCaptures;
+
+  /// The last Location that was refused, so the count above stays honest.
+  final String? lastRefusedLocationKey;
+
+  /// When this origin last handed over a file. Any success at all clears a
+  /// verdict: the host changed its mind, or it never meant it.
+  final DateTime? lastServedAt;
+  final DateTime? firstRefusedAt;
+
+  /// When the verdict reached `refusing`. What staleness is measured from.
+  final DateTime? establishedAt;
+  final DateTime updatedAt;
+  const AssetOriginRow({
+    required this.origin,
+    required this.verdict,
+    required this.refusedCaptures,
+    this.lastRefusedLocationKey,
+    this.lastServedAt,
+    this.firstRefusedAt,
+    this.establishedAt,
+    required this.updatedAt,
+  });
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['origin'] = Variable<String>(origin);
+    map['verdict'] = Variable<String>(verdict);
+    map['refused_captures'] = Variable<int>(refusedCaptures);
+    if (!nullToAbsent || lastRefusedLocationKey != null) {
+      map['last_refused_location_key'] = Variable<String>(
+        lastRefusedLocationKey,
+      );
+    }
+    if (!nullToAbsent || lastServedAt != null) {
+      map['last_served_at'] = Variable<DateTime>(lastServedAt);
+    }
+    if (!nullToAbsent || firstRefusedAt != null) {
+      map['first_refused_at'] = Variable<DateTime>(firstRefusedAt);
+    }
+    if (!nullToAbsent || establishedAt != null) {
+      map['established_at'] = Variable<DateTime>(establishedAt);
+    }
+    map['updated_at'] = Variable<DateTime>(updatedAt);
+    return map;
+  }
+
+  AssetOriginsCompanion toCompanion(bool nullToAbsent) {
+    return AssetOriginsCompanion(
+      origin: Value(origin),
+      verdict: Value(verdict),
+      refusedCaptures: Value(refusedCaptures),
+      lastRefusedLocationKey: lastRefusedLocationKey == null && nullToAbsent
+          ? const Value.absent()
+          : Value(lastRefusedLocationKey),
+      lastServedAt: lastServedAt == null && nullToAbsent
+          ? const Value.absent()
+          : Value(lastServedAt),
+      firstRefusedAt: firstRefusedAt == null && nullToAbsent
+          ? const Value.absent()
+          : Value(firstRefusedAt),
+      establishedAt: establishedAt == null && nullToAbsent
+          ? const Value.absent()
+          : Value(establishedAt),
+      updatedAt: Value(updatedAt),
+    );
+  }
+
+  factory AssetOriginRow.fromJson(
+    Map<String, dynamic> json, {
+    ValueSerializer? serializer,
+  }) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return AssetOriginRow(
+      origin: serializer.fromJson<String>(json['origin']),
+      verdict: serializer.fromJson<String>(json['verdict']),
+      refusedCaptures: serializer.fromJson<int>(json['refusedCaptures']),
+      lastRefusedLocationKey: serializer.fromJson<String?>(
+        json['lastRefusedLocationKey'],
+      ),
+      lastServedAt: serializer.fromJson<DateTime?>(json['lastServedAt']),
+      firstRefusedAt: serializer.fromJson<DateTime?>(json['firstRefusedAt']),
+      establishedAt: serializer.fromJson<DateTime?>(json['establishedAt']),
+      updatedAt: serializer.fromJson<DateTime>(json['updatedAt']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'origin': serializer.toJson<String>(origin),
+      'verdict': serializer.toJson<String>(verdict),
+      'refusedCaptures': serializer.toJson<int>(refusedCaptures),
+      'lastRefusedLocationKey': serializer.toJson<String?>(
+        lastRefusedLocationKey,
+      ),
+      'lastServedAt': serializer.toJson<DateTime?>(lastServedAt),
+      'firstRefusedAt': serializer.toJson<DateTime?>(firstRefusedAt),
+      'establishedAt': serializer.toJson<DateTime?>(establishedAt),
+      'updatedAt': serializer.toJson<DateTime>(updatedAt),
+    };
+  }
+
+  AssetOriginRow copyWith({
+    String? origin,
+    String? verdict,
+    int? refusedCaptures,
+    Value<String?> lastRefusedLocationKey = const Value.absent(),
+    Value<DateTime?> lastServedAt = const Value.absent(),
+    Value<DateTime?> firstRefusedAt = const Value.absent(),
+    Value<DateTime?> establishedAt = const Value.absent(),
+    DateTime? updatedAt,
+  }) => AssetOriginRow(
+    origin: origin ?? this.origin,
+    verdict: verdict ?? this.verdict,
+    refusedCaptures: refusedCaptures ?? this.refusedCaptures,
+    lastRefusedLocationKey: lastRefusedLocationKey.present
+        ? lastRefusedLocationKey.value
+        : this.lastRefusedLocationKey,
+    lastServedAt: lastServedAt.present ? lastServedAt.value : this.lastServedAt,
+    firstRefusedAt: firstRefusedAt.present
+        ? firstRefusedAt.value
+        : this.firstRefusedAt,
+    establishedAt: establishedAt.present
+        ? establishedAt.value
+        : this.establishedAt,
+    updatedAt: updatedAt ?? this.updatedAt,
+  );
+  AssetOriginRow copyWithCompanion(AssetOriginsCompanion data) {
+    return AssetOriginRow(
+      origin: data.origin.present ? data.origin.value : this.origin,
+      verdict: data.verdict.present ? data.verdict.value : this.verdict,
+      refusedCaptures: data.refusedCaptures.present
+          ? data.refusedCaptures.value
+          : this.refusedCaptures,
+      lastRefusedLocationKey: data.lastRefusedLocationKey.present
+          ? data.lastRefusedLocationKey.value
+          : this.lastRefusedLocationKey,
+      lastServedAt: data.lastServedAt.present
+          ? data.lastServedAt.value
+          : this.lastServedAt,
+      firstRefusedAt: data.firstRefusedAt.present
+          ? data.firstRefusedAt.value
+          : this.firstRefusedAt,
+      establishedAt: data.establishedAt.present
+          ? data.establishedAt.value
+          : this.establishedAt,
+      updatedAt: data.updatedAt.present ? data.updatedAt.value : this.updatedAt,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('AssetOriginRow(')
+          ..write('origin: $origin, ')
+          ..write('verdict: $verdict, ')
+          ..write('refusedCaptures: $refusedCaptures, ')
+          ..write('lastRefusedLocationKey: $lastRefusedLocationKey, ')
+          ..write('lastServedAt: $lastServedAt, ')
+          ..write('firstRefusedAt: $firstRefusedAt, ')
+          ..write('establishedAt: $establishedAt, ')
+          ..write('updatedAt: $updatedAt')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode => Object.hash(
+    origin,
+    verdict,
+    refusedCaptures,
+    lastRefusedLocationKey,
+    lastServedAt,
+    firstRefusedAt,
+    establishedAt,
+    updatedAt,
+  );
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is AssetOriginRow &&
+          other.origin == this.origin &&
+          other.verdict == this.verdict &&
+          other.refusedCaptures == this.refusedCaptures &&
+          other.lastRefusedLocationKey == this.lastRefusedLocationKey &&
+          other.lastServedAt == this.lastServedAt &&
+          other.firstRefusedAt == this.firstRefusedAt &&
+          other.establishedAt == this.establishedAt &&
+          other.updatedAt == this.updatedAt);
+}
+
+class AssetOriginsCompanion extends UpdateCompanion<AssetOriginRow> {
+  final Value<String> origin;
+  final Value<String> verdict;
+  final Value<int> refusedCaptures;
+  final Value<String?> lastRefusedLocationKey;
+  final Value<DateTime?> lastServedAt;
+  final Value<DateTime?> firstRefusedAt;
+  final Value<DateTime?> establishedAt;
+  final Value<DateTime> updatedAt;
+  final Value<int> rowid;
+  const AssetOriginsCompanion({
+    this.origin = const Value.absent(),
+    this.verdict = const Value.absent(),
+    this.refusedCaptures = const Value.absent(),
+    this.lastRefusedLocationKey = const Value.absent(),
+    this.lastServedAt = const Value.absent(),
+    this.firstRefusedAt = const Value.absent(),
+    this.establishedAt = const Value.absent(),
+    this.updatedAt = const Value.absent(),
+    this.rowid = const Value.absent(),
+  });
+  AssetOriginsCompanion.insert({
+    required String origin,
+    this.verdict = const Value.absent(),
+    this.refusedCaptures = const Value.absent(),
+    this.lastRefusedLocationKey = const Value.absent(),
+    this.lastServedAt = const Value.absent(),
+    this.firstRefusedAt = const Value.absent(),
+    this.establishedAt = const Value.absent(),
+    required DateTime updatedAt,
+    this.rowid = const Value.absent(),
+  }) : origin = Value(origin),
+       updatedAt = Value(updatedAt);
+  static Insertable<AssetOriginRow> custom({
+    Expression<String>? origin,
+    Expression<String>? verdict,
+    Expression<int>? refusedCaptures,
+    Expression<String>? lastRefusedLocationKey,
+    Expression<DateTime>? lastServedAt,
+    Expression<DateTime>? firstRefusedAt,
+    Expression<DateTime>? establishedAt,
+    Expression<DateTime>? updatedAt,
+    Expression<int>? rowid,
+  }) {
+    return RawValuesInsertable({
+      if (origin != null) 'origin': origin,
+      if (verdict != null) 'verdict': verdict,
+      if (refusedCaptures != null) 'refused_captures': refusedCaptures,
+      if (lastRefusedLocationKey != null)
+        'last_refused_location_key': lastRefusedLocationKey,
+      if (lastServedAt != null) 'last_served_at': lastServedAt,
+      if (firstRefusedAt != null) 'first_refused_at': firstRefusedAt,
+      if (establishedAt != null) 'established_at': establishedAt,
+      if (updatedAt != null) 'updated_at': updatedAt,
+      if (rowid != null) 'rowid': rowid,
+    });
+  }
+
+  AssetOriginsCompanion copyWith({
+    Value<String>? origin,
+    Value<String>? verdict,
+    Value<int>? refusedCaptures,
+    Value<String?>? lastRefusedLocationKey,
+    Value<DateTime?>? lastServedAt,
+    Value<DateTime?>? firstRefusedAt,
+    Value<DateTime?>? establishedAt,
+    Value<DateTime>? updatedAt,
+    Value<int>? rowid,
+  }) {
+    return AssetOriginsCompanion(
+      origin: origin ?? this.origin,
+      verdict: verdict ?? this.verdict,
+      refusedCaptures: refusedCaptures ?? this.refusedCaptures,
+      lastRefusedLocationKey:
+          lastRefusedLocationKey ?? this.lastRefusedLocationKey,
+      lastServedAt: lastServedAt ?? this.lastServedAt,
+      firstRefusedAt: firstRefusedAt ?? this.firstRefusedAt,
+      establishedAt: establishedAt ?? this.establishedAt,
+      updatedAt: updatedAt ?? this.updatedAt,
+      rowid: rowid ?? this.rowid,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (origin.present) {
+      map['origin'] = Variable<String>(origin.value);
+    }
+    if (verdict.present) {
+      map['verdict'] = Variable<String>(verdict.value);
+    }
+    if (refusedCaptures.present) {
+      map['refused_captures'] = Variable<int>(refusedCaptures.value);
+    }
+    if (lastRefusedLocationKey.present) {
+      map['last_refused_location_key'] = Variable<String>(
+        lastRefusedLocationKey.value,
+      );
+    }
+    if (lastServedAt.present) {
+      map['last_served_at'] = Variable<DateTime>(lastServedAt.value);
+    }
+    if (firstRefusedAt.present) {
+      map['first_refused_at'] = Variable<DateTime>(firstRefusedAt.value);
+    }
+    if (establishedAt.present) {
+      map['established_at'] = Variable<DateTime>(establishedAt.value);
+    }
+    if (updatedAt.present) {
+      map['updated_at'] = Variable<DateTime>(updatedAt.value);
+    }
+    if (rowid.present) {
+      map['rowid'] = Variable<int>(rowid.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('AssetOriginsCompanion(')
+          ..write('origin: $origin, ')
+          ..write('verdict: $verdict, ')
+          ..write('refusedCaptures: $refusedCaptures, ')
+          ..write('lastRefusedLocationKey: $lastRefusedLocationKey, ')
+          ..write('lastServedAt: $lastServedAt, ')
+          ..write('firstRefusedAt: $firstRefusedAt, ')
+          ..write('establishedAt: $establishedAt, ')
+          ..write('updatedAt: $updatedAt, ')
+          ..write('rowid: $rowid')
+          ..write(')'))
+        .toString();
+  }
+}
+
 class $LocalSettingsTable extends LocalSettings
     with TableInfo<$LocalSettingsTable, SettingRow> {
   @override
@@ -10549,6 +11120,7 @@ abstract class _$LibraryDatabase extends GeneratedDatabase {
   late final $PageHintsTable pageHints = $PageHintsTable(this);
   late final $SavedSitesTable savedSites = $SavedSitesTable(this);
   late final $FaviconsTable favicons = $FaviconsTable(this);
+  late final $AssetOriginsTable assetOrigins = $AssetOriginsTable(this);
   late final $LocalSettingsTable localSettings = $LocalSettingsTable(this);
   @override
   Iterable<TableInfo<Table, Object?>> get allTables =>
@@ -10572,6 +11144,7 @@ abstract class _$LibraryDatabase extends GeneratedDatabase {
     pageHints,
     savedSites,
     favicons,
+    assetOrigins,
     localSettings,
   ];
 }
@@ -15627,6 +16200,279 @@ typedef $$FaviconsTableProcessedTableManager =
       FaviconRow,
       PrefetchHooks Function()
     >;
+typedef $$AssetOriginsTableCreateCompanionBuilder =
+    AssetOriginsCompanion Function({
+      required String origin,
+      Value<String> verdict,
+      Value<int> refusedCaptures,
+      Value<String?> lastRefusedLocationKey,
+      Value<DateTime?> lastServedAt,
+      Value<DateTime?> firstRefusedAt,
+      Value<DateTime?> establishedAt,
+      required DateTime updatedAt,
+      Value<int> rowid,
+    });
+typedef $$AssetOriginsTableUpdateCompanionBuilder =
+    AssetOriginsCompanion Function({
+      Value<String> origin,
+      Value<String> verdict,
+      Value<int> refusedCaptures,
+      Value<String?> lastRefusedLocationKey,
+      Value<DateTime?> lastServedAt,
+      Value<DateTime?> firstRefusedAt,
+      Value<DateTime?> establishedAt,
+      Value<DateTime> updatedAt,
+      Value<int> rowid,
+    });
+
+class $$AssetOriginsTableFilterComposer
+    extends Composer<_$LibraryDatabase, $AssetOriginsTable> {
+  $$AssetOriginsTableFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnFilters<String> get origin => $composableBuilder(
+    column: $table.origin,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get verdict => $composableBuilder(
+    column: $table.verdict,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get refusedCaptures => $composableBuilder(
+    column: $table.refusedCaptures,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get lastRefusedLocationKey => $composableBuilder(
+    column: $table.lastRefusedLocationKey,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<DateTime> get lastServedAt => $composableBuilder(
+    column: $table.lastServedAt,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<DateTime> get firstRefusedAt => $composableBuilder(
+    column: $table.firstRefusedAt,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<DateTime> get establishedAt => $composableBuilder(
+    column: $table.establishedAt,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<DateTime> get updatedAt => $composableBuilder(
+    column: $table.updatedAt,
+    builder: (column) => ColumnFilters(column),
+  );
+}
+
+class $$AssetOriginsTableOrderingComposer
+    extends Composer<_$LibraryDatabase, $AssetOriginsTable> {
+  $$AssetOriginsTableOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnOrderings<String> get origin => $composableBuilder(
+    column: $table.origin,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get verdict => $composableBuilder(
+    column: $table.verdict,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get refusedCaptures => $composableBuilder(
+    column: $table.refusedCaptures,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get lastRefusedLocationKey => $composableBuilder(
+    column: $table.lastRefusedLocationKey,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<DateTime> get lastServedAt => $composableBuilder(
+    column: $table.lastServedAt,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<DateTime> get firstRefusedAt => $composableBuilder(
+    column: $table.firstRefusedAt,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<DateTime> get establishedAt => $composableBuilder(
+    column: $table.establishedAt,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<DateTime> get updatedAt => $composableBuilder(
+    column: $table.updatedAt,
+    builder: (column) => ColumnOrderings(column),
+  );
+}
+
+class $$AssetOriginsTableAnnotationComposer
+    extends Composer<_$LibraryDatabase, $AssetOriginsTable> {
+  $$AssetOriginsTableAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  GeneratedColumn<String> get origin =>
+      $composableBuilder(column: $table.origin, builder: (column) => column);
+
+  GeneratedColumn<String> get verdict =>
+      $composableBuilder(column: $table.verdict, builder: (column) => column);
+
+  GeneratedColumn<int> get refusedCaptures => $composableBuilder(
+    column: $table.refusedCaptures,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get lastRefusedLocationKey => $composableBuilder(
+    column: $table.lastRefusedLocationKey,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<DateTime> get lastServedAt => $composableBuilder(
+    column: $table.lastServedAt,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<DateTime> get firstRefusedAt => $composableBuilder(
+    column: $table.firstRefusedAt,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<DateTime> get establishedAt => $composableBuilder(
+    column: $table.establishedAt,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<DateTime> get updatedAt =>
+      $composableBuilder(column: $table.updatedAt, builder: (column) => column);
+}
+
+class $$AssetOriginsTableTableManager
+    extends
+        RootTableManager<
+          _$LibraryDatabase,
+          $AssetOriginsTable,
+          AssetOriginRow,
+          $$AssetOriginsTableFilterComposer,
+          $$AssetOriginsTableOrderingComposer,
+          $$AssetOriginsTableAnnotationComposer,
+          $$AssetOriginsTableCreateCompanionBuilder,
+          $$AssetOriginsTableUpdateCompanionBuilder,
+          (
+            AssetOriginRow,
+            BaseReferences<
+              _$LibraryDatabase,
+              $AssetOriginsTable,
+              AssetOriginRow
+            >,
+          ),
+          AssetOriginRow,
+          PrefetchHooks Function()
+        > {
+  $$AssetOriginsTableTableManager(
+    _$LibraryDatabase db,
+    $AssetOriginsTable table,
+  ) : super(
+        TableManagerState(
+          db: db,
+          table: table,
+          createFilteringComposer: () =>
+              $$AssetOriginsTableFilterComposer($db: db, $table: table),
+          createOrderingComposer: () =>
+              $$AssetOriginsTableOrderingComposer($db: db, $table: table),
+          createComputedFieldComposer: () =>
+              $$AssetOriginsTableAnnotationComposer($db: db, $table: table),
+          updateCompanionCallback:
+              ({
+                Value<String> origin = const Value.absent(),
+                Value<String> verdict = const Value.absent(),
+                Value<int> refusedCaptures = const Value.absent(),
+                Value<String?> lastRefusedLocationKey = const Value.absent(),
+                Value<DateTime?> lastServedAt = const Value.absent(),
+                Value<DateTime?> firstRefusedAt = const Value.absent(),
+                Value<DateTime?> establishedAt = const Value.absent(),
+                Value<DateTime> updatedAt = const Value.absent(),
+                Value<int> rowid = const Value.absent(),
+              }) => AssetOriginsCompanion(
+                origin: origin,
+                verdict: verdict,
+                refusedCaptures: refusedCaptures,
+                lastRefusedLocationKey: lastRefusedLocationKey,
+                lastServedAt: lastServedAt,
+                firstRefusedAt: firstRefusedAt,
+                establishedAt: establishedAt,
+                updatedAt: updatedAt,
+                rowid: rowid,
+              ),
+          createCompanionCallback:
+              ({
+                required String origin,
+                Value<String> verdict = const Value.absent(),
+                Value<int> refusedCaptures = const Value.absent(),
+                Value<String?> lastRefusedLocationKey = const Value.absent(),
+                Value<DateTime?> lastServedAt = const Value.absent(),
+                Value<DateTime?> firstRefusedAt = const Value.absent(),
+                Value<DateTime?> establishedAt = const Value.absent(),
+                required DateTime updatedAt,
+                Value<int> rowid = const Value.absent(),
+              }) => AssetOriginsCompanion.insert(
+                origin: origin,
+                verdict: verdict,
+                refusedCaptures: refusedCaptures,
+                lastRefusedLocationKey: lastRefusedLocationKey,
+                lastServedAt: lastServedAt,
+                firstRefusedAt: firstRefusedAt,
+                establishedAt: establishedAt,
+                updatedAt: updatedAt,
+                rowid: rowid,
+              ),
+          withReferenceMapper: (p0) => p0
+              .map((e) => (e.readTable(table), BaseReferences(db, table, e)))
+              .toList(),
+          prefetchHooksCallback: null,
+        ),
+      );
+}
+
+typedef $$AssetOriginsTableProcessedTableManager =
+    ProcessedTableManager<
+      _$LibraryDatabase,
+      $AssetOriginsTable,
+      AssetOriginRow,
+      $$AssetOriginsTableFilterComposer,
+      $$AssetOriginsTableOrderingComposer,
+      $$AssetOriginsTableAnnotationComposer,
+      $$AssetOriginsTableCreateCompanionBuilder,
+      $$AssetOriginsTableUpdateCompanionBuilder,
+      (
+        AssetOriginRow,
+        BaseReferences<_$LibraryDatabase, $AssetOriginsTable, AssetOriginRow>,
+      ),
+      AssetOriginRow,
+      PrefetchHooks Function()
+    >;
 typedef $$LocalSettingsTableCreateCompanionBuilder =
     LocalSettingsCompanion Function({
       required String key,
@@ -15807,6 +16653,8 @@ class $LibraryDatabaseManager {
       $$SavedSitesTableTableManager(_db, _db.savedSites);
   $$FaviconsTableTableManager get favicons =>
       $$FaviconsTableTableManager(_db, _db.favicons);
+  $$AssetOriginsTableTableManager get assetOrigins =>
+      $$AssetOriginsTableTableManager(_db, _db.assetOrigins);
   $$LocalSettingsTableTableManager get localSettings =>
       $$LocalSettingsTableTableManager(_db, _db.localSettings);
 }
