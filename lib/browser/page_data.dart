@@ -236,7 +236,21 @@ class PageContentSignals {
         headingText: json['headingText']?.toString().trim() ?? '',
       );
 
-  /// Characters of visible prose in the main content region.
+  /// Characters of visible prose in the readable region, **excluding page
+  /// furniture** — and [paragraphCount] is the `<p>` elements behind that same
+  /// measurement, not every `<p>` in the document.
+  ///
+  /// The exclusion is the whole point. A page that declares no `<article>`, no
+  /// `<main>` and no dense paragraph container has `document.body` for a
+  /// readable region, so without it these two count the site's menus, its
+  /// listings and its login form. A page of stacked panels then reads as an
+  /// article with several thousand characters of prose; the save that follows
+  /// extracts text from it, correctly finds none, and fails — and the images
+  /// the page is made of never reach candidate selection at all.
+  ///
+  /// Measured over the blocks `save/document_extraction.dart` will keep, so
+  /// these numbers and that extraction cannot disagree about whether the page
+  /// has anything to read.
   final int textLength;
   final int paragraphCount;
 

@@ -99,6 +99,13 @@ Future<bool> handleFixtureRequest(
     return true;
   }
 
+  // A page of panels whose only words are its own furniture.
+  //   /noprose
+  if (path == '/noprose') {
+    await _html(res, noProsePage());
+    return true;
+  }
+
   // One of every lazy/broken/loaded image shape.
   //   /lazyshapes
   if (path == '/lazyshapes') {
@@ -304,6 +311,87 @@ String wideEntryPage(int count) {
 <title>Wide entry — $count panels</title>
 <style>img.panel{display:block;width:100%;height:auto;min-height:12px}</style>
 </head><body><div class="reader">$buf</div></body></html>''';
+}
+
+/// A page of stacked panels whose **only words are its own furniture**.
+///
+/// The shape that made an image page save as text. Three ordinary things hold
+/// at once, and none of them is unusual on its own:
+///
+/// 1. **No `<article>`, no `<main>`, no `role=main`.** The readable region
+///    therefore falls back to the whole document.
+/// 2. **The menus, the listing and the sign-in box are `<div>`s, not `<nav>`
+///    or `<footer>`.** Very common, and it matters because the region's text
+///    reading drops chrome *tags* and nothing else — so all of that text is
+///    counted as the page's prose.
+/// 3. **The readable column carries a negated state class**
+///    (`sidebar-hidden`: the column that is left when the sidebar is gone).
+///    Matched as a declaration, it marks the readable half of the page as
+///    furniture, which empties the content-region image count as well.
+///
+/// Together those made a page of panels measure several thousand characters
+/// of "prose", classify as an article, resolve to a text capture, and fail
+/// with "no readable text" — while its panels were never looked at.
+///
+/// The panels declare their size and carry distinct addresses, so what is
+/// under test is the classification and not the loader.
+String noProsePage({int panelCount = 6}) {
+  final panels = StringBuffer();
+  for (var i = 1; i <= panelCount; i++) {
+    panels.writeln(
+      '<img class="panel" src="/img/1/$i.png" width="800" height="1200" '
+      'alt="panel $i">',
+    );
+  }
+
+  // Furniture prose: comfortably past the 900-character prose floor and the
+  // three-paragraph floor, and every character of it inside a container named
+  // as furniture. Without the fix this is what the page is "about".
+  String filler(String what) =>
+      'This block is $what. It exists so the page carries more than nine '
+      'hundred characters of words that no reader came here to read, in more '
+      'than three paragraphs, in a container this markup names for what it '
+      'is. Every sentence in it is page furniture and belongs to the site '
+      'rather than to the entry, which is exactly why a measurement that '
+      'counts it cannot tell an article from a column of pictures. ';
+
+  return '''
+<!doctype html><html><head>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Fixture — words are all furniture</title>
+<style>
+  body { margin:0; background:#111; color:#eee; font-family:-apple-system,sans-serif; }
+  img.panel { display:block; width:100%; height:auto; margin:0 auto; max-width:800px; }
+  .site-menu, .entry-list-widget, .login-widget, .comments-area,
+  .page-footer { padding:12px 16px; background:#1c1c1c; }
+</style></head>
+<body class="header-style-1">
+<div class="site-menu">
+  <img src="/chrome/logo.png" width="240" height="48" alt="logo">
+  <p>${filler('the site menu')}</p>
+  <p>${filler('the second row of the site menu')}</p>
+</div>
+<div class="entry-list-widget">
+  <p>${filler('the listing of everything else on the site')}</p>
+</div>
+<div class="main-col sidebar-hidden">
+  <h1>Fixture — words are all furniture</h1>
+  <div class="reader">
+$panels
+  </div>
+</div>
+<div class="login-widget">
+  <p>${filler('the sign-in box')}</p>
+  <p>${filler('the second half of the sign-in box')}</p>
+</div>
+<div class="comments-area">
+  <p>${filler('the comments section')}</p>
+</div>
+<div class="page-footer">
+  <p>${filler('the footer')}</p>
+  <img src="/chrome/pixel.png" width="1" height="1" alt="">
+</div>
+</body></html>''';
 }
 
 /// The app-shell layout: `<body>` does not scroll, an inner element does.

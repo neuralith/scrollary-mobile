@@ -93,10 +93,42 @@ window.__wr = window.__wr || (function () {
     'skip-?link|screen-?reader|visually-?hidden|sr-?only' +
     ')([-_ ]|$)', 'i');
 
+  // Words that *deny* the vocabulary word standing beside them in the same
+  // class token. A theme writes `sidebar-hidden` on the column that is left
+  // when the sidebar is gone — on the MAIN column — and `no-comments` on a
+  // post that has none. Read as declarations, those name the readable part of
+  // the page as furniture, and everything inside it is then excluded from the
+  // prose measurement, from the content-region image count and from every
+  // extracted block. A page of stacked panels came out of that with no
+  // content region at all.
+  var CHROME_DENIED = new RegExp(
+    '(^|[-_])(no|non|not|without|hide|hidden|none|off|disabled)([-_]|$)', 'i');
+
+  /// Does this one class or id token declare page furniture?
+  ///
+  /// The denial is tested against what surrounds the matched word *inside its
+  /// own token*, never against the token as a whole — in `visually-hidden`
+  /// the word "hidden" IS the vocabulary term, and that one has to keep
+  /// matching.
+  function tokenIsChrome(token) {
+    var m = CHROME_WORDS.exec(token);
+    if (!m) return false;
+    var start = m.index + m[1].length;
+    var before = token.slice(0, start);
+    var after = token.slice(start + m[2].length);
+    return !(CHROME_DENIED.test(before) || CHROME_DENIED.test(after));
+  }
+
   function namedAsChrome(el) {
+    // The document root holds the page; it cannot be furniture inside it.
+    // Themes park their options there — a `header-style-1` on <body> would
+    // otherwise make every element on the page furniture at once.
+    if (el.tagName === 'BODY' || el.tagName === 'HTML') return false;
     var cls = (typeof el.className === 'string' ? el.className : '');
-    if (cls && CHROME_WORDS.test(cls)) return true;
-    if (el.id && CHROME_WORDS.test(el.id)) return true;
+    var names = (cls + ' ' + (el.id || '')).split(/\s+/);
+    for (var n = 0; n < names.length; n++) {
+      if (names[n] && tokenIsChrome(names[n])) return true;
+    }
     var role = el.getAttribute && el.getAttribute('role');
     if (role === 'navigation' || role === 'complementary' ||
         role === 'banner' || role === 'contentinfo' || role === 'search') {
@@ -426,11 +458,53 @@ window.__wr = window.__wr || (function () {
     return { el: document.body, basis: 'whole document' };
   }
 
+  /// The visible prose inside [root] that is not page furniture, counted the
+  /// way `extractDocument` will read it.
+  ///
+  /// **One definition, two consumers**, and the bug this replaces was the two
+  /// of them disagreeing. `textLength` used to be the whole readable region —
+  /// which is `document.body` on every page that declares no <article>, no
+  /// <main> and no dense paragraph container — and `paragraphCount` used to be
+  /// every <p> in the *document*, furniture and all, from a selector that
+  /// ended in a bare `p`. A page whose only words are its menus, its listing
+  /// of everything else on the site and its login form therefore measured
+  /// thousands of characters of
+  /// "prose" and three dozen paragraphs, was classified as an article, and was
+  /// handed to a text extraction that then correctly found nothing readable in
+  /// it. Nothing about it was an article, and its own images never got looked
+  /// at.
+  ///
+  /// Still a measurement, not a judgement: every threshold stays in Dart.
+  function proseSignals(root) {
+    var el = root || document.body;
+    if (!el) return { length: 0, paragraphs: 0 };
+    var nodes = el.querySelectorAll(
+      'p,h1,h2,h3,h4,h5,h6,blockquote,li,pre,figcaption');
+    var length = 0, paragraphs = 0;
+    for (var i = 0; i < nodes.length && i < 3000; i++) {
+      var node = nodes[i];
+      if (isFurniture(node)) continue;
+      if (blockHidden(node)) continue;
+      // An element whose text is taken whole must not have its inner
+      // paragraphs counted a second time — extractDocument's own rule.
+      var nested = false, p = node.parentElement, depth = 0;
+      while (p && p !== el && depth < 12) {
+        if (WHOLE_TEXT_TAGS[p.tagName]) { nested = true; break; }
+        p = p.parentElement; depth++;
+      }
+      if (nested) continue;
+      var t = elementText(node);
+      if (!t) continue;
+      length += t.length;
+      if (node.tagName === 'P') paragraphs++;
+    }
+    return { length: length, paragraphs: paragraphs };
+  }
+
   /// Structural description of the document. No subject matter, no genre.
   function contentSignals() {
     var region = readableRegion();
-    var text = visibleText(region.el);
-    var paragraphs = document.querySelectorAll('article p, main p, [role=main] p, p');
+    var prose = proseSignals(region.el);
     var pixels = 0, imageCount = 0;
     var regionPixels = 0, regionCount = 0;
     var imgs = document.images || [];
@@ -502,8 +576,8 @@ window.__wr = window.__wr || (function () {
     }
 
     return {
-      textLength: text.length,
-      paragraphCount: paragraphs.length,
+      textLength: prose.length,
+      paragraphCount: prose.paragraphs,
       headingCount: headingCount,
       contentImageCount: imageCount,
       contentImagePixels: pixels,

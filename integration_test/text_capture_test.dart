@@ -154,6 +154,102 @@ void main() {
     timeout: const Timeout(Duration(minutes: 5)),
   );
 
+  // --- a page whose only words are its own furniture -----------------------
+  //
+  // A real page of stacked panels declared no <article>, no <main> and no
+  // dense paragraph container, wrote its menus and its sign-in box as <div>s
+  // rather than <nav>/<footer>, and carried `sidebar-hidden` on its readable
+  // column. The signals therefore measured ~6,400 characters of "prose" over
+  // 23 "paragraphs" — every one of them furniture — and reported no
+  // content-region images at all. The page classified as an article, resolved
+  // to a text capture, and failed saying it had no readable text. That was
+  // true, and it said nothing about the 132 panels never looked at.
+  //
+  // Both halves are asserted, because either one alone reproduces it.
+
+  testWidgets(
+    'a page whose only words are furniture is not an article',
+    (tester) async {
+      await boot(tester, startUrl: '${fixture.base}/noprose');
+      final probe = await app.browser.probe(withLinks: true);
+
+      // Furniture text is not prose. The fixture carries several thousand
+      // characters of it, all inside named containers.
+      expect(
+        probe.content.textLength,
+        lessThan(900),
+        reason:
+            'the menus, the listing and the sign-in box were counted as the '
+            "page's prose",
+      );
+      expect(
+        probe.content.paragraphCount,
+        lessThan(3),
+        reason:
+            'paragraphCount counted every <p> in the document rather than '
+            'the ones behind the prose measurement',
+      );
+      expect(probe.content.looksProse, isFalse);
+      expect(probe.content.looksImageDominant, isTrue);
+
+      // A negated state class is not a declaration of furniture: the readable
+      // column is `main-col sidebar-hidden`, and its panels are in the region.
+      expect(
+        probe.content.contentRegionImageCount,
+        greaterThanOrEqualTo(6),
+        reason:
+            '"sidebar-hidden" names the column left when the sidebar is gone '
+            '— read as a declaration it empties the content region',
+      );
+
+      final capabilities = detectCaptureCapabilities(probe);
+      expect(capabilities.content.kind, ContentKind.imageDominant);
+      expect(capabilities.allows(CaptureMode.imageSequence), isTrue);
+      expect(
+        capabilities.allows(CaptureMode.textOnly),
+        isFalse,
+        reason: 'there is nothing on this page to read',
+      );
+      expect(capabilities.defaultMode, CaptureMode.imageSequence);
+    },
+    timeout: const Timeout(Duration(minutes: 5)),
+  );
+
+  testWidgets(
+    'that page saves its panels, in order, with no furniture among them',
+    (tester) async {
+      await boot(tester, startUrl: '${fixture.base}/noprose');
+
+      // No mode is passed: null means "decide from the settled page", which
+      // is the decision that used to come out as text.
+      final entryId = await app.queueSaveOf(app.browser.currentUrl);
+      await startQueue(tester, app);
+      await awaitQueueIdle(tester, app);
+
+      final task = await app.latestTaskFor(entryId);
+      expect(
+        task!.state,
+        SaveTaskState.completed,
+        reason: 'the capture ended ${task.state.name}: ${task.lastError}',
+      );
+
+      final manifest = await app.manifestOf(entryId);
+      expect(manifest, isNotNull);
+      expect(manifest!.artifact, ArtifactFormat.imageSequence);
+
+      final sources = manifest.assets.map((a) => a.sourceUrl).toList();
+      expect(
+        sources,
+        [for (var i = 1; i <= 6; i++) '${fixture.base}/img/1/$i.png'],
+        reason: 'the panels, in reading order, and nothing else',
+      );
+      // The logo, the tracking pixel and everything else the page decorates
+      // itself with stayed out.
+      expect(sources.any((s) => s.contains('/chrome/')), isFalse);
+    },
+    timeout: const Timeout(Duration(minutes: 6)),
+  );
+
   testWidgets(
     'a live video page is classified and refused',
     (tester) async {

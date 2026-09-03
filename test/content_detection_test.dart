@@ -247,6 +247,68 @@ void main() {
       },
     );
 
+    // A page of stacked panels whose only words are its own furniture: the
+    // menus, the listing of everything else on the site, the sign-in box. The
+    // bridge now measures prose with furniture excluded, so those thousands of
+    // characters arrive here as the handful they really are — and this is the
+    // decision that has to follow from them.
+    //
+    // Pinned at this layer as well as live, because the two failures are
+    // separable: the measurement can be right and the thresholds still turn a
+    // column of pictures into an article. The real page carried 132 panels of
+    // 720x1152 and one heading.
+    test('a page of panels with only furniture for words saves as images', () {
+      final caps = detectCaptureCapabilities(
+        probe(
+          images: [for (var i = 0; i < 8; i++) panel(i, width: 720)],
+          content: const PageContentSignals(
+            // The heading over the panels, and nothing else.
+            textLength: 37,
+            paragraphCount: 0,
+            contentImageCount: 8,
+            contentImagePixels: 8 * 720 * 1152,
+            contentRegionImageCount: 8,
+            contentRegionImagePixels: 8 * 720 * 1152,
+          ),
+        ),
+      );
+      expect(caps.content.kind, ContentKind.imageDominant);
+      expect(caps.content.confidence, ShapeConfidence.high);
+      expect(caps.defaultMode, CaptureMode.imageSequence);
+      expect(
+        caps.allows(CaptureMode.textOnly),
+        isFalse,
+        reason: 'there is nothing on this page to read',
+      );
+      expect(
+        caps.blocked[CaptureMode.textOnly],
+        ModeBlockReason.noReadableText,
+      );
+    });
+
+    test('the same page with real prose is still an article', () {
+      // The other side of the same threshold: excluding furniture must not
+      // make an illustrated article stop being one. Same images, but the words
+      // are the page's own.
+      final caps = detectCaptureCapabilities(
+        probe(
+          images: [for (var i = 0; i < 8; i++) panel(i, width: 720)],
+          content: const PageContentSignals(
+            textLength: 4200,
+            paragraphCount: 12,
+            headingCount: 3,
+            hasArticleElement: true,
+            contentImageCount: 8,
+            contentImagePixels: 8 * 720 * 1152,
+            contentRegionImageCount: 8,
+            contentRegionImagePixels: 8 * 720 * 1152,
+          ),
+        ),
+      );
+      expect(caps.content.kind, ContentKind.article);
+      expect(caps.defaultMode, CaptureMode.textAndImages);
+    });
+
     test('an ambiguous page keeps the previous image-first behaviour', () {
       // Enough images for a sequence, not enough signal to classify. The
       // preselection must not silently change for pages that used to save.
