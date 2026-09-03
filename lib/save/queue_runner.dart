@@ -424,6 +424,14 @@ class QueueRunner extends ChangeNotifier {
       await queue.finish(task.id, state: SaveTaskState.failed, lastError: '$e');
     } finally {
       poll.cancel();
+      // This row is no longer being captured, and the next one is not being
+      // captured yet. Held open, the field went on naming the row that had
+      // just finished — which for a sequential capture of a Source is the
+      // whole page load the walk makes to find the next Entry (V2-D56), so
+      // the panel said the app was downloading the previous Entry while the
+      // Browser was visibly on its way to another one.
+      _activeTaskId = null;
+      if (!_disposed) notifyListeners();
     }
   }
 
