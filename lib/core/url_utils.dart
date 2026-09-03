@@ -188,3 +188,25 @@ NextUrlCheck validateNextUrl({
 }
 
 String hostOf(String url) => Uri.tryParse(url)?.host ?? url;
+
+/// `scheme://host[:port]` — the machine that answers for an address, with the
+/// default port omitted so `https://x.example` and `https://x.example:443` are
+/// one thing.
+///
+/// Scheme-bearing on purpose, exactly as [normalizeUrl] is: `http` and `https`
+/// are different origins to a browser, and a fact learned about one of them is
+/// not a fact about the other.
+///
+/// Empty for anything that is not a fetchable web address, which is the same
+/// "no identity" answer [pageIdentityKey] gives — nothing can match it.
+String originOf(String url) {
+  final uri = Uri.tryParse(url.trim());
+  if (uri == null || uri.host.isEmpty) return '';
+  final scheme = uri.scheme.toLowerCase();
+  if (scheme != 'http' && scheme != 'https') return '';
+  final host = uri.host.toLowerCase();
+  final port = uri.hasPort && !_isDefaultPort(scheme, uri.port)
+      ? ':${uri.port}'
+      : '';
+  return '$scheme://$host$port';
+}

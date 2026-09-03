@@ -38,6 +38,7 @@ import 'package:web_reader/capability/entitlement.dart';
 import 'package:web_reader/capability/foreground_multitasking.dart';
 import 'package:web_reader/core/config.dart';
 import 'package:web_reader/core/url_utils.dart';
+import 'package:web_reader/data/asset_origin_repository.dart';
 import 'package:web_reader/data/recognition_index.dart';
 import 'package:web_reader/data/schema.dart';
 import 'package:web_reader/domain/domain.dart';
@@ -48,6 +49,7 @@ import 'package:web_reader/data/local_settings.dart';
 import 'package:web_reader/features/v2_composition.dart';
 import 'package:web_reader/features/v2_save_flow.dart';
 import 'package:web_reader/save/page_hint_repository.dart';
+import 'package:web_reader/save/rendered_consent.dart';
 import 'package:web_reader/recognition/recognise.dart';
 import 'package:web_reader/recognition/check.dart';
 import 'package:web_reader/library_ui/providers.dart' as libui;
@@ -231,6 +233,13 @@ class V2App {
   /// assertion fails this is the only thing that explains why.
   final List<String> engineLog = <String>[];
 
+  /// What the stood-in consent dialog answers, and how often it was shown.
+  ///
+  /// The count is the assertion that matters: a Source is asked **once**, and
+  /// the second Entry from it reads the stored answer instead of asking again.
+  bool renderedFallbackAnswer = true;
+  int renderedFallbackPrompts = 0;
+
   SaveProgress _progress = const SaveProgress();
 
   /// The engine's last published progress.
@@ -309,6 +318,22 @@ class V2App {
               config: kDefaultSaveConfig,
             ),
             sink: sink,
+            // The same memory the app composes, so a device suite exercises
+            // what the user's build actually does about a refusing host.
+            assetOrigins: AssetOriginRepository(library),
+            // The **real** gate, over the real store, with the shell's dialog
+            // stood in for by [renderedFallbackAnswer]. A suite therefore
+            // exercises what the app does — asked once, remembered, and the
+            // next Entry from that Source not asked again — rather than a
+            // shortcut past the question.
+            renderedConsent: RenderedFallbackGate(
+              index: RecognitionIndex(library),
+              store: RenderedFallbackConsentStore(LocalSettingsStore(library)),
+              ask: (url) async {
+                renderedFallbackPrompts++;
+                return renderedFallbackAnswer;
+              },
+            ).call,
             onProgress: _onEngineProgress,
             onLog: _onEngineLog,
           ),

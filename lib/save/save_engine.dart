@@ -10,6 +10,7 @@ import '../core/url_utils.dart';
 import '../storage/file_store.dart';
 import '../storage/manifest.dart';
 import 'asset_fetcher.dart';
+import 'asset_origin_policy.dart';
 import 'capture_mode.dart';
 import 'capture_policy.dart';
 import 'document_extraction.dart';
@@ -19,9 +20,11 @@ import 'image_candidates.dart';
 import 'next_page.dart';
 import 'page_hint.dart';
 import 'page_stability.dart';
+import 'rendered_capture.dart';
 import 'stop_conditions.dart';
 import '../library/collection_identity.dart';
 import 'content_detection.dart';
+import '../reading_v2/source_reading.dart' show imageContentBand;
 
 const _uuid = Uuid();
 
@@ -194,6 +197,8 @@ class SaveEngine {
     required this.fileStore,
     required this.downloader,
     required this.sink,
+    this.assetOrigins = const ForgetfulAssetOrigins(),
+    this.renderedConsent,
     this.config = kDefaultSaveConfig,
     this.onProgress,
     this.onLog,
@@ -203,6 +208,25 @@ class SaveEngine {
   final SaveResultSink sink;
   final FileStore fileStore;
   final AssetFetcher downloader;
+
+  /// What this device has learned about the hosts that serve assets.
+  ///
+  /// Defaults to remembering nothing, so an engine built without one asks
+  /// every origin the whole question every time — the behaviour before any of
+  /// this was learned, and what every unit test gets unless it says otherwise.
+  final AssetOriginCapability assetOrigins;
+
+  /// Whether a reading whose files were refused may be kept as a rendering of
+  /// the page instead — asked of whoever owns that decision.
+  ///
+  /// **Null means never**, and that is the safe default on purpose. A
+  /// rendering is not the site's own files, so keeping one is a judgement
+  /// about what the person wants; an engine nobody has given an answerer to
+  /// stops with its named reason exactly as it did before the fallback
+  /// existed. Composition supplies a function that reads the Source's stored
+  /// answer and, where there is none, asks — see
+  /// `save/rendered_consent.dart`.
+  final Future<bool> Function(String pageUrl)? renderedConsent;
   final SaveConfig config;
   final void Function(SaveProgress Function(SaveProgress))? onProgress;
   final void Function(String)? onLog;
@@ -598,6 +622,99 @@ class SaveEngine {
         ),
       );
 
+      // Ask before spending. Where this device has already watched an origin
+      // refuse separate readings, the whole question is worth exactly one
+      // request rather than one per panel — and that one request is what
+      // notices the day the site starts serving again.
+      final locationKey = normalizeUrl(pageUrl);
+      final dominantOrigin = _dominantAssetOrigin(entries);
+      if (dominantOrigin.isEmpty) {
+        _log(
+          'no single origin carries this reading, so nothing learned applies',
+        );
+      }
+      if (dominantOrigin.isNotEmpty) {
+        var verdict = await assetOrigins.verdictFor(dominantOrigin);
+        // Sites shard their assets. Measured on a real one: two readings
+        // established a verdict against `s3.<site>` and the next reading's
+        // panels arrived from `u1.<site>`, so the whole discovery cost was
+        // paid again for a delivery the same site had arranged. Evidence
+        // about one shard counts for its siblings — but only inside a domain
+        // the *page itself* belongs to, which is what keeps this from
+        // reaching across a public suffix.
+        if (verdict != AssetOriginVerdict.refusing) {
+          final scope = _siblingScopeFor(dominantOrigin, pageUrl);
+          if (scope != null) {
+            final byDomain = await assetOrigins.verdictUnderDomain(scope);
+            if (byDomain.index > verdict.index) {
+              _log(
+                'a sibling of $dominantOrigin under $scope is '
+                '${byDomain.name}',
+              );
+              verdict = byDomain;
+            }
+          }
+        }
+        _log('asset origin $dominantOrigin is ${verdict.name}');
+        if (verdict == AssetOriginVerdict.refusing) {
+          final probe = await downloader.download(
+            entry: entries.first,
+            staging: staging,
+            refererUrl: pageUrl,
+            userAgent: userAgent,
+            cookieHeader: cookieHeader,
+          );
+          if (probe.isRefusal) {
+            _log(
+              'known refusing origin $dominantOrigin — one probe refused, '
+              'not asking for the other ${entries.length - 1}',
+            );
+            await assetOrigins.noteRefusedCapture(
+              origin: dominantOrigin,
+              locationKey: locationKey,
+            );
+            final kept = await _renderedFallback(
+              entryId: entryId,
+              staging: staging,
+              pageUrl: pageUrl,
+              pageTitle: pageTitle,
+              probe: probeWithLinks,
+              owningCollectionId: owningCollectionId,
+              entryOrder: entryOrder,
+              visitedNormalized: visitedNormalized,
+              nextHint: nextHint,
+              candidates: chosen.accepted,
+              refusedCount: entries.length,
+            );
+            if (kept != null) {
+              // The fallback committed the package, so the handle is no
+              // longer this method's to discard.
+              staging = null;
+              return kept;
+            }
+            await fileStore.discard(staging);
+            staging = null;
+            return _refusedBySource(
+              entryId,
+              pageUrl: pageUrl,
+              refused: entries.length,
+              detected: entries.length,
+            );
+          }
+          // It served — so the ordinary path is worth running, including this
+          // asset, which is simply already done.
+          //
+          // **Deliberately not treated as the host changing its mind.** A
+          // challenge in front of a CDN is not all-or-nothing: measured on a
+          // real site, one probe was served and nine of the following thirteen
+          // were still refused. One file is evidence about one request; only a
+          // capture that actually completes is evidence about the origin, and
+          // that is where `noteServed` is called from.
+          _log('$dominantOrigin served a probe — trying the ordinary path');
+          entries[0] = probe.asset;
+        }
+      }
+
       tPhase = DateTime.now();
       final downloads = await _downloadAll(
         entries: entries,
@@ -621,6 +738,29 @@ class SaveEngine {
       // actually stored so that one dead panel among a hundred good ones stays
       // what it is — a broken asset, and an entry worth keeping.
       if (downloads.refused > stored) {
+        // Written down before the stop, so the next reading from this origin
+        // costs one request instead of all of them.
+        await assetOrigins.noteRefusedCapture(
+          origin: dominantOrigin,
+          locationKey: locationKey,
+        );
+        final kept = await _renderedFallback(
+          entryId: entryId,
+          staging: staging,
+          pageUrl: pageUrl,
+          pageTitle: pageTitle,
+          probe: probeWithLinks,
+          owningCollectionId: owningCollectionId,
+          entryOrder: entryOrder,
+          visitedNormalized: visitedNormalized,
+          nextHint: nextHint,
+          candidates: chosen.accepted,
+          refusedCount: downloads.refused,
+        );
+        if (kept != null) {
+          staging = null;
+          return kept;
+        }
         await fileStore.discard(staging);
         staging = null;
         return _refusedBySource(
@@ -629,6 +769,12 @@ class SaveEngine {
           refused: downloads.refused,
           detected: entries.length,
         );
+      }
+
+      // It served. Anything believed about this origin is out of date, and the
+      // fact that files arrived is the newer answer.
+      if (stored > 0 && dominantOrigin.isNotEmpty) {
+        await assetOrigins.noteServed(dominantOrigin);
       }
 
       if (stored == 0) {
@@ -1279,6 +1425,199 @@ class SaveEngine {
     );
   }
 
+  /// The origin most of this reading's images come from, or empty when they
+  /// are spread too thin for any one of them to answer for the capture.
+  ///
+  /// Most, not all: a page routinely serves its own furniture from one host
+  /// and the reading itself from another, and it is the one carrying the
+  /// reading whose answer decides whether the capture is worth attempting.
+  static String _dominantAssetOrigin(List<EntryAsset> entries) {
+    if (entries.isEmpty) return '';
+    final counts = <String, int>{};
+    for (final entry in entries) {
+      final origin = originOf(entry.sourceUrl);
+      if (origin.isEmpty) continue;
+      counts.update(origin, (n) => n + 1, ifAbsent: () => 1);
+    }
+    if (counts.isEmpty) return '';
+    final best = counts.entries.reduce((a, b) => b.value > a.value ? b : a);
+    // A bare plurality is not "where this reading comes from". Half the page
+    // is, and it is also the threshold the refusal stop itself uses.
+    return best.value * 2 > entries.length ? best.key : '';
+  }
+
+  /// Keep the reading as the browser drew it, because its files cannot be had.
+  ///
+  /// **Reached from the refusal points and nowhere else.** Both callers have
+  /// already established the same fact — this origin serves its pictures to
+  /// the browser and to nothing else — so by the time this runs the primary
+  /// path has not been skipped, it has been exhausted.
+  ///
+  /// Returns null when there is nothing worth rendering, and the caller then
+  /// fails with the named stop exactly as it did before. That is the honest
+  /// order: a rendering is better than nothing, and nothing is better than a
+  /// package of somebody's comments section.
+  Future<EntrySaveResult?> _renderedFallback({
+    required String entryId,
+    required StagingHandle staging,
+    required String pageUrl,
+    required String pageTitle,
+    required PageProbe probe,
+    required String? owningCollectionId,
+    required int entryOrder,
+    required Set<String> visitedNormalized,
+    required UserPageHint? nextHint,
+    required List<ImageCandidate> candidates,
+    required int refusedCount,
+  }) async {
+    final consent = renderedConsent;
+    if (consent == null) return null;
+
+    // The page's own geometry decides what gets rendered — the same band
+    // reading progress measures against, so a rendering covers exactly what a
+    // reader would have called the reading. A page whose band cannot be
+    // established is not rendered at all: without it there is no way to tell
+    // the entry from the furniture underneath it.
+    final band = imageContentBand(probe, config: config);
+    if (band == null) {
+      _log('rendered fallback declined: no readable band on this page');
+      return null;
+    }
+
+    // Asked only once the page is known to be renderable at all: a question
+    // about a page nothing could have been kept from is a question that should
+    // never have been put to anyone.
+    if (!await consent(pageUrl)) {
+      _log('rendered fallback declined for this source');
+      return null;
+    }
+
+    // Rendered at about the width of the pictures being rendered. Anything
+    // more is a bigger file with no more detail in it.
+    final widths = [
+      for (final c in candidates)
+        if (c.width > 0) c.width,
+    ]..sort();
+    final targetWidth = widths.isEmpty ? 0 : widths[widths.length ~/ 2];
+
+    _emit(
+      (p) => p.copyWith(
+        state: SaveState.fetchingAssets,
+        storedImages: 0,
+        message: 'Saving the page as it appears',
+      ),
+    );
+
+    final rendered = await captureRenderedBand(
+      browser: browser,
+      staging: staging,
+      band: band,
+      viewportHeight: probe.viewportHeight,
+      targetPixelWidth: targetWidth,
+      pageUrl: pageUrl,
+      checkpoint: _checkpoint,
+      onProgress: (stored, total) => _emit(
+        (p) => p.copyWith(
+          storedImages: stored,
+          detectedImages: total,
+          message: 'Saving the page as it appears ($stored/$total)',
+        ),
+      ),
+      log: _log,
+    );
+    if (!rendered.isUsable) {
+      _log('rendered fallback produced nothing usable: ${rendered.failure}');
+      return null;
+    }
+
+    final next = await _resolveNext(
+      probe: probe,
+      pageUrl: pageUrl,
+      visitedNormalized: visitedNormalized,
+      nextHint: nextHint,
+    );
+    final imageShape = detectContentKind(probe);
+    final manifest = EntryManifest(
+      schemaVersion: EntryManifest.currentSchemaVersion,
+      // An ordered run of images is what this is, so the reader needs nothing
+      // new to open it. What it is a run of is said by `renderedFromPage`,
+      // which is the honest part and the part a reader shows.
+      artifact: ArtifactFormat.imageSequence,
+      captureMode: CaptureMode.imageSequence.name,
+      renderedFromPage: true,
+      entryId: entryId,
+      collectionId: owningCollectionId,
+      sourceUrl: pageUrl,
+      canonicalUrl: probe.canonicalUrl,
+      title: pageTitle,
+      savedAt: DateTime.now(),
+      // Complete as a rendering: every tile the band has is on disk. The
+      // reason it is not the site's own files is `renderedFromPage`, not a
+      // `partial` that would invite a retry which cannot do better.
+      status: SaveStatus.complete,
+      statusReason: 'renderedFromPage assetsRefused:$refusedCount',
+      detectedAssetCount: rendered.assets.length,
+      storedAssetCount: rendered.assets.length,
+      nextUrl: next.chosen?.href,
+      entryOrder: entryOrder,
+      host: Uri.tryParse(pageUrl)?.host.toLowerCase(),
+      contentKind: imageShape.kind.name,
+      contentKindConfidence: imageShape.confidence.name,
+      publishedAt: probe.content.publishedAt,
+      assets: rendered.assets,
+    );
+
+    if (isCaptureRestricted(manifest.sourceUrl)) {
+      await fileStore.discard(staging);
+      return _restrictedRefusal(entryId, manifest.sourceUrl)!;
+    }
+
+    await sink.commitEntry(staging, manifest, replacing: false);
+    _log(
+      'kept as a rendering: ${rendered.assets.length} tile(s), '
+      '${(rendered.bytes / 1024).round()}KB',
+    );
+    _emit(
+      (p) => p.copyWith(
+        state: SaveState.complete,
+        storedImages: rendered.assets.length,
+        detectedImages: rendered.assets.length,
+        message: 'Saved as it appears (${rendered.assets.length} pages)',
+      ),
+    );
+    return EntrySaveResult(
+      status: SaveStatus.complete,
+      entryId: entryId,
+      manifest: manifest,
+      captureMode: CaptureMode.imageSequence,
+      nextUrl: next.chosen?.href,
+      nextResult: next,
+      pageUrl: pageUrl,
+      detectedImages: rendered.assets.length,
+      storedImages: rendered.assets.length,
+    );
+  }
+
+  /// The domain within which a verdict about [assetOrigin] also speaks for its
+  /// siblings, or null when there is no safe one.
+  ///
+  /// The asset host's parent domain, and **only** when the page being saved is
+  /// itself under it. That constraint is the whole safety: a host's parent
+  /// label is often a public suffix — `a.co.uk`'s parent is `co.uk` — and this
+  /// app ships no public-suffix list. What it does have is the page's own
+  /// address, and a site's asset shards living under the site's own domain is
+  /// a fact about that site rather than a guess about the DNS tree.
+  static String? _siblingScopeFor(String assetOrigin, String pageUrl) {
+    final assetHost = Uri.tryParse(assetOrigin)?.host ?? '';
+    final pageHost = Uri.tryParse(pageUrl)?.host.toLowerCase() ?? '';
+    if (assetHost.isEmpty || pageHost.isEmpty) return null;
+    final labels = assetHost.split('.');
+    if (labels.length < 3) return null; // No parent worth widening to.
+    final parent = labels.sublist(1).join('.');
+    if (pageHost != parent && !pageHost.endsWith('.$parent')) return null;
+    return parent;
+  }
+
   /// The host serving this reading's images refused them.
   ///
   /// Named rather than counted: "132 images failed" and "this site does not
@@ -1821,6 +2160,13 @@ class SaveEngine {
         final index = cursor;
         if (index >= results.length) return;
         cursor++;
+
+        // Already on disk — the single probe that asked a known-refusing
+        // origin whether it had changed its mind, and got a file back.
+        if (results[index].isStored) {
+          completed++;
+          continue;
+        }
 
         final download = await downloader.download(
           entry: results[index],

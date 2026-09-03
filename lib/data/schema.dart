@@ -484,6 +484,61 @@ class Favicons extends Table {
   Set<Column> get primaryKey => {host};
 }
 
+/// What this device has learned about whether an origin will hand over the
+/// files it serves.
+///
+/// **Keyed by origin, and deliberately not by Source or Collection.** The fact
+/// is about the machine that answers for the bytes: one reading site served
+/// its own promotional images perfectly while every panel of the reading came
+/// from a separate host that refused all of them. A Source is
+/// `(host, path_key)`, so scoping it there would re-learn the same refusal
+/// once per work on the same site — dozens of doomed requests each time — and
+/// a Collection can span several Sources on different hosts. An origin also
+/// survives a site reorganising its paths, and keeps a second CDN on the same
+/// site judged on its own evidence.
+///
+/// **Learned, never seeded, and never synced.** Empty on a clean install, like
+/// `page_hints` and `saved_sites`. It is an observation this device made about
+/// how a host answered *this device*, which is not a fact about the library
+/// and has no business travelling to another device that may sit behind a
+/// different network.
+///
+/// Nothing here is a "supported sites" list in either direction: an entry only
+/// ever says how a host answered, and the only thing it changes is how many
+/// times the app asks again before believing it.
+@DataClassName('AssetOriginRow')
+class AssetOrigins extends Table {
+  /// `scheme://host[:port]`, lowercased. The unit the answer belongs to.
+  TextColumn get origin => text()();
+
+  /// `unknown` · `suspected` · `refusing`. See `AssetOriginVerdict`.
+  TextColumn get verdict => text().withDefault(const Constant('unknown'))();
+
+  /// Captures — not assets — that this origin refused, counted once per
+  /// Location so re-saving the same page cannot promote a verdict on its own.
+  IntColumn get refusedCaptures => integer().withDefault(const Constant(0))();
+
+  /// The last Location that was refused, so the count above stays honest.
+  TextColumn get lastRefusedLocationKey => text().nullable()();
+
+  /// When this origin last handed over a file. Any success at all clears a
+  /// verdict: the host changed its mind, or it never meant it.
+  DateTimeColumn get lastServedAt => dateTime().nullable()();
+  DateTimeColumn get firstRefusedAt => dateTime().nullable()();
+
+  /// When the verdict reached `refusing`. What staleness is measured from.
+  DateTimeColumn get establishedAt => dateTime().nullable()();
+  DateTimeColumn get updatedAt => dateTime()();
+
+  @override
+  Set<Column> get primaryKey => {origin};
+
+  @override
+  List<String> get customConstraints => [
+    "CHECK (verdict IN ('unknown','suspected','refusing'))",
+  ];
+}
+
 /// Small key-value settings, as in V1.
 @DataClassName('SettingRow')
 class LocalSettings extends Table {
@@ -515,6 +570,7 @@ class LocalSettings extends Table {
     PageHints,
     SavedSites,
     Favicons,
+    AssetOrigins,
     LocalSettings,
   ],
 )

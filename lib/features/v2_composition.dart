@@ -141,6 +141,14 @@ class V2Services {
   Future<void> Function(String collectionId, String collectionName)?
   checkCollection;
 
+  /// Set by the shell: ask whether this site may be kept as renderings.
+  ///
+  /// Asked at most once per Source — the answer is stored by
+  /// `RenderedFallbackGate` — and only ever about a page that could actually
+  /// be rendered. Null while no shell is mounted, which the gate reads as
+  /// *no*: a question nobody can see is not a question anybody answered.
+  Future<bool> Function(String pageUrl)? askRenderedFallback;
+
   Future<void> dispose() async {
     runner.dispose();
     check.dispose();

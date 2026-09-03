@@ -80,6 +80,7 @@ class PageCaptureOutcome {
     this.contentKindConfidence,
     this.publishedAt,
     this.nextUrl,
+    this.renderedFromPage,
   }) : error = null,
        stopReason = null,
        needsReaderAreaAssist = false;
@@ -93,6 +94,7 @@ class PageCaptureOutcome {
     this.stopReason,
     this.needsReaderAreaAssist = false,
   }) : title = '',
+       renderedFromPage = null,
        artifact = ArtifactFormat.unknown,
        captureMode = null,
        captureModeIsUserSet = false,
@@ -127,6 +129,12 @@ class PageCaptureOutcome {
 
   /// What the staged package holds. The one field a reader may switch on.
   final ArtifactFormat artifact;
+
+  /// True when the stored images are a rendering of the page rather than the
+  /// page's own files. Carried, never re-derived: the fallback that produced
+  /// them is the only thing that knows, and `entry_capture.dart` writes the
+  /// manifest this ends up in.
+  final bool? renderedFromPage;
 
   /// The mode that was actually honoured on this page, which is not always the
   /// one that was asked for: a collection preference proposes, the page
@@ -396,5 +404,6 @@ PageCaptureOutcome outcomeOf(
     contentKindConfidence: manifest.contentKindConfidence,
     publishedAt: manifest.publishedAt,
     nextUrl: manifest.nextUrl,
+    renderedFromPage: manifest.renderedFromPage,
   );
 }

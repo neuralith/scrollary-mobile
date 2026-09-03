@@ -383,16 +383,90 @@ V2's metadata sync for reasons that only apply to capture.
   an ordinary broken asset and still yields a `partial` — the comparison is
   against what was actually stored, so one dead panel among a hundred good
   ones stays what it is.
-- **Some sites cannot be saved from at all, and that is a boundary rather than
-  a bug.** A host that is cross-origin to the page, serves no
+- **Some sites will not hand over their files, and no amount of asking
+  changes it.** A host that is cross-origin to the page, serves no
   `Access-Control-Allow-Origin`, and answers a separate client with a
-  human-verification interstitial has no path: `<img>` renders the picture
-  while script may read nothing, and the direct request is challenged.
-  Measured, not assumed — the reasoning is in `lib/save/asset_fetcher.dart`.
-  Getting past it would mean completing a verification check on the user's
-  behalf or defeating the browser's cross-origin rules, and reading the
-  rendered pixels back out is not an escape either because stored bytes are
-  byte-for-byte originals.
+  human-verification interstitial has no path to its *files*: `<img>` renders
+  the picture while script may read nothing, and the direct request is
+  challenged. Measured, not assumed — the reasoning is in
+  `lib/save/asset_fetcher.dart`. Getting past **that** would mean completing a
+  verification check on the user's behalf or defeating the browser's
+  cross-origin rules, and neither is something this app does.
+
+- **A refusal is remembered, and it is remembered about the *origin*.**
+  `asset_origins` (device-local, `lib/data/asset_origin_repository.dart`) holds
+  what this device has watched a host do, keyed by `scheme://host[:port]`.
+  Not the Source and not the Collection: a real site served its own furniture
+  perfectly from its page host while every panel came from a separate CDN that
+  refused all of them, and a Source is one work — scoping it there would
+  re-learn the same refusal once per work on the same site. Learned, never
+  seeded, and **never synced**: it is an observation this device made over
+  this device's network.
+- **Nothing about that memory is permanent, and it is not a site list.** One
+  refused reading earns `suspected` and changes nothing; two *separate
+  Locations* earn `refusing`, which costs the next reading exactly one request
+  instead of one per panel. A verdict goes stale after `kVerdictFreshness` and
+  the full path is taken again from scratch. The only thing a verdict ever
+  changes is how many times the app asks again before believing an answer it
+  already has.
+- **A gate in front of a CDN is not all-or-nothing.** Measured on the real
+  site: with a verdict in place, the single probe was *served* and nine of the
+  next thirteen were still refused. So a served file never clears a verdict on
+  its own — only a capture that actually completes does. One file is evidence
+  about one request; a reading is evidence about the origin.
+- **Sites shard their assets, and a verdict speaks for the siblings.**
+  Measured live: two readings established a verdict against `s3.<site>` and
+  the next reading's panels arrived from `u1.<site>`, so the whole discovery
+  cost was paid again for delivery the same site had arranged. Evidence now
+  travels to sibling hosts — but **only inside a domain the page itself
+  belongs to**, which is what keeps it from reaching across a public suffix
+  (`a.co.uk`'s parent label is `co.uk`, and this app ships no public-suffix
+  list). `SaveEngine._siblingScopeFor` applies that constraint;
+  `verdictUnderDomain` only answers what it is asked.
+
+### Rendered capture is the fallback, and only ever the fallback
+
+`lib/save/rendered_capture.dart` keeps a reading the browser *drew*, when its
+files cannot be had. It supersedes an earlier rule here that forbade it
+outright; what that rule was really protecting is preserved below.
+
+- **Original bytes stay primary, everywhere they are possible.** A rendering
+  is reached from the refusal points in `SaveEngine` and from nowhere else, so
+  by the time it runs the primary path has not been skipped — it has been
+  exhausted. A Source that serves its files keeps getting them, byte for byte.
+- **Silence is not consent, and the question is asked once per Source.**
+  `SaveEngine.renderedConsent` is null by default, and null means *never*: an
+  engine nobody gave an answerer to stops with its named reason exactly as it
+  did before the fallback existed. `RenderedFallbackGate`
+  (`save/rendered_consent.dart`) obeys a stored answer, asks when there is
+  none, and treats *no way to ask* as no — a question nobody can see is not a
+  question anybody answered. Both answers are recorded, because a declined
+  Source must not be asked again on its next Entry, and the answer is keyed by
+  the Source (by host for a page no Source has adopted yet), device-local in
+  the settings table beside the other per-Collection answers. The question is
+  put only after the band is established, so it is never asked about a page
+  nothing could have been kept from.
+- **It bypasses nothing.** The compositor is asked for the pixels it has
+  already put on the screen the person is looking at, which is what the
+  device's own screenshot key does. No protected file is obtained and no check
+  is answered.
+- **It says what it is.** `manifest.renderedFromPage` is durable and travels
+  through `PageCaptureOutcome`; the byte-for-byte rule still governs
+  `imageSequence` packages of *originals*, and a rendering is never recorded
+  as one. A reader can tell, and so can a later re-save deciding whether real
+  files would be an improvement.
+- **The page's own geometry decides what is kept**, not a selector and not a
+  host: `imageContentBand` — the same band reading progress measures against.
+  A page whose band cannot be established is not rendered at all, because
+  without it there is no way to tell the reading from the comments below it.
+- **Bounded memory is the design, not a tuning knob.** One tile exists at a
+  time, written to staging and released before the next scroll; tiles are
+  asked for at about the width of the pictures they render rather than at the
+  screen's scale; and the platform's JPEG encoder is used so a bitmap never
+  enters the Dart heap. The naive order — settle the page, then capture it at
+  full scale — was measured killing the process part-way down a real reading.
+  `dart:ui` can only encode PNG, so nothing here re-encodes in Dart.
+
 
 ### Capture modes
 
