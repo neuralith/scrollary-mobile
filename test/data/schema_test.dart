@@ -86,8 +86,8 @@ void main() {
       );
 
   group('clean creation', () {
-    test('schema version is 1 and creates whole', () async {
-      expect(db.schemaVersion, 1);
+    test('schema version is 2 and creates whole', () async {
+      expect(db.schemaVersion, 2);
       final names = await tableNames();
       expect(
         names,
@@ -105,9 +105,11 @@ void main() {
           'history',
           'outbox',
           'sync_state',
+          'collection_check_states',
           'page_hints',
           'saved_sites',
           'favicons',
+          'asset_origins',
           'settings',
         ]),
       );

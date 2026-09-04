@@ -1,12 +1,12 @@
 /// Moves Collection preferences written under the old settings keys onto the
 /// Collection rows that now own them.
 ///
-/// **Why this exists rather than a schema migration.** The database still has
-/// no history — `schemaVersion` is 1 with an `onCreate` and no `onUpgrade`
-/// (V2-D26), and that rule is unchanged. This is not a schema step: the
-/// columns are created with the table, and what moves here is *data* a
-/// previous build left in `settings` rows keyed by a Collection's local id.
-/// A device that never ran such a build has nothing to move and this is one
+/// **Why this exists rather than a schema migration step.** The database does
+/// have an upgrade path now (V2-D75), and that is where the *columns* come
+/// from. This is not a schema step: what moves here is *data* a previous build
+/// left in `settings` rows keyed by a Collection's local id, which is an
+/// application fact about a preference and not a shape the schema owns. A
+/// device that never ran such a build has nothing to move and this is one
 /// query that finds nothing.
 ///
 /// **It writes through the repository**, so an adopted answer enters the

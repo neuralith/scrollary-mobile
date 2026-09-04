@@ -14,6 +14,7 @@ library;
 
 import 'dart:io';
 
+import 'package:drift/drift.dart' show QueryExecutor;
 import 'package:drift/native.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -37,8 +38,11 @@ import 'package:web_reader/ui/palette.dart';
 import 'package:web_reader/ui/theme.dart';
 
 class UiHarness {
-  UiHarness()
-    : db = LibraryDatabase.forTesting(NativeDatabase.memory()),
+  /// [executor] exists for the one suite that has to open a database it did
+  /// not create — a library file left by an older build, which is the only
+  /// place a missing column can be observed. Everything else gets memory.
+  UiHarness({QueryExecutor? executor})
+    : db = LibraryDatabase.forTesting(executor ?? NativeDatabase.memory()),
       storeRoot = Directory.systemTemp.createTempSync('scrollary_library_ui');
 
   final LibraryDatabase db;

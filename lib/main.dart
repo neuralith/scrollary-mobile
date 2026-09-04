@@ -295,8 +295,9 @@ class AppStartup {
     //
     // A device that ran an older build still has V1's `webread` database file
     // beside this one. Nothing opens it, nothing reads it and nothing deletes
-    // it: there is no migration (V2-D26), and deleting a file this build
-    // cannot interpret would be destroying data on the strength of its name.
+    // it: there is no V1 → V2 migration (V2-D26), and deleting a file this
+    // build cannot interpret would be destroying data on the strength of its
+    // name.
     final library = _library ??= LibraryDatabase();
     final fileStore = _fileStore ??= await FileStore.open();
 

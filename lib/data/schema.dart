@@ -1,4 +1,6 @@
-/// The V2 local store. **Schema version 1, created whole** (V2-D26).
+/// The V2 local store. **Schema version 2** — designed whole and created
+/// whole (V2-D26), and since V2-D75 also upgraded in place, because
+/// databases somebody is using now exist.
 ///
 /// Designed from the domain in docs/V2_ARCHITECTURE.md §6.4 — not from the V1
 /// tables, and not migrated from anything. The V1 database it replaced ran
@@ -644,68 +646,147 @@ class LibraryDatabase extends _$LibraryDatabase {
     : super(driftDatabase(name: name));
   LibraryDatabase.forTesting(super.executor);
 
-  /// **One.** Created whole; no `onUpgrade`, no schema history (V2-D26).
+  /// **Two.**
+  ///
+  /// Version 1 was created whole and had no history, which was true for as
+  /// long as no database outside a development machine existed (V2-D26).
+  /// Version 2 is the first change that had to reach a database somebody was
+  /// already using: `collections.capture_mode` and `collections.entry_sort`,
+  /// `locations.published_at`, and the two device-state tables
+  /// `collection_check_states` and `asset_origins` were all added to the
+  /// declared schema while the version stayed at 1, so an existing library
+  /// opened without them and every read of `collections` threw on the column
+  /// that was not there.
+  ///
+  /// The declared schema is unchanged by this — [onUpgrade] only brings an
+  /// older file up to it. What replaces the old rule is not "no migrations"
+  /// but its honest successor: **a schema change is a version bump and a step
+  /// in [_reconcileToDeclaredSchema], in the same commit.**
   @override
-  int get schemaVersion => 1;
+  int get schemaVersion => 2;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
     onCreate: (m) async {
       await m.createAll();
-
-      const indexes = [
-        // I1: at most one root folder in this library.
-        'CREATE UNIQUE INDEX IF NOT EXISTS idx_folders_one_root '
-            "ON folders(kind) WHERE kind = 'root'",
-        // I8: an ordinal is unique within its collection. Partial, because a
-        // composite UNIQUE treats NULLs as distinct and standalone entries
-        // have neither collection nor ordinal.
-        'CREATE UNIQUE INDEX IF NOT EXISTS idx_entries_ordinal '
-            'ON entries(collection_id, ordinal) '
-            'WHERE collection_id IS NOT NULL AND ordinal IS NOT NULL',
-        // Recognition index: (host, path_key) resolves a Source in one lookup.
-        'CREATE UNIQUE INDEX IF NOT EXISTS idx_sources_identity '
-            'ON sources(host, path_key)',
-        // I13: at most one active offline copy per entry on this device.
-        'CREATE UNIQUE INDEX IF NOT EXISTS idx_offline_copies_active '
-            'ON offline_copies(entry_id) WHERE active = 1',
-        // Idempotency by construction, mirroring the server: at most one open
-        // request per entry.
-        'CREATE UNIQUE INDEX IF NOT EXISTS idx_download_requests_open '
-            'ON download_requests(entry_id) '
-            "WHERE state IN ('pending','claimed')",
-        // Idempotent by construction, exactly as the request index above:
-        // an Entry has one active copy (I13), so a second tap while a save
-        // for it is still waiting or running is the same request, not a
-        // second one. Keyed on the Entry rather than on `(entry, location)`
-        // because saving one Entry from two Sources at once could only
-        // produce two candidates for one active copy.
-        'CREATE UNIQUE INDEX IF NOT EXISTS idx_save_queue_open '
-            'ON save_queue(entry_id) '
-            "WHERE state IN ('queued','running')",
-        // The pump's own read: pending work in the order it was queued.
-        'CREATE INDEX IF NOT EXISTS idx_save_queue_pending '
-            'ON save_queue(state, order_index)',
-        // Read paths.
-        'CREATE INDEX IF NOT EXISTS idx_locations_entry '
-            'ON locations(entry_id)',
-        'CREATE INDEX IF NOT EXISTS idx_locations_source '
-            'ON locations(source_id)',
-        'CREATE INDEX IF NOT EXISTS idx_entries_folder '
-            'ON entries(folder_id) WHERE folder_id IS NOT NULL',
-        'CREATE INDEX IF NOT EXISTS idx_collections_folder '
-            'ON collections(folder_id, sort_key)',
-        'CREATE INDEX IF NOT EXISTS idx_history_visited '
-            'ON history(visited_at DESC)',
-        'CREATE UNIQUE INDEX IF NOT EXISTS idx_saved_sites_url '
-            'ON saved_sites(url_key)',
-      ];
-      for (final statement in indexes) {
-        await customStatement(statement);
-      }
+      await _createIndexes();
+    },
+    // Every database that predates the bump is stamped 1, and two different
+    // shapes wear that stamp: one created before the columns above were
+    // declared, and one created by a build that declared them but had not yet
+    // bumped the version. The step therefore **reconciles rather than
+    // replays** — it asks the file what it already has and adds only what is
+    // missing — so it is correct for both and safe to run twice.
+    onUpgrade: (m, from, to) async {
+      await _reconcileToDeclaredSchema(m);
+      await _createIndexes();
     },
     beforeOpen: (details) async {
       await customStatement('PRAGMA foreign_keys = ON');
     },
   );
+
+  /// Adds what an older file is missing. Idempotent by construction: nothing
+  /// here runs against a database that already has the thing it adds.
+  ///
+  /// **Structure only, and only additions.** It closes the gap that makes a
+  /// library unreadable and touches no row. The other difference between a
+  /// version-1 file and the declared schema is `sources`' table-level
+  /// constraints — a `UNIQUE (collection_id, host, path_key)` now implied by
+  /// the stricter `idx_sources_identity`, and a `CHECK (host = lower(host))`
+  /// that is a backstop behind `foldSourceHost` at both writers. Neither
+  /// rejects a row the current rules accept, neither can be changed without
+  /// rebuilding a table three foreign keys point at, and settling what to do
+  /// about rows written before either rule is its own question — not one to
+  /// answer inside the step that gets an existing library open.
+  Future<void> _reconcileToDeclaredSchema(Migrator m) async {
+    final collectionColumns = await _columnsOf('collections');
+    if (!collectionColumns.contains('capture_mode')) {
+      await m.addColumn(collections, collections.captureMode);
+    }
+    if (!collectionColumns.contains('entry_sort')) {
+      await m.addColumn(collections, collections.entrySort);
+    }
+
+    final locationColumns = await _columnsOf('locations');
+    if (!locationColumns.contains('published_at')) {
+      await m.addColumn(locations, locations.publishedAt);
+    }
+
+    if (!await _hasTable('collection_check_states')) {
+      await m.createTable(collectionCheckStates);
+    }
+    if (!await _hasTable('asset_origins')) {
+      await m.createTable(assetOrigins);
+    }
+  }
+
+  /// The column names `table` actually has on disk.
+  Future<Set<String>> _columnsOf(String table) async {
+    final rows = await customSelect('PRAGMA table_info($table)').get();
+    return {for (final row in rows) row.read<String>('name')};
+  }
+
+  Future<bool> _hasTable(String name) async {
+    final rows = await customSelect(
+      "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?1",
+      variables: [Variable<String>(name)],
+    ).get();
+    return rows.isNotEmpty;
+  }
+
+  /// The indexes the tables do not declare themselves. All `IF NOT EXISTS`,
+  /// so [onCreate] and [onUpgrade] can both run them.
+  Future<void> _createIndexes() async {
+    const indexes = [
+      // I1: at most one root folder in this library.
+      'CREATE UNIQUE INDEX IF NOT EXISTS idx_folders_one_root '
+          "ON folders(kind) WHERE kind = 'root'",
+      // I8: an ordinal is unique within its collection. Partial, because a
+      // composite UNIQUE treats NULLs as distinct and standalone entries
+      // have neither collection nor ordinal.
+      'CREATE UNIQUE INDEX IF NOT EXISTS idx_entries_ordinal '
+          'ON entries(collection_id, ordinal) '
+          'WHERE collection_id IS NOT NULL AND ordinal IS NOT NULL',
+      // Recognition index: (host, path_key) resolves a Source in one lookup.
+      'CREATE UNIQUE INDEX IF NOT EXISTS idx_sources_identity '
+          'ON sources(host, path_key)',
+      // I13: at most one active offline copy per entry on this device.
+      'CREATE UNIQUE INDEX IF NOT EXISTS idx_offline_copies_active '
+          'ON offline_copies(entry_id) WHERE active = 1',
+      // Idempotency by construction, mirroring the server: at most one open
+      // request per entry.
+      'CREATE UNIQUE INDEX IF NOT EXISTS idx_download_requests_open '
+          'ON download_requests(entry_id) '
+          "WHERE state IN ('pending','claimed')",
+      // Idempotent by construction, exactly as the request index above:
+      // an Entry has one active copy (I13), so a second tap while a save
+      // for it is still waiting or running is the same request, not a
+      // second one. Keyed on the Entry rather than on `(entry, location)`
+      // because saving one Entry from two Sources at once could only
+      // produce two candidates for one active copy.
+      'CREATE UNIQUE INDEX IF NOT EXISTS idx_save_queue_open '
+          'ON save_queue(entry_id) '
+          "WHERE state IN ('queued','running')",
+      // The pump's own read: pending work in the order it was queued.
+      'CREATE INDEX IF NOT EXISTS idx_save_queue_pending '
+          'ON save_queue(state, order_index)',
+      // Read paths.
+      'CREATE INDEX IF NOT EXISTS idx_locations_entry '
+          'ON locations(entry_id)',
+      'CREATE INDEX IF NOT EXISTS idx_locations_source '
+          'ON locations(source_id)',
+      'CREATE INDEX IF NOT EXISTS idx_entries_folder '
+          'ON entries(folder_id) WHERE folder_id IS NOT NULL',
+      'CREATE INDEX IF NOT EXISTS idx_collections_folder '
+          'ON collections(folder_id, sort_key)',
+      'CREATE INDEX IF NOT EXISTS idx_history_visited '
+          'ON history(visited_at DESC)',
+      'CREATE UNIQUE INDEX IF NOT EXISTS idx_saved_sites_url '
+          'ON saved_sites(url_key)',
+    ];
+    for (final statement in indexes) {
+      await customStatement(statement);
+    }
+  }
 }
