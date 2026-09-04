@@ -56,7 +56,7 @@ components:
           `op`.
 
         * `invariant_violation` — applying the mutation would violate a domain
-          invariant (I1–I17); `details.invariant` names which.
+          invariant (I1–I18); `details.invariant` names which.
 
 
         Placement arbitration:

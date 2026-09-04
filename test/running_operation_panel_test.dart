@@ -29,7 +29,6 @@ import 'package:web_reader/data/entry_repository.dart';
 import 'package:web_reader/data/reading_state_repository.dart';
 import 'package:web_reader/data/recognition_index.dart';
 import 'package:web_reader/data/schema.dart';
-import 'package:web_reader/data/local_settings.dart';
 import 'package:web_reader/domain/collection.dart';
 import 'package:web_reader/domain/entry.dart';
 import 'package:web_reader/domain/reading_state.dart';
@@ -542,7 +541,7 @@ class _Harness {
       collections: ui.collections,
       offlineCopies: ui.offline,
       fileStore: fileStore,
-      capturePreferences: CapturePreferenceStore(LocalSettingsStore(library)),
+      capturePreferences: CapturePreferenceStore(library),
       source: const _UnusedCaptureSource(),
     ),
   );

@@ -241,6 +241,13 @@ paths:
                     completed_at: 2026-08-21T10:16:00Z
                     last_read_at: 2026-08-21T10:16:00Z
                   client_time: 2026-08-21T10:16:02Z
+                - mutation_id: 5a7c9b1d-2f4a-6c8e-0b2d-4f6a8c0e1f3e
+                  entity_type: collection
+                  entity_id: 0b1c2d3e-4f5a-6b7c-8d9e-0f1a2b3c4d5e
+                  op: upsert
+                  fields:
+                    entry_sort: 'publishDate:descending'
+                  client_time: 2026-08-21T10:16:03Z
       responses:
         '200':
           description: Per-mutation outcomes plus the library's new revision.
@@ -259,7 +266,7 @@ paths:
                     items:
                       $ref: '#/components/schemas/MutationResult'
               example:
-                library_revision: 118
+                library_revision: 119
                 results:
                   - mutation_id: 1c9f2a4e-8b3d-4e6f-a1c2-d3e4f5a6b7c8
                     outcome: applied
@@ -267,6 +274,9 @@ paths:
                   - mutation_id: 3e5a7c9b-1d2f-4a6c-8e0b-2d4f6a8c0e1f
                     outcome: applied
                     revision: 118
+                  - mutation_id: 5a7c9b1d-2f4a-6c8e-0b2d-4f6a8c0e1f3e
+                    outcome: applied
+                    revision: 119
         '400':
           $ref: '#/components/responses/BadRequest'
         '403':
@@ -346,6 +356,8 @@ paths:
                       ordering_basis: explicitNumericIndex
                       lifecycle: active
                       preferred_source_id: null
+                      capture_mode: imageSequence
+                      entry_sort: 'number:ascending'
                       sort_key: 0
                       revision: 117
                       updated_at: 2026-08-21T10:16:02Z
@@ -887,9 +899,22 @@ components:
       description: >-
         A logical work. No URL and no host — those belong to Sources.
         `lifecycle` `active` means the user follows it.
+
+
+        `capture_mode` and `entry_sort` are answers the user gave about this
+        Collection, carried between their devices. The server stores and
+        echoes them and interprets NEITHER: whether a capture mode can be
+        honoured is a property of the page a client is looking at, and what
+        order a list is drawn in is a property of a screen. They are opaque
+        tokens of at most 64 characters, `""` meaning unset — and unset is a
+        question nobody has answered, never a default. A client that does not
+        recognise a stored value MUST treat it as unset rather than resolve it
+        to something else; that rule is what lets a client learn a new value
+        without a server release.
       required:
         [id, folder_id, name, detected_title, ordering_basis, lifecycle,
-         preferred_source_id, sort_key, revision, updated_at]
+         preferred_source_id, capture_mode, entry_sort, sort_key, revision,
+         updated_at]
       properties:
         id: { type: string, format: uuid }
         folder_id: { type: string, format: uuid }
@@ -909,6 +934,18 @@ components:
         preferred_source_id:
           type: [string, 'null']
           format: uuid
+        capture_mode:
+          type: string
+          maxLength: 64
+          description: >-
+            What this Collection is normally saved as, as the client spells it
+            (a `CaptureMode` name, or `askEachTime`). `""` is unset.
+        entry_sort:
+          type: string
+          maxLength: 64
+          description: >-
+            What order this Collection's Entries are drawn in, as the client
+            spells it (`<field>:<direction>`). `""` is unset.
         sort_key: { type: integer, format: int64 }
         revision: { type: integer, format: int64 }
         updated_at: { type: string, format: date-time }
@@ -919,6 +956,20 @@ components:
         One Collection as published on one site. `(host, path_key)` is its
         identity; language lives here because a translation is a Source of
         the same work. Lifecycle spellings are the schema's CHECK vocabulary.
+
+
+        That identity is unique **per library**, not per Collection (I18): a
+        site publishes one work, and which work is the user's answer. `host`
+        is compared case-insensitively and is stored folded to lower case —
+        DNS says two spellings are one host; `path_key` is compared exactly,
+        because RFC 3986 paths are case-sensitive. A client submits whatever
+        it read; the server folds the host on the way in.
+
+
+        `lifecycle: resolvedInto` with `resolved_into_source_id` set is how a
+        site that moved points forward. Arbitration follows that chain to the
+        Source at its end, so evidence read at the old address resolves to the
+        one being read now.
       required:
         [id, collection_id, host, path_key, language, lifecycle,
          resolved_into_source_id, first_seen_at, last_seen_at, revision,
@@ -972,11 +1023,21 @@ components:
       type: object
       description: >-
         This Entry, at one URL, on one Source. `url_key` is unique per
-        library (I6) and is the recognition hot path. `source_label` and
-        `source_number` are what the site printed — evidence, never identity.
+        library (I6) and is the recognition hot path. `source_label`,
+        `source_number` and `published_at` are what the site printed —
+        evidence, never identity.
+
+
+        `published_at` sits here rather than on the Entry for the reason the
+        two fields beside it do: it is what ONE Source said, and two Sources of
+        one Collection may print different days for the same work. A
+        Collection whose `ordering_basis` is `publicationDate` reduces the
+        Locations an Entry has to a single date; that reduction belongs to
+        whoever draws the list, not to this schema.
       required:
         [id, entry_id, source_id, url, url_key, source_label, source_number,
-         discovered_at, discovery_basis, lifecycle, revision, updated_at]
+         published_at, discovered_at, discovery_basis, lifecycle, revision,
+         updated_at]
       properties:
         id: { type: string, format: uuid }
         entry_id: { type: string, format: uuid }
@@ -988,6 +1049,9 @@ components:
         source_label: { type: string }
         source_number:
           type: [number, 'null']
+        published_at:
+          type: [string, 'null']
+          format: date-time
         discovered_at: { type: string, format: date-time }
         discovery_basis: { type: string }
         lifecycle:

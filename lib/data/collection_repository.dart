@@ -195,6 +195,52 @@ class CollectionRepository {
     });
   }
 
+  /// Records what this Collection is normally saved as, or clears the answer.
+  ///
+  /// The value is the client's own spelling — a `CaptureMode` name, or the
+  /// *Ask each time* token — and an empty string is unset. Nothing here reads
+  /// it: what a mode means is the capture seam's business (V2-D58), and this
+  /// repository would only be able to get it wrong.
+  Future<InvariantViolation?> setCaptureMode(String id, String mode) =>
+      _setCollectionPreference(id, captureMode: mode);
+
+  /// Records what order this Collection's Entries are drawn in, or clears it.
+  Future<InvariantViolation?> setEntrySort(String id, String sort) =>
+      _setCollectionPreference(id, entrySort: sort);
+
+  /// One writer for both, because they are one kind of thing: an opaque token
+  /// the user chose, stamped on the row's own clock so it merges as the scalar
+  /// it is (V2_SYNC.md §4.2) and pushed as a sparse field.
+  Future<InvariantViolation?> _setCollectionPreference(
+    String id, {
+    String? captureMode,
+    String? entrySort,
+  }) async {
+    return _db.transaction(() async {
+      if (await byId(id) == null) return unknownRow;
+      final at = _now();
+      await (_db.update(_db.collections)..where((c) => c.id.equals(id))).write(
+        CollectionsCompanion(
+          captureMode: captureMode == null
+              ? const Value.absent()
+              : Value(captureMode),
+          entrySort: entrySort == null
+              ? const Value.absent()
+              : Value(entrySort),
+          updatedAt: Value(at),
+        ),
+      );
+      await _outbox.record(
+        kind: SyncedEntityKind.collection,
+        entityId: id,
+        op: OutboxOp.upsert,
+        at: at,
+        fields: {'capture_mode': ?captureMode, 'entry_sort': ?entrySort},
+      );
+      return null;
+    });
+  }
+
   /// A deliberate user removal (V2_SYNC.md §5): tombstones on the server, and
   /// locally takes the Collection's rows with it through the schema's
   /// cascades. Offline copies have no foreign key and survive (I14).
@@ -241,6 +287,12 @@ class CollectionRepository {
       final id = _newId();
       final at = _now();
       final seen = firstSeenAt ?? at;
+      // I18's case half, applied where a Source is made rather than trusted of
+      // every caller: DNS is case-insensitive, so two spellings of a host are
+      // one host and the index has to see them that way. `pathKey` is left
+      // exactly as read — RFC 3986 paths are case-sensitive, and folding one
+      // would merge two places a site may genuinely keep apart.
+      host = domain.foldSourceHost(host);
       try {
         await _db
             .into(_db.sources)
@@ -375,6 +427,8 @@ class CollectionRepository {
     required String orderingBasis,
     required String lifecycle,
     required String? preferredSourceId,
+    required String captureMode,
+    required String entrySort,
     required int sortKey,
     required int revision,
     required DateTime updatedAt,
@@ -391,6 +445,8 @@ class CollectionRepository {
             orderingBasis: Value(orderingBasis),
             lifecycle: Value(lifecycle),
             preferredSourceId: Value(preferredSourceId),
+            captureMode: Value(captureMode),
+            entrySort: Value(entrySort),
             sortKey: Value(sortKey),
             revision: Value(revision),
             updatedAt: Value(updatedAt),
@@ -416,6 +472,10 @@ class CollectionRepository {
     required int revision,
     required DateTime updatedAt,
   }) async {
+    // Folded again on the way in. The service folds every host it stores, so
+    // this is defence at a trust boundary rather than a second opinion: a row
+    // written by some other client under an older rule would otherwise fail
+    // the local CHECK and stall the whole pull on a row nobody can fix.
     await _db
         .into(_db.sources)
         .insertOnConflictUpdate(
@@ -423,7 +483,7 @@ class CollectionRepository {
             id: Value(id),
             serverId: Value(serverId),
             collectionId: Value(collectionId),
-            host: Value(host),
+            host: Value(domain.foldSourceHost(host)),
             pathKey: Value(pathKey),
             language: Value(language),
             lifecycle: Value(lifecycle),
@@ -456,9 +516,15 @@ class CollectionRepository {
 
   /// The Source holding this natural identity, if any — the collision probe
   /// for merge-before-insert (the local `(host, path_key)` index is unique).
+  /// The Source holding this identity, or null. One row or none: the unique
+  /// index makes (host, path_key) library-wide identity (I18). The host is
+  /// folded to match how it was stored; the path key is compared as written.
   Future<SourceRow?> sourceByIdentity(String host, String pathKey) =>
-      (_db.select(_db.sources)
-            ..where((s) => s.host.equals(host) & s.pathKey.equals(pathKey)))
+      (_db.select(_db.sources)..where(
+            (s) =>
+                s.host.equals(domain.foldSourceHost(host)) &
+                s.pathKey.equals(pathKey),
+          ))
           .getSingleOrNull();
 
   /// Repoints collection rows living in folder [from] at [to].

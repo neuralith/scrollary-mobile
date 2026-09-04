@@ -150,6 +150,9 @@ in [docs/DECISIONS.md](docs/DECISIONS.md).
   Collection** (*Remove after finishing* · *Keep downloaded*, changeable and
   clearable from the Collection menu) and which is **device-local**, in
   `local_settings`, because it is a decision about these bytes on this device.
+  It is the one Collection preference that stays local: what the Collection is
+  normally *saved* as and what order its Entries are *drawn* in are answers
+  about the work and are synced columns on the Collection (V2-D73).
   Three decisions stay apart — did you finish it, where are you going, what
   happens to its files — and **nothing is freed until the destination has
   genuinely opened**: a package whose files are gone applies nothing, because
@@ -227,6 +230,15 @@ Rules that still bind: the port checklist
 change to a ported file; the shared contract (`contracts/`) is frozen and
 changes only through `contracts/README.md`'s protocol; the guard tests in
 `test/` gate every change in either half.
+
+**A synced field is written out by hand in both halves, and the service
+*rejects* a field it does not know** — so an intent carrying one is parked on
+the device forever, not silently dropped (V2-D73, docs/V2_SYNC.md §8.1a). Two
+tests hold the halves together: `test/sync/support/contract_vocabulary.dart`
+reads `contracts/openapi.yaml` and the fake service applies it, so every push
+test is a parity test; `internal/sync/vocabulary_test.go` does the same for the
+service's own allowlist. Push is strict and pull is tolerant, which is why the
+**service ships before the client** that sends a new field.
 
 Three things future agents get wrong here:
 
@@ -587,11 +599,30 @@ and refused. Do not add video URL extraction, HLS/DASH, interception or playback
   checking survives in MONETIZATION_STRATEGY.md §8.3, **marked superseded** — it
   is history, not a requirement.
 
-### The database has no history; the manifest does
+### The database has history now, and so does the manifest
 
-`schemaVersion` is **1**, with an `onCreate` and no `onUpgrade`. Do not add a
-migration branch, a schema dump, a step verifier or a data-copying routine. If the
-schema needs to change after release, write a migration then.
+`schemaVersion` is **2**, with an `onCreate` *and* an `onUpgrade` (V2-D75). It
+was 1 with no upgrade path for as long as the only databases were development
+ones that could be reset by hand; then five schema additions shipped against
+libraries somebody was already using, the version stayed at 1, and every read
+of `collections` threw `Null check operator used on a null value` on a column
+that was not there.
+
+**A schema change is a version bump and a step in
+`_reconcileToDeclaredSchema`, in the same commit.** That step *reconciles* — it
+asks the file what it already has and adds only what is missing — so it is
+correct for a database of any older shape and safe to run twice. Still no
+schema dump and no step verifier: additions are checked against
+`PRAGMA table_info` and `sqlite_master`, and
+`test/data/schema_migration_test.dart` opens a file in the older shape and
+proves the library survives.
+
+**Structure only.** A step adds what is missing and touches no row: getting an
+existing library open is not the place to settle what should happen to rows an
+older rule wrote. `sources` accordingly still carries a version-1
+`UNIQUE (collection_id, host, path_key)` and lacks `CHECK (host = lower(host))`
+— neither rejects a row the current rules accept, and neither is worth
+rebuilding a table three foreign keys point at.
 
 `manifest.json` is **version 2** and *is* versioned, because those files are
 durable user data that exists on devices today. A version-1 manifest has no

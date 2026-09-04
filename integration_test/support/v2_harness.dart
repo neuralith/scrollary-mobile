@@ -39,13 +39,13 @@ import 'package:web_reader/capability/foreground_multitasking.dart';
 import 'package:web_reader/core/config.dart';
 import 'package:web_reader/core/url_utils.dart';
 import 'package:web_reader/data/asset_origin_repository.dart';
+import 'package:web_reader/data/local_settings.dart';
 import 'package:web_reader/data/recognition_index.dart';
 import 'package:web_reader/data/schema.dart';
 import 'package:web_reader/domain/domain.dart';
 import 'package:web_reader/features/check_controller.dart';
 import 'package:web_reader/features/source_observation_browser.dart';
 import 'package:web_reader/data/reading_state_repository.dart';
-import 'package:web_reader/data/local_settings.dart';
 import 'package:web_reader/features/v2_composition.dart';
 import 'package:web_reader/features/v2_save_flow.dart';
 import 'package:web_reader/save/page_hint_repository.dart';
@@ -328,7 +328,7 @@ class V2App {
         collections: ui.collections,
         offlineCopies: ui.offline,
         fileStore: fileStore,
-        capturePreferences: CapturePreferenceStore(LocalSettingsStore(library)),
+        capturePreferences: CapturePreferenceStore(library),
         source: SaveEnginePageCaptureSource(
           browser: browser,
           engineFor: (sink) => SaveEngine(

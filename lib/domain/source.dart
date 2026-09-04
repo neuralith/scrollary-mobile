@@ -6,6 +6,17 @@ library;
 /// site coming back is a state change, not a row moved between tables.
 enum SourceLifecycle { active, dormant, dead, resolvedInto }
 
+/// Folds a host to the one spelling a Source's identity is stored and compared
+/// under (I18).
+///
+/// DNS is case-insensitive, so two spellings of a host are one host and
+/// folding them is not a guess. A path key gets no such treatment: RFC 3986
+/// paths **are** case-sensitive, and folding one would merge two places a site
+/// may genuinely keep apart. That asymmetry is the whole case rule, it matches
+/// what `normalizeUrl` already does to a URL, and the service applies the same
+/// one — so neither side can store an identity the other cannot.
+String foldSourceHost(String host) => host.trim().toLowerCase();
+
 /// `host` and `pathKey` together are the Source's identity — what V1 called
 /// `collection_key`, one level down from where it used to sit. Language
 /// belongs here rather than on the Collection, because a translation is a

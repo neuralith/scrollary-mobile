@@ -534,9 +534,7 @@ void main() {
       // nobody checks (V2-D60). Both states are real answers and both are
       // stated.
       await seed();
-      final preferences = CapturePreferenceStore(
-        LocalSettingsStore(v2.library),
-      );
+      final preferences = CapturePreferenceStore(v2.library);
 
       await tester.pumpWidget(app(checkerAttached: true));
       await tester.tap(find.text('menu'));
@@ -585,18 +583,14 @@ void main() {
       await _settle(tester);
 
       expect(
-        await CapturePreferenceStore(
-          LocalSettingsStore(v2.library),
-        ).of(collection.id),
+        await CapturePreferenceStore(v2.library).of(collection.id),
         CaptureMode.imageSequence,
       );
     });
 
     screenTest('and *Ask each time* is a real answer', (tester) async {
       await seed();
-      final preferences = CapturePreferenceStore(
-        LocalSettingsStore(v2.library),
-      );
+      final preferences = CapturePreferenceStore(v2.library);
       await preferences.remember(collection.id, CaptureMode.imageSequence);
 
       await tester.pumpWidget(app(checkerAttached: true));

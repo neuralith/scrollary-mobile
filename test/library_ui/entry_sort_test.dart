@@ -13,6 +13,7 @@
 /// it.
 library;
 
+import 'package:drift/drift.dart' show Value;
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:web_reader/data/schema.dart';
@@ -21,7 +22,6 @@ import 'package:web_reader/domain/entry.dart';
 import 'package:web_reader/library/entry_sort.dart';
 import 'package:web_reader/library/entry_sort_preference.dart';
 import 'package:web_reader/library_ui/collection_screen.dart';
-import 'package:web_reader/data/local_settings.dart';
 
 import 'support/ui_harness.dart';
 
@@ -33,8 +33,7 @@ void main() {
 
   DateTime day(int d) => DateTime.utc(2026, 1, d);
 
-  EntrySortPreferenceStore store() =>
-      EntrySortPreferenceStore(LocalSettingsStore(h.db));
+  EntrySortPreferenceStore store() => EntrySortPreferenceStore(h.db);
 
   /// The Entry titles on screen, top to bottom.
   List<String> titlesOnScreen(WidgetTester tester, List<String> candidates) {
@@ -85,11 +84,11 @@ void main() {
 
     await openCollection(tester, collection.id);
 
-    expect(
-      titlesOnScreen(tester, ['Part one', 'Part nine', 'Part ten']),
-      ['Part one', 'Part nine', 'Part ten'],
-      reason: 'and "Part ten" does not sort between one and nine',
-    );
+    expect(titlesOnScreen(tester, ['Part one', 'Part nine', 'Part ten']), [
+      'Part one',
+      'Part nine',
+      'Part ten',
+    ], reason: 'and "Part ten" does not sort between one and nine');
     expect(find.text('NUMBER'), findsOneWidget);
   });
 
@@ -244,11 +243,10 @@ void main() {
     );
     await pumpUntil(tester, find.text('NUMBER'));
 
-    expect(
-      titlesOnScreen(tester, ['Part one', 'Part two']),
-      ['Part two', 'Part one'],
-      reason: 'the list redraws behind the sheet, without leaving the screen',
-    );
+    expect(titlesOnScreen(tester, ['Part one', 'Part two']), [
+      'Part two',
+      'Part one',
+    ], reason: 'the list redraws behind the sheet, without leaving the screen');
   });
 
   // ─── the preference ────────────────────────────────────────────────────────
@@ -290,11 +288,10 @@ void main() {
     await tester.pump(const Duration(milliseconds: 10));
     await openCollection(tester, collection.id);
 
-    expect(
-      titlesOnScreen(tester, ['Part one', 'Part two']),
-      ['Part two', 'Part one'],
-      reason: 'exactly the order it was left in',
-    );
+    expect(titlesOnScreen(tester, ['Part one', 'Part two']), [
+      'Part two',
+      'Part one',
+    ], reason: 'exactly the order it was left in');
   });
 
   screenTest('one collection remembering an order does not touch another', (
@@ -338,11 +335,10 @@ void main() {
 
     expect(await store().of(second.id), isNull);
     await openCollection(tester, second.id);
-    expect(
-      titlesOnScreen(tester, ['Beta one', 'Beta two']),
-      ['Beta one', 'Beta two'],
-      reason: 'the second collection is still following its own data',
-    );
+    expect(titlesOnScreen(tester, ['Beta one', 'Beta two']), [
+      'Beta one',
+      'Beta two',
+    ], reason: 'the second collection is still following its own data');
   });
 
   // ─── source_number is evidence, not an ordinal ─────────────────────────────
@@ -447,11 +443,10 @@ void main() {
           'back under a heading about placement would answer a question the '
           'list is not asking',
     );
-    expect(
-      titlesOnScreen(tester, ['Has a place', 'Has no place']),
-      ['Has no place', 'Has a place'],
-      reason: 'both rows are in the one list, in date order',
-    );
+    expect(titlesOnScreen(tester, ['Has a place', 'Has no place']), [
+      'Has no place',
+      'Has a place',
+    ], reason: 'both rows are in the one list, in date order');
   });
 
   screenTest('under a numeric sort the placement heading is still there', (
@@ -488,6 +483,76 @@ void main() {
   });
 
   // ─── entries that cannot answer ────────────────────────────────────────────
+
+  screenTest(
+    'two addresses discovered in the same instant still reduce to one date',
+    (tester) async {
+      // Publish date is a Location's, and an Entry may have several. Which one
+      // answers for the Entry is settled by `discovered_at` — a column that
+      // synchronises, so two devices holding the same Locations agree. A tie
+      // in it used to leave the choice to whatever SQLite happened to return,
+      // which is the one way this reduction could still disagree with itself
+      // across devices; the id breaks the tie.
+      //
+      // The two dates on the first Entry are chosen so the two possible
+      // answers put the list in different orders: by `a1` it sorts after the
+      // second Entry, by `a2` it sorts before it.
+      final root = await h.root();
+      final collection = await h.collection(
+        'Two sites',
+        folderId: root.id,
+        basis: OrderingBasis.publicationDate,
+      );
+      final first = await h.entryIn(
+        collection.id,
+        title: 'Two addresses',
+        placement: Placement.unplaced,
+      );
+      final second = await h.entryIn(
+        collection.id,
+        title: 'One address',
+        placement: Placement.unplaced,
+      );
+
+      final at = DateTime.utc(2026, 8, 21, 10);
+      Future<void> seedLocation(
+        String id,
+        String entryId,
+        DateTime published,
+      ) async {
+        await h.db
+            .into(h.db.locations)
+            .insert(
+              LocationsCompanion.insert(
+                id: id,
+                entryId: entryId,
+                url: 'https://reading.example.com/$id',
+                urlKey: 'https://reading.example.com/$id',
+                publishedAt: Value(published),
+                discoveredAt: at,
+                updatedAt: at,
+              ),
+            );
+      }
+
+      await seedLocation('a1', first.id, day(9));
+      await seedLocation('a2', first.id, day(1));
+      await seedLocation('b1', second.id, day(5));
+
+      // Read it more than once: an order settled by chance would eventually
+      // come back the other way round.
+      for (var i = 0; i < 5; i++) {
+        await openCollection(tester, collection.id);
+        expect(
+          titlesOnScreen(tester, ['One address', 'Two addresses']),
+          ['One address', 'Two addresses'],
+          reason:
+              'the reduction is ordered by (discovered_at, id), so a1 answers '
+              'for the first Entry on every read and on every device',
+        );
+      }
+    },
+  );
 
   screenTest('an entry with no publish date sorts last, both ways round', (
     tester,

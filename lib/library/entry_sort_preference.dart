@@ -1,46 +1,51 @@
 /// What order a Collection's Entries are shown in, remembered.
 ///
-/// **Device-local, in the settings table.** The third store built this way,
-/// and for the same reasons the two before it were: the schema is frozen at
-/// version 1 with no migration path (CLAUDE.md, "The database has no
-/// history"), and `LocalSettingsStore` documents itself as the place for
-/// exactly this — "a setting is a string under a key its owner names, so a new
-/// preference is a constant beside the thing it configures rather than a
-/// column, a migration and an entry in a registry three layers away".
+/// **On the Collection row, and it synchronises.** It began in the settings
+/// table when the schema was frozen, with a note saying that if it should
+/// follow a user between devices it becomes a Collection field through
+/// `contracts/README.md`'s protocol. It should, and it has. The argument that
+/// kept it local — `ordering_basis` is what the *source* does, and which end
+/// of it someone likes to look at is theirs — turned out to argue the other
+/// way: a list somebody arranged by hand going back to its default on their
+/// other device is the arrangement being lost, not respected.
 ///
-/// **Local rather than synced is a judgement, and it is this one:** the
-/// Collection's `ordering_basis` — what the *source* does — is library state
-/// and syncs; which end of it this person likes to look at is not. It is also
-/// the only option available today without changing `contracts/`, which is
-/// frozen at Gate B. If it should follow a user between devices later, it
-/// becomes a Collection field through `contracts/README.md`'s protocol, and
-/// this store is what it replaces.
+/// The wire form is an opaque token the service stores and never interprets
+/// (contracts/openapi.yaml `Collection.entry_sort`), so a new sort field is a
+/// client release and not a backend one.
 ///
-/// Modelled on `save/capture_preference.dart` and
-/// `reading_v2/finished_cleanup.dart` deliberately, down to the tri-state:
+/// Modelled on `save/capture_preference.dart` beside it, and on
+/// `reading_v2/finished_cleanup.dart` — which stays device-local, because what
+/// happens to a finished Entry's files is a decision about bytes on one
+/// device (V2-D59). Down to the tri-state:
 /// **null is a question, not a default.** An unset Collection opens in the
 /// order its own data earns — see `defaultEntrySort` — and only a deliberate
 /// choice is stored. Nothing infers one from what the user did on another
 /// Collection.
 library;
 
-import '../data/local_settings.dart';
+import 'package:drift/drift.dart';
+
+import '../data/collection_repository.dart';
+import '../data/schema.dart';
 import 'entry_sort.dart';
 
-/// The settings key a Collection's sort lives under.
-///
-/// Namespaced by the Collection's own id, so there is one row per Collection
-/// and forgetting one cannot touch another. Exposed for the test that pins the
-/// spelling: a key that changes silently is a preference that silently
-/// vanishes, and this one vanishing means a list the user arranged quietly
-/// goes back to its default the next time they open it.
-String entrySortKeyFor(String collectionId) => 'entry_sort.$collectionId';
+/// The settings key this preference used to live under, kept for exactly one
+/// reader: `adoptLegacyCollectionPreferences`, which moves a value written by
+/// an older build onto the Collection row and deletes the row it came from.
+/// Nothing else may read or write it.
+String legacyEntrySortKeyFor(String collectionId) => 'entry_sort.$collectionId';
 
 /// Reads and writes the order one Collection's Entries are drawn in.
 class EntrySortPreferenceStore {
-  const EntrySortPreferenceStore(this._settings);
+  EntrySortPreferenceStore(LibraryDatabase db)
+    : _db = db,
+      _collections = CollectionRepository(db);
 
-  final LocalSettingsStore _settings;
+  final LibraryDatabase _db;
+  final CollectionRepository _collections;
+
+  SingleOrNullSelectable<CollectionRow> _row(String collectionId) =>
+      _db.select(_db.collections)..where((c) => c.id.equals(collectionId));
 
   /// This Collection's remembered sort, or null when the user has never said.
   ///
@@ -50,7 +55,8 @@ class EntrySortPreferenceStore {
   /// the Collection's data would have chosen.
   Future<EntrySort?> of(String? collectionId) async {
     if (collectionId == null || collectionId.isEmpty) return null;
-    return parseEntrySort(await _settings.get(entrySortKeyFor(collectionId)));
+    final row = await _row(collectionId).getSingleOrNull();
+    return parseEntrySort(row?.entrySort);
   }
 
   /// Emits this Collection's remembered sort, and again whenever it changes.
@@ -58,8 +64,9 @@ class EntrySortPreferenceStore {
   /// The screen watches rather than reads: choosing a sort writes here, and
   /// the list has to redraw from that write. Nothing else in the library's
   /// tick stream covers the settings table.
-  Stream<EntrySort?> watch(String collectionId) =>
-      _settings.watch(entrySortKeyFor(collectionId)).map(parseEntrySort);
+  Stream<EntrySort?> watch(String collectionId) => _row(
+    collectionId,
+  ).watchSingleOrNull().map((row) => parseEntrySort(row?.entrySort));
 
   /// Remember [sort] for this Collection.
   ///
@@ -70,11 +77,13 @@ class EntrySortPreferenceStore {
   /// *Date added* on its own.
   Future<void> remember(String? collectionId, EntrySort sort) async {
     if (collectionId == null || collectionId.isEmpty) return;
-    await _settings.set(entrySortKeyFor(collectionId), sort.storedValue);
+    await _collections.setEntrySort(collectionId, sort.storedValue);
   }
 
   /// Go back to the order the Collection's own data chooses. Reorders a list
-  /// and changes nothing else.
-  Future<void> forget(String collectionId) =>
-      _settings.remove(entrySortKeyFor(collectionId));
+  /// and changes nothing else — and travels, so the Collection follows its own
+  /// data on every device rather than only on this one.
+  Future<void> forget(String collectionId) async {
+    await _collections.setEntrySort(collectionId, '');
+  }
 }

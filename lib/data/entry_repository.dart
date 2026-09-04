@@ -370,14 +370,20 @@ class EntryRepository {
   /// exception inside that method is how the guarantee would quietly stop
   /// being true.
   ///
-  /// Local-only, and the precedent is [retractLocation] directly below: a
-  /// Location write that stays on this device. Two consequences worth stating:
+  /// **It synchronises**, as an ordinary Location field. That is not a
+  /// precedent borrowed from [retractLocation] below, which stays on the
+  /// device because a retraction is one Source's own reading (I15); a printed
+  /// date is evidence every device should have. Two consequences worth
+  /// stating:
   ///
-  /// * **`updated_at` is not touched.** It is the row's last-writer-wins clock
-  ///   (V2-D6), and moving it for a field that never syncs would let this
-  ///   device's row beat a legitimate remote update and discard it.
+  /// * **`updated_at` moves with it**, because it is the row's
+  ///   last-writer-wins clock (V2-D6) and this device now holds newer
+  ///   information about the row. The write is a sparse one: `published_at`
+  ///   is the only field the outbox intent carries, so nothing else on the
+  ///   row is re-asserted at this clock.
   /// * **It never clears.** [publishedAt] is non-null by signature, so a site
-  ///   that stops printing a date leaves the one already read standing.
+  ///   that stops printing a date leaves the one already read standing — the
+  ///   key is simply not sent, and absent means keep.
   ///
   /// The last reading wins where a site corrects itself. Writes nothing when
   /// the stored date already names the same instant, so a re-capture of an
@@ -396,8 +402,22 @@ class EntryRepository {
       if (row.publishedAt?.isAtSameMomentAs(publishedAt) ?? false) {
         return null;
       }
-      await (_db.update(_db.locations)..where((l) => l.id.equals(locationId)))
-          .write(LocationsCompanion(publishedAt: Value(publishedAt)));
+      final at = _now();
+      await (_db.update(
+        _db.locations,
+      )..where((l) => l.id.equals(locationId))).write(
+        LocationsCompanion(
+          publishedAt: Value(publishedAt),
+          updatedAt: Value(at),
+        ),
+      );
+      await _outbox.record(
+        kind: SyncedEntityKind.location,
+        entityId: locationId,
+        op: OutboxOp.upsert,
+        at: at,
+        fields: {'published_at': wireTime(publishedAt)},
+      );
       return null;
     });
   }
@@ -576,6 +596,7 @@ class EntryRepository {
     required String urlKey,
     required String sourceLabel,
     required double? sourceNumber,
+    required DateTime? publishedAt,
     required DateTime discoveredAt,
     required String discoveryBasis,
     required String lifecycle,
@@ -594,6 +615,7 @@ class EntryRepository {
             urlKey: Value(urlKey),
             sourceLabel: Value(sourceLabel),
             sourceNumber: Value(sourceNumber),
+            publishedAt: Value(publishedAt),
             discoveredAt: Value(discoveredAt),
             discoveryBasis: Value(discoveryBasis),
             lifecycle: Value(lifecycle),

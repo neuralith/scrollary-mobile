@@ -26,7 +26,6 @@ import 'package:web_reader/features/v2_save_flow.dart';
 import 'package:web_reader/library_ui/entry_offline.dart';
 import 'package:web_reader/library_ui/providers.dart';
 import 'package:web_reader/providers.dart';
-import 'package:web_reader/data/local_settings.dart';
 import 'package:web_reader/save/capture_mode.dart';
 import 'package:web_reader/save/capture_preference.dart';
 import 'package:web_reader/ui/palette.dart';
@@ -926,7 +925,7 @@ void main() {
     screenTest('a remembered answer stands in for the block', (tester) async {
       final collectionId = await seedKnownEntry();
       await CapturePreferenceStore(
-        LocalSettingsStore(h.db),
+        h.db,
       ).remember(collectionId, CaptureMode.imageSequence);
 
       await openPanel(tester, _entryUrl, _entryTitle);
@@ -960,7 +959,7 @@ void main() {
       // the sheet stayed three rows taller for the rest of its life.
       final collectionId = await seedKnownEntry();
       await CapturePreferenceStore(
-        LocalSettingsStore(h.db),
+        h.db,
       ).remember(collectionId, CaptureMode.imageSequence);
 
       await openPanel(tester, _entryUrl, _entryTitle);
@@ -987,7 +986,7 @@ void main() {
       // so it stays on screen.
       final collectionId = await seedKnownEntry();
       await CapturePreferenceStore(
-        LocalSettingsStore(h.db),
+        h.db,
       ).remember(collectionId, CaptureMode.imageSequence);
 
       await openPanel(tester, _entryUrl, _entryTitle);
@@ -1004,7 +1003,7 @@ void main() {
     ) async {
       final collectionId = await seedKnownEntry();
       await CapturePreferenceStore(
-        LocalSettingsStore(h.db),
+        h.db,
       ).remember(collectionId, CaptureMode.imageSequence);
 
       await openPanel(tester, _entryUrl, _entryTitle);
@@ -1024,7 +1023,7 @@ void main() {
     screenTest('changing it through the line rewrites the collection\'s '
         'answer', (tester) async {
       final collectionId = await seedKnownEntry();
-      final preferences = CapturePreferenceStore(LocalSettingsStore(h.db));
+      final preferences = CapturePreferenceStore(h.db);
       await preferences.remember(collectionId, CaptureMode.imageSequence);
 
       await openPanel(tester, _entryUrl, _entryTitle);
@@ -1063,7 +1062,7 @@ void main() {
         reason: 'accepted, not chosen — the capture is not told otherwise',
       );
       expect(
-        await CapturePreferenceStore(LocalSettingsStore(h.db)).of(collectionId),
+        await CapturePreferenceStore(h.db).of(collectionId),
         CaptureMode.imageSequence,
       );
     });
@@ -1078,10 +1077,7 @@ void main() {
 
       expect(find.text('What to save'), findsOneWidget);
       expect(adds, isEmpty);
-      expect(
-        await CapturePreferenceStore(LocalSettingsStore(h.db)).of(collectionId),
-        isNull,
-      );
+      expect(await CapturePreferenceStore(h.db).of(collectionId), isNull);
     });
 
     screenTest('a lazy page does not un-remember what the collection is kept '
@@ -1094,7 +1090,7 @@ void main() {
       // settled page, would have saved it as images all along (V2-D65).
       final collectionId = await seedKnownEntry();
       await CapturePreferenceStore(
-        LocalSettingsStore(h.db),
+        h.db,
       ).remember(collectionId, CaptureMode.imageSequence);
 
       await openPanel(
@@ -1125,7 +1121,7 @@ void main() {
       // answer has to be stored as an answer or the next download would
       // quietly undo it (V2-D61).
       final collectionId = await seedKnownEntry();
-      final preferences = CapturePreferenceStore(LocalSettingsStore(h.db));
+      final preferences = CapturePreferenceStore(h.db);
       await preferences.askEachTime(collectionId);
 
       await openPanel(tester, _entryUrl, _entryTitle);
@@ -1149,7 +1145,7 @@ void main() {
       // (V2-D53): the mode on screen here is the *fallback*, and saving with
       // it must not turn one awkward entry into a new standing answer.
       final collectionId = await seedKnownEntry();
-      final preferences = CapturePreferenceStore(LocalSettingsStore(h.db));
+      final preferences = CapturePreferenceStore(h.db);
       await preferences.remember(collectionId, CaptureMode.textOnly);
 
       await openPanel(tester, _entryUrl, _entryTitle);
@@ -1171,7 +1167,7 @@ void main() {
     screenTest('a page that cannot honour it asks again', (tester) async {
       final collectionId = await seedKnownEntry();
       await CapturePreferenceStore(
-        LocalSettingsStore(h.db),
+        h.db,
       ).remember(collectionId, CaptureMode.textOnly);
 
       await openPanel(tester, _entryUrl, _entryTitle);
@@ -1183,7 +1179,7 @@ void main() {
       expect(key('captureModeRemembered'), findsNothing);
       expect(find.text('What to save'), findsOneWidget);
       expect(
-        await CapturePreferenceStore(LocalSettingsStore(h.db)).of(collectionId),
+        await CapturePreferenceStore(h.db).of(collectionId),
         CaptureMode.textOnly,
         reason: 'one page could not honour it; that is not a change of mind',
       );
@@ -1200,7 +1196,7 @@ void main() {
       await launch(tester, key('saveScopeAddToQueue'));
 
       expect(
-        await CapturePreferenceStore(LocalSettingsStore(h.db)).of(collectionId),
+        await CapturePreferenceStore(h.db).of(collectionId),
         CaptureMode.imageSequence,
       );
     });
@@ -1221,10 +1217,7 @@ void main() {
 
       expect(find.text('What to save'), findsNothing);
       expect(key('captureModeRemembered'), findsNothing);
-      expect(
-        await CapturePreferenceStore(LocalSettingsStore(h.db)).of(collectionId),
-        isNull,
-      );
+      expect(await CapturePreferenceStore(h.db).of(collectionId), isNull);
     });
   });
 
@@ -1357,7 +1350,7 @@ void main() {
       const secondUrl = 'https://reading.example.com/works/alpha/13';
       await h.location(second.id, secondUrl, sourceId: source.id);
       reportedCollectionId = collection.id;
-      final preferences = CapturePreferenceStore(LocalSettingsStore(h.db));
+      final preferences = CapturePreferenceStore(h.db);
 
       // ── first save: nothing is remembered, so the whole block is asked,
       // on the same sheet as the range and the launch (V2-D62).
@@ -1453,7 +1446,7 @@ void main() {
       await h.location(entry.id, _entryUrl, sourceId: source.id);
       reportedCollectionId = collection.id;
       await CapturePreferenceStore(
-        LocalSettingsStore(h.db),
+        h.db,
       ).remember(collection.id, CaptureMode.imageSequence);
 
       await openPanel(tester, _entryUrl, _entryTitle);
