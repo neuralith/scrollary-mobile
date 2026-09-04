@@ -17,27 +17,22 @@
 // `LIVE_ENTRY_*` the live scenarios fall back to the in-process fixture and say
 // so; nothing skips silently and nothing invents a pass.
 //
-// ## TWO KNOWN BLOCKERS — read before treating a red run as evidence
+// ## The two blockers this file used to carry, and what became of them
 //
-// **1. The check race is blocked on a product defect.** It stops on
-// `SourceCheckStop.listingUnrecognised`, for the reason set out at the top of
-// `update_check_test.dart`: since V2-D72 a Source whose `path_key` is `/`
-// recognises only single-segment numbered addresses as its own, so a listing
-// that is a site's home page matches none of its `/entry/N` links.
+// **1. The check race was blocked on a product defect** — it stopped on
+// `SourceCheckStop.listingUnrecognised`, because a Source whose `path_key` is
+// `/` recognised only single-segment numbered addresses as its own, so a
+// listing that is a site's home page matched none of its `/entry/N` links.
+// Fixed in `lib/`: `addressIsRootMember` now answers membership separately
+// from `addressKeysRoot`'s identity derivation. The scenario asserts again.
 //
-// **2. Each scenario boots its own app, and repeated boots do not settle.**
-// Every scenario after the first times out in `phase=starting` at the
-// watchdog's cap, with drift warning that `LibraryDatabase` was constructed a
-// second time over the same executor. This is the limitation the harness's own
-// `boot` comment describes — an in-process relaunch is not sustainable on
-// either platform — and it was previously *hidden*, because a `Bad state: No
-// element` thrown by the shell-anchored helpers killed the whole `testWidgets`
-// on scenario 1 before anything else was attempted. With those helpers fixed
-// (`appAnchor`) all seven scenarios are now reached, which is what exposes it.
-//
-// Neither is a stale assertion, and neither is fixed by editing this file: the
-// first belongs in `lib/`, the second needs the matrix to stop sharing one
-// `testWidgets` across seven app lifetimes.
+// **2. Every scenario after the first timed out in `phase=starting`**, with
+// drift warning that `LibraryDatabase` had been built a second time. That was
+// this file's own doing: seven scenarios shared one `testWidgets`, so the
+// second `pumpWidget` replaced the tree over a still-mounted `InAppWebView`
+// and the Browser never revealed again. It is a scenario per `testWidgets`
+// now — see [matrixCase] — which is the one-boot-per-case rule every other
+// suite here already follows.
 //
 // ## Ported, retired and changed
 //
@@ -149,8 +144,13 @@ void main() {
     await app.shutdown(dumpLog: false);
   }
 
+  // [appAnchor] rather than the tab bar: the Reader is pushed *over* the
+  // shell, so while it is up the bottom bar is not in the tree at all — and
+  // "is the WebView still being drawn under the Reader" is the one question
+  // this is asked while it is up. Anchored on the tab bar it threw `Bad state:
+  // No element` on exactly the assertions it exists for.
   bool surfacePainted(WidgetTester tester) => ProviderScope.containerOf(
-    tester.element(libraryTab),
+    appAnchor(tester),
   ).read(browserSurfacePaintedProvider).value;
 
   /// Queue [url] and drain it. Returns whether the queue fell idle inside the
@@ -251,115 +251,320 @@ void main() {
     return collection.id;
   }
 
+  /// One scenario, one `testWidgets` — and one app lifetime each.
+  ///
+  /// **The matrix used to be a single `testWidgets` that booted seven apps.**
+  /// Every scenario after the first timed out in `phase=starting` at the
+  /// watchdog's cap: the second `pumpWidget` replaces the tree over a still
+  /// mounted `InAppWebView`, the Browser never reveals again ("the Browser
+  /// never revealed and settled"), and drift warns that `LibraryDatabase` was
+  /// built a second time while the first was still open. Nothing in the
+  /// product was wrong; six scenarios were reporting on the harness.
+  ///
+  /// A test each is what the rest of these suites already do, and it is what
+  /// makes each scenario's state honest: the framework tears the tree down
+  /// between cases, so every scenario opens its own database over its own tag
+  /// and boots the app once — the same one-boot-per-case rule
+  /// `V2App.boot` sets out.
+  ///
+  /// The result is asserted as well as recorded. `DeviceHarness.scenario`
+  /// deliberately *catches* a failure so the matrix can still report every
+  /// row, which on its own leaves `flutter test` green over a table full of
+  /// FAILED. `skipped` stays green because it claims nothing — an unmet
+  /// precondition, such as no `LIVE_ENTRY_B` — and everything else is red.
+  void matrixCase(
+    String name, {
+    required Duration limit,
+    required Future<void> Function(WidgetTester) body,
+    Future<void> Function(WidgetTester)? teardown,
+  }) {
+    testWidgets(
+      name,
+      (tester) async {
+        final result = await harness.scenario(
+          name,
+          limit: limit,
+          body: () => body(tester),
+          teardown: teardown == null ? null : () => teardown(tester),
+        );
+        expect(
+          result.outcome,
+          anyOf(ScenarioOutcome.passed, ScenarioOutcome.skipped),
+          reason: '$name ended ${result.outcome.name}: ${result.detail}',
+        );
+      },
+      // The scenario's own ceiling is the real bound; this is only the outer
+      // net, and it must be looser than the thing it is netting or a stall
+      // gets reported as a `flutter test` timeout instead of as the harness
+      // verdict it is.
+      timeout: Timeout(limit + const Duration(minutes: 3)),
+    );
+  }
+
   // ------------------------------------------------------------------ matrix
 
-  testWidgets('device matrix', (tester) async {
-    // --- 1. the Collection-check race, repeated -----------------------------
-    await harness.scenario(
-      'check race x3 · Reader on top',
-      limit: const Duration(minutes: 9),
-      body: () async {
-        await boot(tester, multitasking: true);
-        final collectionId = await seedCollection();
-        final seed = await captureOne(
-          tester,
-          fixture.entry(1),
-          collectionId: collectionId,
+  // --- 1. the Collection-check race, repeated -----------------------------
+  matrixCase(
+    'check race x3 · Reader on top',
+    limit: const Duration(minutes: 9),
+    body: (tester) async {
+      await boot(tester, multitasking: true);
+      final collectionId = await seedCollection();
+      final seed = await captureOne(
+        tester,
+        fixture.entry(1),
+        collectionId: collectionId,
+      );
+      harness.note('seed capture done=${seed.done}');
+      if (!seed.done) {
+        harness.skip('the seed capture did not finish');
+        return;
+      }
+      expect(await openedReader(tester, seed.entryId), isTrue);
+
+      for (var i = 1; i <= 3; i++) {
+        final started = DateTime.now();
+        // **Waited on the run, not on `isRunning`.** `CheckController.run`
+        // resolves the Source and asks the capture policy before it sets the
+        // flag, so at the instant it returns to its caller `isRunning` is
+        // still false — and a wait for "not running" was satisfied on its
+        // first look, every time. `done` then said the check had finished
+        // before it had started.
+        var finished = false;
+        final outcome = app.check
+            .run(collectionId, limits: kCollectionCheckLimits)
+            .whenComplete(() => finished = true);
+        // **Sampled while the check reads, not after it.** The shell keeps the
+        // WebView painted for as long as an operation is live and releases it
+        // the moment the operation ends, so asking afterwards asks whether the
+        // mechanism is still engaged once nothing needs it — and the honest
+        // answer to that is no. Asked at the end, this scenario failed on the
+        // product working exactly as designed.
+        var unpainted = 0;
+        var painted = 0;
+        final done = await harness.waitFor(tester, 'check $i', () {
+          if (app.check.isRunning) {
+            if (surfacePainted(tester)) {
+              painted++;
+            } else {
+              unpainted++;
+            }
+          }
+          return finished;
+        }, limit: kOperation);
+        final result = await outcome;
+        final took = DateTime.now().difference(started);
+        harness.note(
+          'check $i: done=$done state=${result?.state.name} '
+          'new=${result?.newEntryIds.length} pages=${result?.pagesRead} '
+          'stop=${result?.stopReason?.name} took=${took.inSeconds}s '
+          'painted=$painted/${painted + unpainted}',
         );
-        harness.note('seed capture done=${seed.done}');
-        if (!seed.done) {
+        expect(done, isTrue, reason: 'check $i did not finish');
+        expect(result, isNotNull, reason: 'check $i never ran');
+        expect(
+          result!.state,
+          isNot(SourceCheckState.stopped),
+          reason: 'check $i stopped short: ${result.stopReason?.name}',
+        );
+        expect(
+          find.byType(ReaderScreen),
+          findsOneWidget,
+          reason: 'check $i moved the user',
+        );
+        expect(
+          unpainted,
+          0,
+          reason:
+              'check $i was reading while the app had stopped drawing the '
+              'WebView',
+        );
+        // The claim the sampler is a proxy for, and the one a fast check
+        // cannot race away from: `run` waits on `awaitPaintedSurface()` before
+        // it reads anything, so a page read with the Reader on top is a page
+        // read off a surface the app kept drawing underneath it.
+        expect(
+          result.pagesRead,
+          greaterThan(0),
+          reason: 'check $i read nothing with the Reader on top',
+        );
+        expect(
+          app.browser.automationOwner,
+          isNull,
+          reason: 'check $i leaked the owner',
+        );
+        await harness.pumpFor(
+          tester,
+          const Duration(seconds: 2),
+          'between checks',
+        );
+      }
+      await popRoute(tester);
+    },
+    teardown: quiesce,
+  );
+
+  // --- 2. cleanup and idle ------------------------------------------------
+  matrixCase(
+    'cleanup · terminal and idle states',
+    limit: const Duration(minutes: 8),
+    body: (tester) async {
+      await boot(tester, multitasking: true);
+      final url = liveOr(1);
+      await quiescenceOf(tester, '1 fresh');
+      await openPage(tester, app, url);
+      await quiescenceOf(tester, '2 Browser open');
+      await showLibrary(tester);
+      await quiescenceOf(tester, '3 left Browser');
+
+      await showBrowser(tester);
+      final captured = await captureOne(tester, url);
+      harness.note('capture done=${captured.done}');
+      await quiescenceOf(tester, '4 after capture');
+      expect(app.browser.automationOwner, isNull);
+
+      if (captured.done &&
+          await app.ui.offline.activeCopyOf(captured.entryId) != null) {
+        expect(await openedReader(tester, captured.entryId), isTrue);
+        expectQuiet(await quiescenceOf(tester, '5 Reader idle'), 'Reader idle');
+        await harness.pumpFor(tester, const Duration(seconds: 45), 'idling');
+        expectQuiet(await quiescenceOf(tester, '6 +45s'), 'Reader +45s');
+        await popRoute(tester);
+      }
+
+      // Cancellation.
+      await showBrowser(tester);
+      await openPage(tester, app, url);
+      final entryId = await app.queueSaveOf(url);
+      await startQueue(tester, app);
+      await harness.waitFor(
+        tester,
+        'capture to reach a Browser phase',
+        () =>
+            app.engineStates.contains(SaveState.scrolling) ||
+            !app.runner.isRunning,
+        limit: kOperation,
+      );
+      final open = await app.taskFor(entryId);
+      if (open != null) await app.ui.queue.cancel(open.id);
+      await harness.waitFor(
+        tester,
+        'cancel to settle',
+        () => !app.runner.isRunning,
+        limit: kSettle,
+      );
+      await showLibrary(tester);
+      expectQuiet(
+        await quiescenceOf(tester, '7 after cancellation'),
+        'after cancellation',
+      );
+
+      // Lifecycle round trip. Not in front means drawing nothing.
+      await showBrowser(tester);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+      await harness.pumpFor(tester, const Duration(seconds: 2), 'inactive');
+      expect(
+        app.browser.surfaceIsPainted,
+        isFalse,
+        reason: 'not in front means drawing nothing',
+      );
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      await harness.pumpFor(tester, const Duration(seconds: 3), 'resumed');
+      expect(app.browser.surfaceIsPainted, isTrue);
+      expect(app.browser.automationOwner, isNull);
+    },
+    teardown: quiesce,
+  );
+
+  // --- 3. one Entry, one copy ---------------------------------------------
+  matrixCase(
+    'a re-capture leaves one Entry and one active copy',
+    limit: const Duration(minutes: 8),
+    body: (tester) async {
+      await boot(tester, multitasking: true);
+      final url = liveOr(1);
+      final first = await captureOne(tester, url);
+      if (!first.done) {
+        harness.skip('the first capture did not finish');
+        return;
+      }
+      final before = await app.ui.offline.activeCopyOf(first.entryId);
+      if (before == null) {
+        harness.skip('no offline copy — precondition unmet');
+        return;
+      }
+      harness.note(
+        'before: path=${before.contentPath} bytes=${before.byteSize}',
+      );
+
+      // A second request while nothing is open is a new row; a second request
+      // while one is open is the same row.
+      final again = await app.ui.queue.enqueue(
+        entryId: first.entryId,
+        locationUrl: url,
+      );
+      expect(again.refusedReason, isNull);
+      final duplicate = await app.ui.queue.enqueue(
+        entryId: first.entryId,
+        locationUrl: url,
+      );
+      expect(
+        duplicate.alreadyQueued,
+        isTrue,
+        reason: 'one open task per Entry — an Entry has one active copy',
+      );
+
+      await startQueue(tester, app);
+      final done = await harness.waitFor(
+        tester,
+        're-capture to finish',
+        () => !app.runner.isRunning,
+        limit: kOperation,
+      );
+      harness.note('re-capture done=$done');
+
+      final copies = await app.ui.offline.allCopies();
+      expect(
+        copies.where((c) => c.entryId == first.entryId && c.active),
+        hasLength(1),
+        reason: 'I13: one active OfflineCopy per Entry per device',
+      );
+      final after = await app.ui.offline.activeCopyOf(first.entryId);
+      expect(
+        after!.contentPath,
+        before.contentPath,
+        reason: 'replaced in place, never stacked beside itself',
+      );
+    },
+    teardown: quiesce,
+  );
+
+  // --- 4. capture while reading, both sources ------------------------------
+  for (final (name, url) in [('A', kLiveA), ('B', kLiveB)]) {
+    matrixCase(
+      'source $name · capture while the Reader is open',
+      limit: const Duration(minutes: 8),
+      body: (tester) async {
+        if (url.isEmpty) {
+          harness.skip('no LIVE_ENTRY_$name');
+          return;
+        }
+        await boot(tester, multitasking: true);
+        final seed = await captureOne(tester, url);
+        if (!seed.done ||
+            await app.ui.offline.activeCopyOf(seed.entryId) == null) {
           harness.skip('the seed capture did not finish');
           return;
         }
-        expect(await openedReader(tester, seed.entryId), isTrue);
+        final manifest = await app.manifestOf(seed.entryId);
+        harness.note(
+          'watched: ${manifest?.storedAssetCount}/'
+          '${manifest?.detectedAssetCount} status=${manifest?.status.name}',
+        );
 
-        for (var i = 1; i <= 3; i++) {
-          final started = DateTime.now();
-          final outcome = app.check.run(
-            collectionId,
-            limits: kCollectionCheckLimits,
-          );
-          final done = await harness.waitFor(
-            tester,
-            'check $i',
-            () => !app.check.isRunning,
-            limit: kOperation,
-          );
-          final result = await outcome;
-          final took = DateTime.now().difference(started);
-          harness.note(
-            'check $i: done=$done state=${result?.state.name} '
-            'new=${result?.newEntryIds.length} pages=${result?.pagesRead} '
-            'stop=${result?.stopReason?.name} took=${took.inSeconds}s',
-          );
-          expect(done, isTrue, reason: 'check $i did not finish');
-          expect(result, isNotNull, reason: 'check $i never ran');
-          expect(
-            result!.state,
-            isNot(SourceCheckState.stopped),
-            reason: 'check $i stopped short: ${result.stopReason?.name}',
-          );
-          expect(
-            find.byType(ReaderScreen),
-            findsOneWidget,
-            reason: 'check $i moved the user',
-          );
-          expect(
-            surfacePainted(tester),
-            isTrue,
-            reason: 'check $i read a page the app was not drawing',
-          );
-          expect(
-            app.browser.automationOwner,
-            isNull,
-            reason: 'check $i leaked the owner',
-          );
-          await harness.pumpFor(
-            tester,
-            const Duration(seconds: 2),
-            'between checks',
-          );
-        }
-        await popRoute(tester);
-      },
-      teardown: () => quiesce(tester),
-    );
-
-    // --- 2. cleanup and idle ------------------------------------------------
-    await harness.scenario(
-      'cleanup · terminal and idle states',
-      limit: const Duration(minutes: 8),
-      body: () async {
-        await boot(tester, multitasking: true);
-        final url = liveOr(1);
-        await quiescenceOf(tester, '1 fresh');
+        app.resetObservations();
         await openPage(tester, app, url);
-        await quiescenceOf(tester, '2 Browser open');
-        await showLibrary(tester);
-        await quiescenceOf(tester, '3 left Browser');
-
-        await showBrowser(tester);
-        final captured = await captureOne(tester, url);
-        harness.note('capture done=${captured.done}');
-        await quiescenceOf(tester, '4 after capture');
-        expect(app.browser.automationOwner, isNull);
-
-        if (captured.done &&
-            await app.ui.offline.activeCopyOf(captured.entryId) != null) {
-          expect(await openedReader(tester, captured.entryId), isTrue);
-          expectQuiet(
-            await quiescenceOf(tester, '5 Reader idle'),
-            'Reader idle',
-          );
-          await harness.pumpFor(tester, const Duration(seconds: 45), 'idling');
-          expectQuiet(await quiescenceOf(tester, '6 +45s'), 'Reader +45s');
-          await popRoute(tester);
-        }
-
-        // Cancellation.
-        await showBrowser(tester);
-        await openPage(tester, app, url);
-        final entryId = await app.queueSaveOf(url);
+        final second = await app.queueSaveOf(url);
         await startQueue(tester, app);
         await harness.waitFor(
           tester,
@@ -369,303 +574,169 @@ void main() {
               !app.runner.isRunning,
           limit: kOperation,
         );
-        final open = await app.taskFor(entryId);
-        if (open != null) await app.ui.queue.cancel(open.id);
-        await harness.waitFor(
-          tester,
-          'cancel to settle',
-          () => !app.runner.isRunning,
-          limit: kSettle,
-        );
-        await showLibrary(tester);
-        expectQuiet(
-          await quiescenceOf(tester, '7 after cancellation'),
-          'after cancellation',
-        );
-
-        // Lifecycle round trip. Not in front means drawing nothing.
-        await showBrowser(tester);
-        tester.binding.handleAppLifecycleStateChanged(
-          AppLifecycleState.inactive,
-        );
-        await harness.pumpFor(tester, const Duration(seconds: 2), 'inactive');
-        expect(
-          app.browser.surfaceIsPainted,
-          isFalse,
-          reason: 'not in front means drawing nothing',
-        );
-        tester.binding.handleAppLifecycleStateChanged(
-          AppLifecycleState.resumed,
-        );
-        await harness.pumpFor(tester, const Duration(seconds: 3), 'resumed');
-        expect(app.browser.surfaceIsPainted, isTrue);
-        expect(app.browser.automationOwner, isNull);
-      },
-      teardown: () => quiesce(tester),
-    );
-
-    // --- 3. one Entry, one copy ---------------------------------------------
-    await harness.scenario(
-      'a re-capture leaves one Entry and one active copy',
-      limit: const Duration(minutes: 8),
-      body: () async {
-        await boot(tester, multitasking: true);
-        final url = liveOr(1);
-        final first = await captureOne(tester, url);
-        if (!first.done) {
-          harness.skip('the first capture did not finish');
-          return;
+        expect(await openedReader(tester, seed.entryId), isTrue);
+        for (var i = 0; i < 8 && app.runner.isRunning; i++) {
+          await tester.drag(
+            find.byType(ReaderScreen),
+            const Offset(0, -280),
+            warnIfMissed: false,
+          );
+          await harness.pumpFor(
+            tester,
+            const Duration(milliseconds: 500),
+            'reading',
+          );
         }
-        final before = await app.ui.offline.activeCopyOf(first.entryId);
-        if (before == null) {
-          harness.skip('no offline copy — precondition unmet');
-          return;
-        }
-        harness.note(
-          'before: path=${before.contentPath} bytes=${before.byteSize}',
-        );
-
-        // A second request while nothing is open is a new row; a second request
-        // while one is open is the same row.
-        final again = await app.ui.queue.enqueue(
-          entryId: first.entryId,
-          locationUrl: url,
-        );
-        expect(again.refusedReason, isNull);
-        final duplicate = await app.ui.queue.enqueue(
-          entryId: first.entryId,
-          locationUrl: url,
-        );
-        expect(
-          duplicate.alreadyQueued,
-          isTrue,
-          reason: 'one open task per Entry — an Entry has one active copy',
-        );
-
-        await startQueue(tester, app);
         final done = await harness.waitFor(
           tester,
-          're-capture to finish',
+          'covered capture to finish',
           () => !app.runner.isRunning,
           limit: kOperation,
         );
-        harness.note('re-capture done=$done');
-
-        final copies = await app.ui.offline.allCopies();
-        expect(
-          copies.where((c) => c.entryId == first.entryId && c.active),
-          hasLength(1),
-          reason: 'I13: one active OfflineCopy per Entry per device',
+        harness.note(
+          'covered: done=$done held=${app.everHeldForBrowser} '
+          'mem=${await reportMemory()}MB',
         );
-        final after = await app.ui.offline.activeCopyOf(first.entryId);
+        expect(done, isTrue, reason: 'the covered capture did not finish');
         expect(
-          after!.contentPath,
-          before.contentPath,
-          reason: 'replaced in place, never stacked beside itself',
+          app.everHeldForBrowser,
+          isFalse,
+          reason: 'it had to ask for the Browser back',
         );
+        expect(
+          find.byType(ReaderScreen),
+          findsOneWidget,
+          reason: 'the user was pulled off what they were reading',
+        );
+        expect(
+          (await app.latestTaskFor(second))!.state,
+          SaveTaskState.completed,
+        );
+        await popRoute(tester);
       },
-      teardown: () => quiesce(tester),
+      teardown: quiesce,
     );
+  }
 
-    // --- 4. capture while reading, both sources ------------------------------
-    for (final (name, url) in [('A', kLiveA), ('B', kLiveB)]) {
-      await harness.scenario(
-        'source $name · capture while the Reader is open',
-        limit: const Duration(minutes: 8),
-        body: () async {
-          if (url.isEmpty) {
-            harness.skip('no LIVE_ENTRY_$name');
-            return;
-          }
-          await boot(tester, multitasking: true);
-          final seed = await captureOne(tester, url);
-          if (!seed.done ||
-              await app.ui.offline.activeCopyOf(seed.entryId) == null) {
-            harness.skip('the seed capture did not finish');
-            return;
-          }
-          final manifest = await app.manifestOf(seed.entryId);
-          harness.note(
-            'watched: ${manifest?.storedAssetCount}/'
-            '${manifest?.detectedAssetCount} status=${manifest?.status.name}',
-          );
-
-          app.resetObservations();
-          await openPage(tester, app, url);
-          final second = await app.queueSaveOf(url);
-          await startQueue(tester, app);
-          await harness.waitFor(
-            tester,
-            'capture to reach a Browser phase',
-            () =>
-                app.engineStates.contains(SaveState.scrolling) ||
-                !app.runner.isRunning,
-            limit: kOperation,
-          );
-          expect(await openedReader(tester, seed.entryId), isTrue);
-          for (var i = 0; i < 8 && app.runner.isRunning; i++) {
-            await tester.drag(
-              find.byType(ReaderScreen),
-              const Offset(0, -280),
-              warnIfMissed: false,
-            );
-            await harness.pumpFor(
-              tester,
-              const Duration(milliseconds: 500),
-              'reading',
-            );
-          }
-          final done = await harness.waitFor(
-            tester,
-            'covered capture to finish',
-            () => !app.runner.isRunning,
-            limit: kOperation,
-          );
-          harness.note(
-            'covered: done=$done held=${app.everHeldForBrowser} '
-            'mem=${await reportMemory()}MB',
-          );
-          expect(done, isTrue, reason: 'the covered capture did not finish');
-          expect(
-            app.everHeldForBrowser,
-            isFalse,
-            reason: 'it had to ask for the Browser back',
-          );
-          expect(
-            find.byType(ReaderScreen),
-            findsOneWidget,
-            reason: 'the user was pulled off what they were reading',
-          );
-          expect(
-            (await app.latestTaskFor(second))!.state,
-            SaveTaskState.completed,
-          );
-          await popRoute(tester);
-        },
-        teardown: () => quiesce(tester),
+  // --- 5. a queue that drains from the Library tab -------------------------
+  matrixCase(
+    'bounded queue · Library on top',
+    limit: const Duration(minutes: 9),
+    body: (tester) async {
+      await boot(tester, multitasking: true);
+      await openPage(tester, app, fixture.entry(1));
+      final ids = <String>[
+        for (final n in [1, 2, 3])
+          await app.queueSaveOf(fixture.entry(n), title: 'Entry $n'),
+      ];
+      await startQueue(tester, app);
+      await harness.waitFor(
+        tester,
+        'queue to reach a Browser phase',
+        () =>
+            app.engineStates.contains(SaveState.scrolling) ||
+            !app.runner.isRunning,
+        limit: kOperation,
       );
-    }
+      expect(
+        await showLibrary(tester),
+        isFalse,
+        reason: 'a multitasking task is not stranded by a tab switch',
+      );
+      final done = await harness.waitFor(
+        tester,
+        'queue to drain',
+        () => !app.runner.isRunning,
+        limit: const Duration(minutes: 5),
+      );
+      harness.note(
+        'queue: done=$done held=${app.everHeldForBrowser} '
+        'mem=${await reportMemory()}MB',
+      );
+      expect(done, isTrue);
+      expect(app.everHeldForBrowser, isFalse);
+      expect(app.browser.automationOwner, isNull);
+      for (final id in ids) {
+        expect((await app.latestTaskFor(id))!.state, SaveTaskState.completed);
+      }
+    },
+    teardown: quiesce,
+  );
 
-    // --- 5. a queue that drains from the Library tab -------------------------
-    await harness.scenario(
-      'bounded queue · Library on top',
-      limit: const Duration(minutes: 9),
-      body: () async {
-        await boot(tester, multitasking: true);
-        await openPage(tester, app, fixture.entry(1));
-        final ids = <String>[
-          for (final n in [1, 2, 3])
-            await app.queueSaveOf(fixture.entry(n), title: 'Entry $n'),
-        ];
+  // --- 6. soak -------------------------------------------------------------
+  matrixCase(
+    'soak · $kSoakRounds rounds',
+    limit: Duration(minutes: 6 + kSoakRounds * 3),
+    body: (tester) async {
+      await boot(tester, multitasking: true);
+      final url = liveOr(1);
+      final seed = await captureOne(tester, url);
+      if (!seed.done ||
+          await app.ui.offline.activeCopyOf(seed.entryId) == null) {
+        harness.skip('the soak seed did not finish');
+        return;
+      }
+
+      final memory = <int>[];
+      var completions = 0;
+      var holds = 0;
+      final started = DateTime.now();
+      for (var round = 1; round <= kSoakRounds; round++) {
+        harness.note('soak round $round starting');
+        app.resetObservations();
+        await showBrowser(tester);
+        await openPage(tester, app, url);
+        final entryId = await app.queueSaveOf(url, title: 'round $round');
         await startQueue(tester, app);
         await harness.waitFor(
           tester,
-          'queue to reach a Browser phase',
+          'round $round to reach a Browser phase',
           () =>
               app.engineStates.contains(SaveState.scrolling) ||
               !app.runner.isRunning,
           limit: kOperation,
         );
-        expect(
-          await showLibrary(tester),
-          isFalse,
-          reason: 'a multitasking task is not stranded by a tab switch',
-        );
+        await openedReader(tester, seed.entryId);
         final done = await harness.waitFor(
           tester,
-          'queue to drain',
+          'round $round to finish',
           () => !app.runner.isRunning,
-          limit: const Duration(minutes: 5),
+          limit: kOperation,
         );
+        if (done) completions++;
+        if (app.everHeldForBrowser) holds++;
+        final mem = await reportMemory();
+        memory.add(mem);
+        final task = await app.latestTaskFor(entryId);
         harness.note(
-          'queue: done=$done held=${app.everHeldForBrowser} '
-          'mem=${await reportMemory()}MB',
+          'soak round $round: done=$done state=${task?.state.name} '
+          'owner=${app.browser.automationOwner ?? '-'} mem=${mem}MB',
         );
-        expect(done, isTrue);
-        expect(app.everHeldForBrowser, isFalse);
-        expect(app.browser.automationOwner, isNull);
-        for (final id in ids) {
-          expect((await app.latestTaskFor(id))!.state, SaveTaskState.completed);
-        }
-      },
-      teardown: () => quiesce(tester),
-    );
-
-    // --- 6. soak -------------------------------------------------------------
-    await harness.scenario(
-      'soak · $kSoakRounds rounds',
-      limit: Duration(minutes: 6 + kSoakRounds * 3),
-      body: () async {
-        await boot(tester, multitasking: true);
-        final url = liveOr(1);
-        final seed = await captureOne(tester, url);
-        if (!seed.done ||
-            await app.ui.offline.activeCopyOf(seed.entryId) == null) {
-          harness.skip('the soak seed did not finish');
-          return;
-        }
-
-        final memory = <int>[];
-        var completions = 0;
-        var holds = 0;
-        final started = DateTime.now();
-        for (var round = 1; round <= kSoakRounds; round++) {
-          harness.note('soak round $round starting');
-          app.resetObservations();
-          await showBrowser(tester);
-          await openPage(tester, app, url);
-          final entryId = await app.queueSaveOf(url, title: 'round $round');
-          await startQueue(tester, app);
-          await harness.waitFor(
-            tester,
-            'round $round to reach a Browser phase',
-            () =>
-                app.engineStates.contains(SaveState.scrolling) ||
-                !app.runner.isRunning,
-            limit: kOperation,
-          );
-          await openedReader(tester, seed.entryId);
-          final done = await harness.waitFor(
-            tester,
-            'round $round to finish',
-            () => !app.runner.isRunning,
-            limit: kOperation,
-          );
-          if (done) completions++;
-          if (app.everHeldForBrowser) holds++;
-          final mem = await reportMemory();
-          memory.add(mem);
-          final task = await app.latestTaskFor(entryId);
-          harness.note(
-            'soak round $round: done=$done state=${task?.state.name} '
-            'owner=${app.browser.automationOwner ?? '-'} mem=${mem}MB',
-          );
-          expect(
-            app.browser.automationOwner,
-            isNull,
-            reason: 'round $round leaked the owner',
-          );
-          await popRoute(tester);
-        }
-        final elapsed = DateTime.now().difference(started);
+        expect(
+          app.browser.automationOwner,
+          isNull,
+          reason: 'round $round leaked the owner',
+        );
+        await popRoute(tester);
+      }
+      final elapsed = DateTime.now().difference(started);
+      harness.note(
+        'SOAK: $completions/$kSoakRounds completed, $holds holds, '
+        '${elapsed.inMinutes}m${elapsed.inSeconds % 60}s, '
+        'memory ${memory.join('→')}MB',
+      );
+      expect(completions, kSoakRounds, reason: 'not every round completed');
+      expect(holds, 0, reason: 'a round had to ask for the Browser');
+      if (memory.length >= 2 && memory.first > 0) {
+        final growth = (memory.last - memory.first) / memory.first;
         harness.note(
-          'SOAK: $completions/$kSoakRounds completed, $holds holds, '
-          '${elapsed.inMinutes}m${elapsed.inSeconds % 60}s, '
-          'memory ${memory.join('→')}MB',
+          'soak memory growth ${(growth * 100).toStringAsFixed(1)}%',
         );
-        expect(completions, kSoakRounds, reason: 'not every round completed');
-        expect(holds, 0, reason: 'a round had to ask for the Browser');
-        if (memory.length >= 2 && memory.first > 0) {
-          final growth = (memory.last - memory.first) / memory.first;
-          harness.note(
-            'soak memory growth ${(growth * 100).toStringAsFixed(1)}%',
-          );
-          expect(growth, lessThan(0.25), reason: 'memory trended up');
-        }
-      },
-      teardown: () => quiesce(tester),
-    );
-  }, timeout: const Timeout(Duration(minutes: 75)));
+        expect(growth, lessThan(0.25), reason: 'memory trended up');
+      }
+    },
+    teardown: quiesce,
+  );
 }
 
 /// Push the reader and report whether it is what ended up on top.

@@ -97,6 +97,14 @@ than living in the object that wrote it. That is weaker than a cold start and
 the headers say so. The cold-start claim is what a separate `flutter test`
 invocation makes for free, since each one installs the app fresh.
 
+**One boot per `testWidgets`, and no second one inside it.** The same three
+shapes fail whether a suite calls the second boot a relaunch or not, so a case
+that needs a fresh app is a *case*: the framework tears the tree down between
+them, and the next one opens its own database over its own tag. `device_matrix`
+was the one file that broke this rule — seven scenarios in a single
+`testWidgets` — and six of them were reporting on the harness rather than on
+the product. It is a `testWidgets` per scenario now.
+
 ## Skips, and what each one is waiting for
 
 Nothing here is skipped to go green.
@@ -118,8 +126,12 @@ Each is written up in full where it bites, with a reproduction.
 |---|---|
 | `lib/data/offline_copy_repository.dart:35` | `recordCopy` inserts a fresh copy row with a null anchor, so a re-capture sends the reader back to the top. V1 had `carryReading` for exactly this and still unit-tests it. |
 | `lib/library_ui/collection_actions.dart:179` | The Entry action sheet is a non-scrolling `Column` in a `showModalBottomSheet` with no `isScrollControlled`, so on a shorter screen it overflows and its lower actions are unreachable. |
-| `lib/core/device_capacity_provider.dart:53` | `refresh` assigns `state` after an await with no `ref.mounted` check, throwing `UnmountedRefException` when the scope goes while a refresh is in flight. |
 | `lib/features/source_observation_browser.dart:36` | A Source's listing address is rebuilt as `https://{host}{pathKey}`, which cannot express a scheme or a port. See "The one substitution" above. |
+
+Two more it found are fixed, and stay listed so a reader knows which suite
+would notice them coming back: `DeviceCapacityController.refresh` writing
+`state` after its scope was disposed, and a root Source (`path_key = '/'`)
+recognising none of its own `/entry/N` addresses as members.
 
 ## What a simulator and an emulator cannot answer
 

@@ -83,6 +83,11 @@ export '../../tool/fixture/fixture_site.dart'
 /// the first `pumpWidget` has nothing to pump.
 bool _anyTreeMounted = false;
 
+/// Whether the case now running has already booted an app. Cleared by a
+/// tear-down [V2App.boot] registers, so it is per `testWidgets` rather than
+/// per process — see the boot's own note on why a second one never holds.
+bool _bootedThisCase = false;
+
 /// Unique per process: a run that is killed mid-way never uninstalls the app,
 /// so a fixed name would leak rows into the next invocation.
 final String kRunStamp = DateTime.now().millisecondsSinceEpoch.toRadixString(
@@ -262,13 +267,10 @@ class V2App {
   Future<void> boot(WidgetTester tester) async {
     // Let whatever is still up finish before this tree replaces it.
     //
-    // The shell refreshes the device-capacity figure the moment work falls
-    // idle, and `DeviceCapacityController.refresh` assigns `state` after an
-    // await with no `ref.mounted` check
-    // (lib/core/device_capacity_provider.dart:53), so a scope disposed while
-    // that is in flight throws `UnmountedRefException` — on whichever case
-    // happens to be next. Pumping the live tree is what gives it somewhere to
-    // land.
+    // The shell starts unawaited work whenever an operation falls idle — a
+    // favicon fetch, a device-capacity read — and a tree replaced while one is
+    // in flight is where that work lands. Pumping the live tree first gives it
+    // somewhere to land that is not the next case.
     //
     // **One boot per case, and no relaunch inside one.** Three shapes of
     // in-test restart were tried on both platforms and none of them holds:
@@ -293,6 +295,25 @@ class V2App {
     //
     // The closes in [shutdown] stay bounded regardless, because a harness that
     // waits silently is the failure `device_harness.dart` exists to prevent.
+    //
+    // And the rule is enforced, not just written down. `device_matrix` broke
+    // it for seven scenarios inside one `testWidgets`, and the symptom it
+    // produced — every case after the first stuck at "the Browser never
+    // revealed and settled", drift warning about a second `LibraryDatabase` —
+    // reads like a product fault and is not one. A second boot in one case now
+    // says so at the boot.
+    expect(
+      _bootedThisCase,
+      isFalse,
+      reason:
+          'this case has already booted an app. A relaunch inside one case is '
+          'not reachable on either platform (see above) — split it into a '
+          'second `testWidgets`, which is what gives it a clean tree and a '
+          'clean database',
+    );
+    _bootedThisCase = true;
+    addTearDown(() => _bootedThisCase = false);
+
     if (_anyTreeMounted) await pumpFor(tester, const Duration(seconds: 3));
 
     library = LibraryDatabase(name: 'it_lib_$tag');
@@ -421,17 +442,14 @@ class V2App {
     // takes the tree away.
     //
     // `_onAutomationChanged` refreshes the device-capacity figure the moment an
-    // operation falls idle, and `DeviceCapacityController.refresh` assigns
-    // `state` after an await with **no `ref.mounted` check**
-    // (lib/core/device_capacity_provider.dart:53). A scope disposed while that
-    // is in flight throws `UnmountedRefException`, which flutter_test then
-    // attributes to whichever case had just finished — failing a case whose own
-    // assertions all passed.
+    // operation falls idle, and a page load writes a favicon nobody awaits.
+    // Whatever such a future throws lands on whichever case is running when it
+    // completes, so a case whose own assertions all passed fails on the
+    // previous one's leftovers.
     //
     // Registered here rather than in the suite's `tearDown` because
     // `addTearDown` callbacks run *before* the binding tears the tree down,
-    // which is the only window where pumping still helps. The defect is
-    // reported, not hidden: this only stops it landing on an unrelated case.
+    // which is the only window where pumping still helps.
     addTearDown(() => pumpFor(tester, const Duration(seconds: 3)));
   }
 
@@ -460,18 +478,13 @@ class V2App {
         DateTime.now().isBefore(deadline)) {
       await Future<void>.delayed(const Duration(milliseconds: 100));
     }
-    // Two pieces of unawaited work have to land before the tree goes away.
+    // Unawaited work has to land before the tree goes away.
     //
     // A favicon fetch kicked off by a page load writes to the database without
     // anyone awaiting it, and closing the connection under it throws *after*
     // the test has already passed — which reads as a failure and is not one.
-    //
-    // The shell also refreshes the device-capacity figure the moment work falls
-    // idle, and `DeviceCapacityController.refresh` assigns `state` after an
-    // await with no `ref.mounted` check — so replacing the widget tree while
-    // that is in flight throws `UnmountedRefException`. That is a defect in
-    // `lib/core/device_capacity_provider.dart:53`, reported rather than
-    // swallowed; waiting here is what stops it landing on an unrelated case.
+    // The capacity refresh the shell fires when work falls idle is the same
+    // shape, and waiting here is what stops either landing on the next case.
     await Future<void>.delayed(const Duration(seconds: 4));
     if (dumpLog) {
       for (final line in engineLog) {
@@ -516,10 +529,16 @@ class V2App {
     String url, {
     String title = '',
     String? collectionId,
+    String? sourceId,
     CaptureMode? captureMode,
     bool captureModeIsUserSet = false,
   }) async {
-    final id = await addEntry(url, title: title, collectionId: collectionId);
+    final id = await addEntry(
+      url,
+      title: title,
+      collectionId: collectionId,
+      sourceId: sourceId,
+    );
     final result = await ui.queue.enqueue(
       entryId: id.entryId,
       locationId: id.locationId,
@@ -539,10 +558,21 @@ class V2App {
 
   /// An Entry with one Location, standalone unless [collectionId] names a
   /// Collection.
+  ///
+  /// **A Collection Entry's Location sits on one of that Collection's
+  /// Sources.** I7 — "a location has a source iff its entry has a collection"
+  /// — is not a formality here: it is the whole reason a check can read one
+  /// site's listing and retract only that site's addresses (I15). This helper
+  /// used to add the Location with no `sourceId` whatever the Entry was, which
+  /// is a valid standalone Entry and an *invalid* Collection one, so every
+  /// suite that saved into a Collection was refused by the repository before
+  /// its own assertions ever ran. [sourceId] names the Source explicitly;
+  /// omitted, it is resolved from the Collection by [sourceOfCollection].
   Future<({String entryId, String locationId})> addEntry(
     String url, {
     String title = '',
     String? collectionId,
+    String? sourceId,
   }) async {
     // **An address the library already holds is that Entry, not a new one.**
     // `url_key` is unique within a library (I-invariants), so a suite that
@@ -570,10 +600,14 @@ class V2App {
       isNotNull,
       reason: 'entry not created: ${violation?.message}',
     );
+    final source = collectionId == null
+        ? null
+        : sourceId ?? await sourceOfCollection(collectionId);
     final (location, locationViolation) = await ui.entries.addLocation(
       entryId: entry!.id,
       url: url,
       urlKey: normalizeUrl(url),
+      sourceId: source,
       discoveryBasis: 'userSave',
     );
     expect(
@@ -581,7 +615,51 @@ class V2App {
       isNotNull,
       reason: 'location not added: ${locationViolation?.message}',
     );
-    return (entryId: entry.id, locationId: location!.id);
+    // Said here rather than left to the next suite to discover: a Location
+    // that lost its Source is the shape the check silently reads nothing from.
+    expect(
+      location!.sourceId != null,
+      collectionId != null,
+      reason: 'I7: a location has a source iff its entry has a collection',
+    );
+    return (entryId: entry.id, locationId: location.id);
+  }
+
+  /// Which of [collectionId]'s Sources a saved address belongs to.
+  ///
+  /// The preferred Source when the Collection names one — that is the Source
+  /// the check reads and the one a real save from the listing would have come
+  /// through — and otherwise its only Source. A Collection with several and no
+  /// preference is an ambiguous set-up rather than a defect, so the suite is
+  /// told to name one instead of being given a guess.
+  ///
+  /// Deliberately not derived from the URL. `RecognitionKeys.of` reports a
+  /// `pathKey` only at high confidence, and for the fixture's `/entry/N` the
+  /// fingerprint collapses to `/` — the root-Source shape of V2-D72 — so the
+  /// address cannot name its own Source key. What the Collection holds is the
+  /// answer, and it is the same answer the app would reach.
+  Future<String> sourceOfCollection(String collectionId) async {
+    final sources = await ui.collections.sourcesOf(collectionId);
+    expect(
+      sources,
+      isNotEmpty,
+      reason:
+          'a Collection an Entry is saved into must already hold the Source '
+          'that Entry came from — add one before queueing',
+    );
+    final preferred = (await ui.collections.byId(
+      collectionId,
+    ))?.preferredSourceId;
+    if (preferred != null) return preferred;
+    expect(
+      sources,
+      hasLength(1),
+      reason:
+          'this Collection holds ${sources.length} Sources and prefers none — '
+          'set a preferred Source, or pass sourceId, so the Location cannot '
+          'be attached to an arbitrary one',
+    );
+    return sources.single.id;
   }
 
   // --- reads ----------------------------------------------------------------
