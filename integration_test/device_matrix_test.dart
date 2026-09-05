@@ -92,7 +92,21 @@ void main() {
   final diagnostics = RuntimeDiagnostics();
   final harness = DeviceHarness(fingerprint: kBuildId);
   late V2App app;
+
+  /// The app **this case** booted, and null until it has booted one.
+  ///
+  /// [app] is one field shared by every case, which is what the bodies read.
+  /// That is fine for a body — it runs after its own boot — and wrong for a
+  /// teardown, which runs whether the body reached a boot or not. A case that
+  /// skips on an unmet precondition (no `LIVE_ENTRY_A`) returns before
+  /// booting, leaving [app] holding the *previous* case's app, whose database
+  /// that case already closed. Quiescing that one read `save_queue` over a
+  /// closed isolate channel and threw in teardown.
+  V2App? bootedThisCase;
   var boots = 0;
+
+  // One app per case, and none carried into the next.
+  setUp(() => bootedThisCase = null);
 
   setUpAll(() async {
     await fixture.start();
@@ -122,11 +136,18 @@ void main() {
         '/owner=${app.browser.automationOwner ?? '-'}'
         '/painted=${app.browser.surfaceIsPainted}';
     await app.boot(tester);
+    bootedThisCase = app;
     await showBrowser(tester);
   }
 
   /// Return the device to a known state: nothing running, nothing owned.
+  ///
+  /// **Nothing to quiesce when nothing booted.** See [bootedThisCase]: the app
+  /// to shut down is the one this case built, and a body that skipped before
+  /// booting built none.
   Future<void> quiesce(WidgetTester tester) async {
+    final app = bootedThisCase;
+    if (app == null) return;
     app.check.cancel();
     for (final task in await app.ui.queue.pending()) {
       await app.ui.queue.cancel(task.id);
@@ -141,7 +162,15 @@ void main() {
       limit: kSettle,
     );
     await harness.pumpFor(tester, const Duration(seconds: 1), 'settling');
-    await app.shutdown(dumpLog: false);
+    // The close is asserted, not merely attempted. `_closeQuietly` bounds the
+    // wait and moves on, which is right for a run in progress and wrong as a
+    // verdict: a database that never closes is a harness defect, and until
+    // this it was one line of output nothing failed on.
+    expect(
+      await app.shutdown(dumpLog: false, tester: tester),
+      isTrue,
+      reason: 'the library database did not close',
+    );
   }
 
   // [appAnchor] rather than the tab bar: the Reader is pushed *over* the
@@ -291,6 +320,16 @@ void main() {
           result.outcome,
           anyOf(ScenarioOutcome.passed, ScenarioOutcome.skipped),
           reason: '$name ended ${result.outcome.name}: ${result.detail}',
+        );
+        // A teardown that threw is a defect in this harness, and it used to be
+        // invisible: `DeviceHarness.scenario` records the throw as a note so
+        // the table can still be printed, which on its own left the case green
+        // over `teardown problem: … the connection was closed!`. The row is
+        // reported either way; this is what makes it fail.
+        expect(
+          result.notes.where((n) => n.startsWith('teardown problem')),
+          isEmpty,
+          reason: '$name tore down badly: ${result.notes.join(' · ')}',
         );
       },
       // The scenario's own ceiling is the real bound; this is only the outer

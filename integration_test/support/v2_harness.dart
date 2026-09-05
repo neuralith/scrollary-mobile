@@ -468,7 +468,17 @@ class V2App {
   ///
   /// Order matters: closing a connection under a live capture throws *after*
   /// the test has already passed, which reads as a failure and is not one.
-  Future<void> shutdown({bool dumpLog = true}) async {
+  ///
+  /// **Pass [tester] when shutting down from inside a case.** The tree has to
+  /// go before the database does: a mounted `ProviderScope` holds the six
+  /// query streams `_libraryTicks` subscribes to, and `close()` over the
+  /// background isolate `driftDatabase` opens never returns while they are
+  /// live. Measured — with the tree up the close was still unfinished at 90s;
+  /// unmounted first it completed in 14ms. Every suite that shuts down from a
+  /// suite-level `tearDown` is already past this, because the binding has torn
+  /// the tree down by then; only a shutdown *within* a case needs to do it
+  /// itself, and passing null keeps the old behaviour for the rest.
+  Future<bool> shutdown({bool dumpLog = true, WidgetTester? tester}) async {
     check.cancel();
     for (final task in await ui.queue.pending()) {
       await ui.queue.cancel(task.id);
@@ -491,7 +501,13 @@ class V2App {
         debugPrint('[engine] $line');
       }
     }
-    await _closeQuietly(library.close, 'library');
+    // The tree first, then the connection it was reading. See the note above.
+    if (tester != null) {
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump(const Duration(milliseconds: 500));
+      _anyTreeMounted = false;
+    }
+    return _closeQuietly(library.close, 'library');
   }
 
   /// Close a database, and **give up rather than hang**.
@@ -503,16 +519,19 @@ class V2App {
   /// one — so the wait is bounded and says where it gave up. The handle is
   /// abandoned, which costs nothing: the process is about to move on to a
   /// database with a different name, or end.
-  static Future<void> _closeQuietly(
+  static Future<bool> _closeQuietly(
     Future<void> Function() close,
     String what,
   ) async {
     try {
       await close().timeout(const Duration(seconds: 10));
+      return true;
     } on TimeoutException {
       debugPrint('[harness] !! the $what database did not close — moving on');
+      return false;
     } catch (_) {
       /* already closed */
+      return true;
     }
   }
 
