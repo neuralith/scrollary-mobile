@@ -105,6 +105,49 @@ was the one file that broke this rule — seven scenarios in a single
 `testWidgets` — and six of them were reporting on the harness rather than on
 the product. It is a `testWidgets` per scenario now.
 
+## Shutting down — the tree before the database
+
+**A shutdown from inside a case must pass its tester.** A mounted
+`ProviderScope` holds the six query streams `_libraryTicks` subscribes to, and
+`LibraryDatabase.close()` over the background isolate `driftDatabase` opens
+does not return while they are live. Measured on the simulator: with the tree
+up the close was still unfinished at 90 s; unmounted first it finished in
+14 ms. So it is not a slow close and a longer bound does not help —
+`V2App.shutdown(tester: tester)` pumps the tree away first.
+
+Most suites never meet this. They shut down from a suite-level `tearDown`,
+which runs *after* the binding has torn the tree down, so their streams are
+already gone; `shutdown()` with no tester keeps that path exactly as it was.
+`device_matrix` is the only file that shuts down within a case, through
+`quiesce`.
+
+This is the one place the "pumping an empty tree unmounts the `InAppWebView`"
+hazard above is deliberately accepted: it happens at the very end of a case,
+where the framework unmounts a moment later anyway. It is proven on iOS.
+**Unverified on Android** — if it trips the plugin there, `_closeQuietly`'s
+bound is still the backstop and the unmount is what to gate.
+
+**A teardown may only touch the app its own case booted.** `app` is one field
+shared by every case, which is right for a body — it runs after its own boot —
+and wrong for a teardown, which runs whether the body reached a boot or not. A
+case that skips on an unmet precondition returns before booting, and reaching
+for `app` there finds the *previous* case's, whose database that case already
+closed. `device_matrix` keeps `bootedThisCase` for exactly this, and quiescing
+nothing is what a case that booted nothing does.
+
+### What now fails rather than merely printing
+
+Both of the above were reported for a whole run and nothing failed on them.
+Reporting and judging are separate jobs here, and each keeps its own:
+
+- `_closeQuietly` still bounds its wait and moves on — right for a run in
+  progress, wrong as an outcome — but it **returns whether it closed**, and
+  `quiesce` asserts that. A database that never closes is now a red case, not
+  one line of output.
+- `DeviceHarness.scenario` still catches a teardown throw into a note so the
+  table can print in full, and `matrixCase` now **fails on any note beginning
+  `teardown problem`**. The row is still reported either way.
+
 ## Skips, and what each one is waiting for
 
 Nothing here is skipped to go green.
@@ -132,6 +175,10 @@ Two more it found are fixed, and stay listed so a reader knows which suite
 would notice them coming back: `DeviceCapacityController.refresh` writing
 `state` after its scope was disposed, and a root Source (`path_key = '/'`)
 recognising none of its own `/entry/N` addresses as members.
+
+Two were defects in **this harness** rather than in `lib/`, and are fixed with
+a guard each — see "Shutting down" above: a close under a mounted tree that
+never returned, and a skipped case quiescing the previous case's shut-down app.
 
 ## What a simulator and an emulator cannot answer
 
