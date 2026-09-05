@@ -121,6 +121,7 @@ void main() {
       'empty', (tester) async {
     final root = await h.root();
     final collection = await h.collection('Alpha', folderId: root.id);
+    final source = await h.source(collection.id);
     final entry = await h.entryIn(collection.id, title: 'One', ordinal: 1);
 
     await tester.pumpWidget(h.app(const ShelfScreen()));
@@ -128,11 +129,17 @@ void main() {
     expect(find.byKey(const ValueKey('continueReadingEmpty')), findsOneWidget);
     expect(find.text('CONTINUE READING'), findsNothing);
 
-    final (_, violation) = await h.reading.recordSourceAccess(
+    // A reading, not merely an open: the strip is derived from where a reading
+    // got to, so an access on its own leaves the hint standing.
+    await h.openedAt(entry.id, DateTime.utc(2026, 8, 1));
+    await pumpUntil(tester, find.byKey(const ValueKey('continueReadingEmpty')));
+    expect(find.text('CONTINUE READING'), findsNothing);
+
+    await h.readAtSource(
       entry.id,
-      at: DateTime(2026, 8, 1),
+      sourceId: source.id,
+      at: DateTime.utc(2026, 8, 1),
     );
-    expect(violation, isNull);
     await pumpUntil(tester, find.byKey(ValueKey('continueRead-${entry.id}')));
 
     expect(find.byKey(const ValueKey('continueReadingEmpty')), findsNothing);

@@ -23,6 +23,7 @@ import 'package:web_reader/data/collection_repository.dart';
 import 'package:web_reader/features/check_state.dart';
 import 'package:web_reader/data/entry_repository.dart';
 import 'package:web_reader/data/folder_repository.dart';
+import 'package:web_reader/data/measurement_repository.dart';
 import 'package:web_reader/data/offline_copy_repository.dart';
 import 'package:web_reader/data/reading_state_repository.dart';
 import 'package:web_reader/data/schema.dart';
@@ -260,6 +261,63 @@ class UiHarness {
       artifactFormat: 'imageSequence',
       contentPath: _copyPath(entryId),
       byteSize: 2048,
+    );
+  }
+
+  /// Positions, the record of **how far** a reading got. Kept beside the
+  /// repositories rather than inside [LibraryUiServices]: this layer reads the
+  /// table and never writes it, and only a test stands in for the meter.
+  late final MeasurementRepository measurements = MeasurementRepository(db);
+
+  /// A page that was merely **opened** — the access record and nothing else.
+  ///
+  /// What browsing onto a recognised Entry leaves behind: the one a completed
+  /// navigation writes on the way to a download, and the one that used to be
+  /// mistaken for a reading.
+  Future<void> openedAt(String entryId, DateTime at) async {
+    final (state, violation) = await reading.recordSourceAccess(
+      entryId,
+      at: at,
+    );
+    expect(violation, isNull, reason: 'seeding an open must not be refused');
+    expect(state, isNotNull);
+  }
+
+  /// A genuine reading **at a Source**: the access the navigation records, and
+  /// the position the meter writes once the person has scrolled the page
+  /// themselves. Both, because that is what a real reading leaves behind.
+  Future<void> readAtSource(
+    String entryId, {
+    required String sourceId,
+    required DateTime at,
+    double fraction = 0.5,
+  }) async {
+    await openedAt(entryId, at);
+    final (written, violation) = await measurements.put(
+      entryId: entryId,
+      sourceId: sourceId,
+      fraction: fraction,
+      at: at,
+    );
+    expect(violation, isNull, reason: 'seeding a position must not be refused');
+    expect(written, isNotNull);
+  }
+
+  /// A genuine reading **in this app's own reader**: the access, and the
+  /// anchor the reader leaves inside the package on this device. Needs
+  /// [copyFor] to have put one there.
+  Future<void> readInReader(
+    String entryId, {
+    required DateTime at,
+    int anchorIndex = 3,
+    double anchorOffset = 0.25,
+  }) async {
+    await openedAt(entryId, at);
+    await offline.saveAnchor(
+      entryId,
+      anchorIndex: anchorIndex,
+      anchorOffset: anchorOffset,
+      at: at,
     );
   }
 

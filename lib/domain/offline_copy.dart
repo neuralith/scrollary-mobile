@@ -24,6 +24,7 @@ class OfflineCopy {
     this.sourceLanguage = '',
     this.anchorIndex,
     this.anchorOffset,
+    this.anchorUpdatedAt,
     this.active = true,
   });
 
@@ -45,6 +46,11 @@ class OfflineCopy {
   /// the bytes, which is why it lives here and nowhere else.
   final int? anchorIndex;
   final double? anchorOffset;
+
+  /// When the anchor last moved. The reading's own clock, and the only one
+  /// this device has for a reading that happened in its own reader — null
+  /// until the reader first saves a position.
+  final DateTime? anchorUpdatedAt;
 
   final bool active;
 }

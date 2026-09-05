@@ -5295,6 +5295,18 @@ class $OfflineCopiesTable extends OfflineCopies
     type: DriftSqlType.double,
     requiredDuringInsert: false,
   );
+  static const VerificationMeta _anchorUpdatedAtMeta = const VerificationMeta(
+    'anchorUpdatedAt',
+  );
+  @override
+  late final GeneratedColumn<DateTime> anchorUpdatedAt =
+      GeneratedColumn<DateTime>(
+        'anchor_updated_at',
+        aliasedName,
+        true,
+        type: DriftSqlType.dateTime,
+        requiredDuringInsert: false,
+      );
   static const VerificationMeta _activeMeta = const VerificationMeta('active');
   @override
   late final GeneratedColumn<bool> active = GeneratedColumn<bool>(
@@ -5333,6 +5345,7 @@ class $OfflineCopiesTable extends OfflineCopies
     byteSize,
     anchorIndex,
     anchorOffset,
+    anchorUpdatedAt,
     active,
     createdAt,
   ];
@@ -5447,6 +5460,15 @@ class $OfflineCopiesTable extends OfflineCopies
         ),
       );
     }
+    if (data.containsKey('anchor_updated_at')) {
+      context.handle(
+        _anchorUpdatedAtMeta,
+        anchorUpdatedAt.isAcceptableOrUnknown(
+          data['anchor_updated_at']!,
+          _anchorUpdatedAtMeta,
+        ),
+      );
+    }
     if (data.containsKey('active')) {
       context.handle(
         _activeMeta,
@@ -5518,6 +5540,10 @@ class $OfflineCopiesTable extends OfflineCopies
         DriftSqlType.double,
         data['${effectivePrefix}anchor_offset'],
       ),
+      anchorUpdatedAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.dateTime,
+        data['${effectivePrefix}anchor_updated_at'],
+      ),
       active: attachedDatabase.typeMapping.read(
         DriftSqlType.bool,
         data['${effectivePrefix}active'],
@@ -5551,6 +5577,20 @@ class OfflineCopyRow extends DataClass implements Insertable<OfflineCopyRow> {
   /// the bytes it indexes. Never leaves the device.
   final int? anchorIndex;
   final double? anchorOffset;
+
+  /// When the anchor last moved — the reader's own clock.
+  ///
+  /// A third fact about the same position, and it is not derivable from any
+  /// other column: `captured_at` is when the bytes arrived and `created_at` is
+  /// when this row did, while `reading_states.last_read_at` is stamped by any
+  /// completed navigation onto the Entry (I16) and so cannot say when somebody
+  /// last *read* it. Continue Reading orders by reading activity, and without
+  /// this a reading in this app's own reader had no time of its own to be
+  /// ordered by. Null until the reader first saves a position.
+  ///
+  /// Device-local like the anchor it times, and unsynced for the same reason:
+  /// it is about bytes on this device, and `SyncedEntityKind` cannot spell it.
+  final DateTime? anchorUpdatedAt;
   final bool active;
   final DateTime createdAt;
   const OfflineCopyRow({
@@ -5566,6 +5606,7 @@ class OfflineCopyRow extends DataClass implements Insertable<OfflineCopyRow> {
     required this.byteSize,
     this.anchorIndex,
     this.anchorOffset,
+    this.anchorUpdatedAt,
     required this.active,
     required this.createdAt,
   });
@@ -5587,6 +5628,9 @@ class OfflineCopyRow extends DataClass implements Insertable<OfflineCopyRow> {
     }
     if (!nullToAbsent || anchorOffset != null) {
       map['anchor_offset'] = Variable<double>(anchorOffset);
+    }
+    if (!nullToAbsent || anchorUpdatedAt != null) {
+      map['anchor_updated_at'] = Variable<DateTime>(anchorUpdatedAt);
     }
     map['active'] = Variable<bool>(active);
     map['created_at'] = Variable<DateTime>(createdAt);
@@ -5611,6 +5655,9 @@ class OfflineCopyRow extends DataClass implements Insertable<OfflineCopyRow> {
       anchorOffset: anchorOffset == null && nullToAbsent
           ? const Value.absent()
           : Value(anchorOffset),
+      anchorUpdatedAt: anchorUpdatedAt == null && nullToAbsent
+          ? const Value.absent()
+          : Value(anchorUpdatedAt),
       active: Value(active),
       createdAt: Value(createdAt),
     );
@@ -5634,6 +5681,7 @@ class OfflineCopyRow extends DataClass implements Insertable<OfflineCopyRow> {
       byteSize: serializer.fromJson<int>(json['byteSize']),
       anchorIndex: serializer.fromJson<int?>(json['anchorIndex']),
       anchorOffset: serializer.fromJson<double?>(json['anchorOffset']),
+      anchorUpdatedAt: serializer.fromJson<DateTime?>(json['anchorUpdatedAt']),
       active: serializer.fromJson<bool>(json['active']),
       createdAt: serializer.fromJson<DateTime>(json['createdAt']),
     );
@@ -5654,6 +5702,7 @@ class OfflineCopyRow extends DataClass implements Insertable<OfflineCopyRow> {
       'byteSize': serializer.toJson<int>(byteSize),
       'anchorIndex': serializer.toJson<int?>(anchorIndex),
       'anchorOffset': serializer.toJson<double?>(anchorOffset),
+      'anchorUpdatedAt': serializer.toJson<DateTime?>(anchorUpdatedAt),
       'active': serializer.toJson<bool>(active),
       'createdAt': serializer.toJson<DateTime>(createdAt),
     };
@@ -5672,6 +5721,7 @@ class OfflineCopyRow extends DataClass implements Insertable<OfflineCopyRow> {
     int? byteSize,
     Value<int?> anchorIndex = const Value.absent(),
     Value<double?> anchorOffset = const Value.absent(),
+    Value<DateTime?> anchorUpdatedAt = const Value.absent(),
     bool? active,
     DateTime? createdAt,
   }) => OfflineCopyRow(
@@ -5687,6 +5737,9 @@ class OfflineCopyRow extends DataClass implements Insertable<OfflineCopyRow> {
     byteSize: byteSize ?? this.byteSize,
     anchorIndex: anchorIndex.present ? anchorIndex.value : this.anchorIndex,
     anchorOffset: anchorOffset.present ? anchorOffset.value : this.anchorOffset,
+    anchorUpdatedAt: anchorUpdatedAt.present
+        ? anchorUpdatedAt.value
+        : this.anchorUpdatedAt,
     active: active ?? this.active,
     createdAt: createdAt ?? this.createdAt,
   );
@@ -5722,6 +5775,9 @@ class OfflineCopyRow extends DataClass implements Insertable<OfflineCopyRow> {
       anchorOffset: data.anchorOffset.present
           ? data.anchorOffset.value
           : this.anchorOffset,
+      anchorUpdatedAt: data.anchorUpdatedAt.present
+          ? data.anchorUpdatedAt.value
+          : this.anchorUpdatedAt,
       active: data.active.present ? data.active.value : this.active,
       createdAt: data.createdAt.present ? data.createdAt.value : this.createdAt,
     );
@@ -5742,6 +5798,7 @@ class OfflineCopyRow extends DataClass implements Insertable<OfflineCopyRow> {
           ..write('byteSize: $byteSize, ')
           ..write('anchorIndex: $anchorIndex, ')
           ..write('anchorOffset: $anchorOffset, ')
+          ..write('anchorUpdatedAt: $anchorUpdatedAt, ')
           ..write('active: $active, ')
           ..write('createdAt: $createdAt')
           ..write(')'))
@@ -5762,6 +5819,7 @@ class OfflineCopyRow extends DataClass implements Insertable<OfflineCopyRow> {
     byteSize,
     anchorIndex,
     anchorOffset,
+    anchorUpdatedAt,
     active,
     createdAt,
   );
@@ -5781,6 +5839,7 @@ class OfflineCopyRow extends DataClass implements Insertable<OfflineCopyRow> {
           other.byteSize == this.byteSize &&
           other.anchorIndex == this.anchorIndex &&
           other.anchorOffset == this.anchorOffset &&
+          other.anchorUpdatedAt == this.anchorUpdatedAt &&
           other.active == this.active &&
           other.createdAt == this.createdAt);
 }
@@ -5798,6 +5857,7 @@ class OfflineCopiesCompanion extends UpdateCompanion<OfflineCopyRow> {
   final Value<int> byteSize;
   final Value<int?> anchorIndex;
   final Value<double?> anchorOffset;
+  final Value<DateTime?> anchorUpdatedAt;
   final Value<bool> active;
   final Value<DateTime> createdAt;
   final Value<int> rowid;
@@ -5814,6 +5874,7 @@ class OfflineCopiesCompanion extends UpdateCompanion<OfflineCopyRow> {
     this.byteSize = const Value.absent(),
     this.anchorIndex = const Value.absent(),
     this.anchorOffset = const Value.absent(),
+    this.anchorUpdatedAt = const Value.absent(),
     this.active = const Value.absent(),
     this.createdAt = const Value.absent(),
     this.rowid = const Value.absent(),
@@ -5831,6 +5892,7 @@ class OfflineCopiesCompanion extends UpdateCompanion<OfflineCopyRow> {
     this.byteSize = const Value.absent(),
     this.anchorIndex = const Value.absent(),
     this.anchorOffset = const Value.absent(),
+    this.anchorUpdatedAt = const Value.absent(),
     this.active = const Value.absent(),
     required DateTime createdAt,
     this.rowid = const Value.absent(),
@@ -5854,6 +5916,7 @@ class OfflineCopiesCompanion extends UpdateCompanion<OfflineCopyRow> {
     Expression<int>? byteSize,
     Expression<int>? anchorIndex,
     Expression<double>? anchorOffset,
+    Expression<DateTime>? anchorUpdatedAt,
     Expression<bool>? active,
     Expression<DateTime>? createdAt,
     Expression<int>? rowid,
@@ -5871,6 +5934,7 @@ class OfflineCopiesCompanion extends UpdateCompanion<OfflineCopyRow> {
       if (byteSize != null) 'byte_size': byteSize,
       if (anchorIndex != null) 'anchor_index': anchorIndex,
       if (anchorOffset != null) 'anchor_offset': anchorOffset,
+      if (anchorUpdatedAt != null) 'anchor_updated_at': anchorUpdatedAt,
       if (active != null) 'active': active,
       if (createdAt != null) 'created_at': createdAt,
       if (rowid != null) 'rowid': rowid,
@@ -5890,6 +5954,7 @@ class OfflineCopiesCompanion extends UpdateCompanion<OfflineCopyRow> {
     Value<int>? byteSize,
     Value<int?>? anchorIndex,
     Value<double?>? anchorOffset,
+    Value<DateTime?>? anchorUpdatedAt,
     Value<bool>? active,
     Value<DateTime>? createdAt,
     Value<int>? rowid,
@@ -5907,6 +5972,7 @@ class OfflineCopiesCompanion extends UpdateCompanion<OfflineCopyRow> {
       byteSize: byteSize ?? this.byteSize,
       anchorIndex: anchorIndex ?? this.anchorIndex,
       anchorOffset: anchorOffset ?? this.anchorOffset,
+      anchorUpdatedAt: anchorUpdatedAt ?? this.anchorUpdatedAt,
       active: active ?? this.active,
       createdAt: createdAt ?? this.createdAt,
       rowid: rowid ?? this.rowid,
@@ -5952,6 +6018,9 @@ class OfflineCopiesCompanion extends UpdateCompanion<OfflineCopyRow> {
     if (anchorOffset.present) {
       map['anchor_offset'] = Variable<double>(anchorOffset.value);
     }
+    if (anchorUpdatedAt.present) {
+      map['anchor_updated_at'] = Variable<DateTime>(anchorUpdatedAt.value);
+    }
     if (active.present) {
       map['active'] = Variable<bool>(active.value);
     }
@@ -5979,6 +6048,7 @@ class OfflineCopiesCompanion extends UpdateCompanion<OfflineCopyRow> {
           ..write('byteSize: $byteSize, ')
           ..write('anchorIndex: $anchorIndex, ')
           ..write('anchorOffset: $anchorOffset, ')
+          ..write('anchorUpdatedAt: $anchorUpdatedAt, ')
           ..write('active: $active, ')
           ..write('createdAt: $createdAt, ')
           ..write('rowid: $rowid')
@@ -13641,6 +13711,7 @@ typedef $$OfflineCopiesTableCreateCompanionBuilder =
       Value<int> byteSize,
       Value<int?> anchorIndex,
       Value<double?> anchorOffset,
+      Value<DateTime?> anchorUpdatedAt,
       Value<bool> active,
       required DateTime createdAt,
       Value<int> rowid,
@@ -13659,6 +13730,7 @@ typedef $$OfflineCopiesTableUpdateCompanionBuilder =
       Value<int> byteSize,
       Value<int?> anchorIndex,
       Value<double?> anchorOffset,
+      Value<DateTime?> anchorUpdatedAt,
       Value<bool> active,
       Value<DateTime> createdAt,
       Value<int> rowid,
@@ -13730,6 +13802,11 @@ class $$OfflineCopiesTableFilterComposer
 
   ColumnFilters<double> get anchorOffset => $composableBuilder(
     column: $table.anchorOffset,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<DateTime> get anchorUpdatedAt => $composableBuilder(
+    column: $table.anchorUpdatedAt,
     builder: (column) => ColumnFilters(column),
   );
 
@@ -13813,6 +13890,11 @@ class $$OfflineCopiesTableOrderingComposer
     builder: (column) => ColumnOrderings(column),
   );
 
+  ColumnOrderings<DateTime> get anchorUpdatedAt => $composableBuilder(
+    column: $table.anchorUpdatedAt,
+    builder: (column) => ColumnOrderings(column),
+  );
+
   ColumnOrderings<bool> get active => $composableBuilder(
     column: $table.active,
     builder: (column) => ColumnOrderings(column),
@@ -13887,6 +13969,11 @@ class $$OfflineCopiesTableAnnotationComposer
     builder: (column) => column,
   );
 
+  GeneratedColumn<DateTime> get anchorUpdatedAt => $composableBuilder(
+    column: $table.anchorUpdatedAt,
+    builder: (column) => column,
+  );
+
   GeneratedColumn<bool> get active =>
       $composableBuilder(column: $table.active, builder: (column) => column);
 
@@ -13943,6 +14030,7 @@ class $$OfflineCopiesTableTableManager
                 Value<int> byteSize = const Value.absent(),
                 Value<int?> anchorIndex = const Value.absent(),
                 Value<double?> anchorOffset = const Value.absent(),
+                Value<DateTime?> anchorUpdatedAt = const Value.absent(),
                 Value<bool> active = const Value.absent(),
                 Value<DateTime> createdAt = const Value.absent(),
                 Value<int> rowid = const Value.absent(),
@@ -13959,6 +14047,7 @@ class $$OfflineCopiesTableTableManager
                 byteSize: byteSize,
                 anchorIndex: anchorIndex,
                 anchorOffset: anchorOffset,
+                anchorUpdatedAt: anchorUpdatedAt,
                 active: active,
                 createdAt: createdAt,
                 rowid: rowid,
@@ -13977,6 +14066,7 @@ class $$OfflineCopiesTableTableManager
                 Value<int> byteSize = const Value.absent(),
                 Value<int?> anchorIndex = const Value.absent(),
                 Value<double?> anchorOffset = const Value.absent(),
+                Value<DateTime?> anchorUpdatedAt = const Value.absent(),
                 Value<bool> active = const Value.absent(),
                 required DateTime createdAt,
                 Value<int> rowid = const Value.absent(),
@@ -13993,6 +14083,7 @@ class $$OfflineCopiesTableTableManager
                 byteSize: byteSize,
                 anchorIndex: anchorIndex,
                 anchorOffset: anchorOffset,
+                anchorUpdatedAt: anchorUpdatedAt,
                 active: active,
                 createdAt: createdAt,
                 rowid: rowid,

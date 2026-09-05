@@ -86,6 +86,47 @@ void main() {
     expect((copy!.anchorIndex, copy.anchorOffset), (12, 0.4));
   });
 
+  test('saving the anchor records when the reading happened', () async {
+    final seeded = await h.seedLibrary();
+    await h.offline.recordCopy(
+      entryId: seeded.entry.id,
+      locationUrl: seeded.location.url,
+      artifactFormat: 'document',
+      contentPath: 'library/a',
+      byteSize: 10,
+    );
+    // A recorded copy is bytes and nothing else: downloading an Entry is not
+    // reading it, so there is no reading time to have.
+    expect(
+      (await h.offline.activeCopyOf(seeded.entry.id))!.anchorUpdatedAt,
+      isNull,
+    );
+
+    await h.offline.saveAnchor(
+      seeded.entry.id,
+      anchorIndex: 3,
+      anchorOffset: 0.25,
+      at: DateTime.utc(2026, 7, 20),
+    );
+    expect(
+      (await h.offline.activeCopyOf(seeded.entry.id))!.anchorUpdatedAt,
+      DateTime.utc(2026, 7, 20),
+    );
+
+    // It follows the reading rather than latching: moving on writes the newer
+    // time, which is what makes it usable as a clock.
+    await h.offline.saveAnchor(
+      seeded.entry.id,
+      anchorIndex: 9,
+      anchorOffset: 0.1,
+      at: DateTime.utc(2026, 7, 25),
+    );
+    expect(
+      (await h.offline.activeCopyOf(seeded.entry.id))!.anchorUpdatedAt,
+      DateTime.utc(2026, 7, 25),
+    );
+  });
+
   test('no OfflineCopy operation ever writes the outbox, and the outbox '
       'cannot even spell the kind (I11)', () async {
     final seeded = await h.seedLibrary();

@@ -705,66 +705,224 @@ typedef CollectionChecker =
 
 final collectionCheckerProvider = Provider<CollectionChecker?>((ref) => null);
 
-/// One resumable read: an Entry someone is partway through, newest first.
+/// How many Collections the strip will speak for at once.
+///
+/// A strip, not a second library screen. The bound is applied **after** the
+/// one-per-Collection collapse below, so it counts works rather than pages —
+/// eleven Entries of one serial are one thing to resume, not eleven.
+const int kContinueReadingLimit = 8;
+
+/// One resumable read: the Entry a reader is partway through in one
+/// Collection, newest first.
 class ContinueReadItem {
   const ContinueReadItem({
     required this.entryId,
+    required this.collectionId,
     required this.title,
-    this.subtitle,
-    required this.lastReadAt,
+    this.entryLabel,
+    this.progress,
+    required this.readAt,
   });
 
   final String entryId;
 
-  /// What names this Entry on a surface that spans the library: the work and
-  /// the position, because nothing above the chip says which work it is.
+  /// The Collection this reading belongs to, or null for a standalone Entry.
+  /// The collapse key: one item per Collection, and a standalone Entry stands
+  /// for itself because it has no work to be one of.
+  final String? collectionId;
+
+  /// The largest thing on the card: the **work's** name, because that is what
+  /// a reader recognises a resumable reading by. A standalone Entry has no
+  /// work above it, so its own name stands here instead.
   final String title;
 
-  /// Whatever the Entry's own title still says once [title] has said the work
-  /// and the number — usually nothing, and null when so.
-  final String? subtitle;
+  /// The Entry's own identity under the work's name — its position, and
+  /// whatever its stored title still says once the position and the work have
+  /// been taken out of it. Null for a standalone Entry, whose name is already
+  /// [title].
+  final String? entryLabel;
 
-  final DateTime lastReadAt;
+  /// How far this reading got, 0..1 — or **null where the library holds no
+  /// figure**.
+  ///
+  /// Null is a real answer and is drawn as no percentage rather than as 0%: a
+  /// reading in this app's own reader is anchored to a position inside the
+  /// package it indexes, which is not a proportion of anything, and inventing
+  /// a number for it would be a claim about a reading nobody measured.
+  final double? progress;
+
+  /// When this reading happened — **the reading's own clock, never the access
+  /// stamp**.
+  ///
+  /// `reading_states.last_read_at` is written by any completed navigation onto
+  /// the Entry (I16), so passing back over a page you read last month makes it
+  /// the most recent thing in the library. What is ordered here is the moment
+  /// a *position* was written: the measurement's `observed_at`, or the
+  /// anchor's `anchor_updated_at`, whichever is later.
+  final DateTime readAt;
 }
 
-/// Continue Reading, derived from the logical Entries' reading state — not
-/// from downloads. Bounded: a strip, not a screen.
+/// Continue Reading: **the Entry each Collection was last actually read at.**
+///
+/// Three rules, and the first is the one the strip exists for.
+///
+/// **A reading, never an access.** `reading_states` records that an Entry was
+/// *opened* — `ReadingStateRepository.recordSourceAccess` stamps `last_read_at`
+/// and lifts unread to reading for every completed navigation onto a
+/// recognised page (I16, V2-D9). That is honest as an access record and wrong
+/// as a reading one: browsing to the page a download is about to start from
+/// stamps it exactly as finishing an Entry does, and the strip used to list
+/// both. So an Entry belongs here only when the library holds a **position**
+/// for it — the two things that write one are `SourceReadingMeter`, which
+/// refuses to attribute a position a machine put the page in, and this app's
+/// own reader, which anchors where the reader is. Downloading, capture, an
+/// update check and browsing past a page write neither.
+///
+/// **Ordered by the reading, never by the access.** The same column that
+/// cannot say *whether* an Entry was read cannot say *when* either: revisiting
+/// an Entry read long ago restamps `last_read_at` and would take the card from
+/// the one actually read most recently. So the clock is the position's own —
+/// `measurements.observed_at` for a reading at a Source, and
+/// `offline_copies.anchor_updated_at` for one in this app's reader.
+///
+/// **One item per Collection.** A serial someone is working through is one
+/// thing to resume, and the Entry that speaks for it is the one last read.
+/// Reading on to the next Entry replaces the one before it rather than adding
+/// to it. A standalone Entry has no work to be one of, so it stands for
+/// itself.
+///
+/// **Derived from reading state, never from downloads** (PRODUCT.md §2.3). An
+/// Entry belongs here whether or not this device holds a byte of it.
 final continueReadingProvider = StreamProvider<List<ContinueReadItem>>((ref) {
-  final services = ref.watch(libraryUiServicesProvider);
-  final db = services.db;
-  final query = db.select(db.readingStates)
-    ..where((r) => r.status.equals('reading') & r.lastReadAt.isNotNull())
-    ..orderBy([(r) => OrderingTerm.desc(r.lastReadAt)])
-    ..limit(8);
-  return query.watch().asyncMap((states) async {
-    final items = <ContinueReadItem>[];
-    for (final state in states) {
-      final entry = await services.entries.byId(state.entryId);
-      if (entry == null) continue;
-      String? collectionName;
-      final collectionId = entry.collectionId;
-      if (collectionId != null) {
-        collectionName = (await services.collections.byId(collectionId))?.name;
-      }
-      // The same presentation rule the Collection list uses, asked the other
-      // question: **here the row has to name itself**, because there is no
-      // work's name above it to lean on.
-      final shown = entryPresentation(
-        context: EntryContext.acrossLibrary,
-        labels: libraryEntryLabels,
-        ordinal: entry.ordinal,
-        title: entry.title,
-        collectionName: collectionName,
-      );
-      items.add(
-        ContinueReadItem(
-          entryId: entry.id,
-          title: shown.primary,
-          subtitle: shown.secondary,
-          lastReadAt: state.lastReadAt!,
-        ),
-      );
-    }
-    return items;
-  });
+  final db = ref.watch(libraryDatabaseProvider);
+  // Every table the answer is read from. `measurements` is not in
+  // [_libraryTicks] and is the whole point of this one: a position written
+  // while the reader scrolls must reach the strip without anything else
+  // happening to touch a reading-state row.
+  return _mergeTicks([
+    db.select(db.readingStates).watch(),
+    db.select(db.entries).watch(),
+    db.select(db.collections).watch(),
+    db.select(db.measurements).watch(),
+    db.select(db.offlineCopies).watch(),
+  ]).asyncMap((_) => _loadContinueReading(db));
 });
+
+Future<List<ContinueReadItem>> _loadContinueReading(LibraryDatabase db) async {
+  // Status is the gate a reader controls: `markUnread` lowers progress on
+  // purpose and a finished Entry is not something to resume. `last_read_at` is
+  // deliberately not consulted — neither as evidence nor as a clock.
+  final states = await (db.select(
+    db.readingStates,
+  )..where((r) => r.status.equals('reading'))).get();
+  if (states.isEmpty) return const [];
+
+  // Read once for the whole strip rather than once per row. `readAt` is both
+  // the evidence that a reading happened and the clock it is ordered by;
+  // `measured` is the figure the card prints, and covers fewer Entries — a
+  // reading anchored inside a package on this device has a position but no
+  // proportion.
+  final measured = await _progressByEntry(db);
+  final readAt = await _readAtByEntry(db);
+
+  final entries = {
+    for (final row in await db.select(db.entries).get()) row.id: row,
+  };
+  final collections = {
+    for (final row in await db.select(db.collections).get()) row.id: row,
+  };
+
+  final resumable = <(EntryRow, DateTime)>[];
+  for (final state in states) {
+    final entry = entries[state.entryId];
+    if (entry == null) continue;
+    // No position, no reading: an Entry that was only ever opened has nothing
+    // to resume to and no moment to be ordered by.
+    final when = readAt[entry.id];
+    if (when == null) continue;
+    resumable.add((entry, when));
+  }
+
+  // Most recently *read* first. The tie-breaks are only ever reached by two
+  // readings stamped at the same instant, and exist so the same library always
+  // draws the same strip: the Entry further along the work, then its id.
+  resumable.sort((a, b) {
+    final byTime = b.$2.compareTo(a.$2);
+    if (byTime != 0) return byTime;
+    final byOrdinal = (b.$1.ordinal ?? -1).compareTo(a.$1.ordinal ?? -1);
+    if (byOrdinal != 0) return byOrdinal;
+    return a.$1.id.compareTo(b.$1.id);
+  });
+
+  final spokenFor = <String>{};
+  final items = <ContinueReadItem>[];
+  for (final (entry, whenRead) in resumable) {
+    final collectionId = entry.collectionId;
+    // One per Collection: the first this loop reaches is the most recently
+    // read, and it is the one that speaks for the work.
+    if (collectionId != null && !spokenFor.add(collectionId)) continue;
+    final collectionName = collectionId == null
+        ? null
+        : collections[collectionId]?.name;
+
+    // The card names the work on one line and the Entry on the next, so the
+    // Entry is presented as it is inside its own Collection — the position
+    // leads, because the work is already written above it. A standalone Entry
+    // has no line above it and names itself.
+    final shown = entryPresentation(
+      context: collectionName == null
+          ? EntryContext.acrossLibrary
+          : EntryContext.withinCollection,
+      labels: libraryEntryLabels,
+      ordinal: entry.ordinal,
+      title: entry.title,
+      collectionName: collectionName,
+    );
+    items.add(
+      ContinueReadItem(
+        entryId: entry.id,
+        collectionId: collectionId,
+        title: collectionName ?? shown.primary,
+        entryLabel: collectionName == null
+            ? null
+            : [shown.primary, ?shown.secondary].join(' · '),
+        progress: measured[entry.id],
+        readAt: whenRead,
+      ),
+    );
+    if (items.length == kContinueReadingLimit) break;
+  }
+  return items;
+}
+
+/// When each Entry was last **read** — the evidence and the clock in one
+/// answer, because they are the same fact.
+///
+/// Two writers, and only two. `SourceReadingMeter` stores a measurement when
+/// the reader has moved the page themselves, and refuses a position a machine
+/// put the page in; this app's own reader stamps the anchor it saves. An Entry
+/// missing from this map has no position, which is what "opened but not read"
+/// looks like — downloading, capture, an update check and browsing past a page
+/// all leave it absent.
+///
+/// The later of the two wins where an Entry has both: reading it at its Source
+/// and reading it on this device are the same work, and the question is when
+/// it was last read at all.
+Future<Map<String, DateTime>> _readAtByEntry(LibraryDatabase db) async {
+  final readAt = <String, DateTime>{};
+  void note(String entryId, DateTime when) {
+    final held = readAt[entryId];
+    if (held == null || when.isAfter(held)) readAt[entryId] = when.toUtc();
+  }
+
+  for (final row in await db.select(db.measurements).get()) {
+    note(row.entryId, row.observedAt);
+  }
+  final anchored = await (db.select(
+    db.offlineCopies,
+  )..where((c) => c.active.equals(true) & c.anchorUpdatedAt.isNotNull())).get();
+  for (final row in anchored) {
+    note(row.entryId, row.anchorUpdatedAt!);
+  }
+  return readAt;
+}

@@ -18,6 +18,7 @@ import 'package:drift/drift.dart' hide isNull;
 import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:web_reader/data/collection_repository.dart';
+import 'package:web_reader/data/offline_copy_repository.dart';
 import 'package:web_reader/data/schema.dart';
 
 import '../helpers/version_one_library.dart';
@@ -157,6 +158,30 @@ void main() {
     },
   );
 
+  test(
+    'a version-1 library gains the anchor clock, empty and writable',
+    () async {
+      await writeVersionOneLibrary(file);
+      final db = open();
+      addTearDown(db.close);
+
+      // Version 3's addition. The copy that was already on disk keeps its anchor
+      // and has no time for it — nothing invents one, because nobody recorded
+      // when that reading happened.
+      final before = await db.select(db.offlineCopies).getSingle();
+      expect(before.anchorUpdatedAt, isNull);
+
+      // And the reader can stamp it from here on, through the one writer.
+      await OfflineCopyRepository(
+        db,
+      ).saveAnchor(before.entryId, anchorIndex: 4, anchorOffset: 0.5, at: at);
+
+      final after = await db.select(db.offlineCopies).getSingle();
+      expect(after.anchorIndex, 4);
+      expect(after.anchorUpdatedAt?.toUtc(), at);
+    },
+  );
+
   test('opening an upgraded library again is a no-op', () async {
     await writeVersionOneLibrary(file);
     final first = open();
@@ -169,6 +194,6 @@ void main() {
     final version = await second
         .customSelect('PRAGMA user_version')
         .getSingle();
-    expect(version.read<int>('user_version'), 2);
+    expect(version.read<int>('user_version'), 3);
   });
 }

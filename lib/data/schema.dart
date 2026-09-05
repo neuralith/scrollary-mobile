@@ -328,6 +328,20 @@ class OfflineCopies extends Table {
   IntColumn get anchorIndex => integer().nullable()();
   RealColumn get anchorOffset => real().nullable()();
 
+  /// When the anchor last moved — the reader's own clock.
+  ///
+  /// A third fact about the same position, and it is not derivable from any
+  /// other column: `captured_at` is when the bytes arrived and `created_at` is
+  /// when this row did, while `reading_states.last_read_at` is stamped by any
+  /// completed navigation onto the Entry (I16) and so cannot say when somebody
+  /// last *read* it. Continue Reading orders by reading activity, and without
+  /// this a reading in this app's own reader had no time of its own to be
+  /// ordered by. Null until the reader first saves a position.
+  ///
+  /// Device-local like the anchor it times, and unsynced for the same reason:
+  /// it is about bytes on this device, and `SyncedEntityKind` cannot spell it.
+  DateTimeColumn get anchorUpdatedAt => dateTime().nullable()();
+
   BoolColumn get active => boolean().withDefault(const Constant(true))();
   DateTimeColumn get createdAt => dateTime()();
 
@@ -646,7 +660,7 @@ class LibraryDatabase extends _$LibraryDatabase {
     : super(driftDatabase(name: name));
   LibraryDatabase.forTesting(super.executor);
 
-  /// **Two.**
+  /// **Three.**
   ///
   /// Version 1 was created whole and had no history, which was true for as
   /// long as no database outside a development machine existed (V2-D26).
@@ -658,12 +672,16 @@ class LibraryDatabase extends _$LibraryDatabase {
   /// opened without them and every read of `collections` threw on the column
   /// that was not there.
   ///
+  /// Version 3 adds `offline_copies.anchor_updated_at`: the reader's own
+  /// clock for the anchor, so Continue Reading can order by when a reading
+  /// happened rather than by the access stamp any navigation writes.
+  ///
   /// The declared schema is unchanged by this — [onUpgrade] only brings an
   /// older file up to it. What replaces the old rule is not "no migrations"
   /// but its honest successor: **a schema change is a version bump and a step
   /// in [_reconcileToDeclaredSchema], in the same commit.**
   @override
-  int get schemaVersion => 2;
+  int get schemaVersion => 3;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -711,6 +729,11 @@ class LibraryDatabase extends _$LibraryDatabase {
     final locationColumns = await _columnsOf('locations');
     if (!locationColumns.contains('published_at')) {
       await m.addColumn(locations, locations.publishedAt);
+    }
+
+    final offlineCopyColumns = await _columnsOf('offline_copies');
+    if (!offlineCopyColumns.contains('anchor_updated_at')) {
+      await m.addColumn(offlineCopies, offlineCopies.anchorUpdatedAt);
     }
 
     if (!await _hasTable('collection_check_states')) {

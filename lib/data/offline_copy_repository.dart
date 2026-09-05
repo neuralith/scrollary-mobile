@@ -84,10 +84,19 @@ class OfflineCopyRepository {
 
   /// The reading anchor: position inside this artifact. Device state,
   /// meaningless without the bytes it indexes.
+  /// Where the reader is inside this device's copy, and **when it was last
+  /// moved**.
+  ///
+  /// The time is written here rather than left to a caller because it is a
+  /// fact about this write: an anchor that moved is a reading that happened,
+  /// and it is the only clock this device has for one. `reading_states` cannot
+  /// supply it — `last_read_at` is stamped by any completed navigation onto
+  /// the Entry (I16), so it says when the page was last *opened*.
   Future<void> saveAnchor(
     String entryId, {
     required int anchorIndex,
     required double anchorOffset,
+    DateTime? at,
   }) async {
     await (_db.update(
       _db.offlineCopies,
@@ -95,6 +104,7 @@ class OfflineCopyRepository {
       OfflineCopiesCompanion(
         anchorIndex: Value(anchorIndex),
         anchorOffset: Value(anchorOffset),
+        anchorUpdatedAt: Value((at ?? _now()).toUtc()),
       ),
     );
   }
@@ -145,6 +155,7 @@ class OfflineCopyRepository {
     byteSize: row.byteSize,
     anchorIndex: row.anchorIndex,
     anchorOffset: row.anchorOffset,
+    anchorUpdatedAt: row.anchorUpdatedAt?.toUtc(),
     active: row.active,
   );
 }

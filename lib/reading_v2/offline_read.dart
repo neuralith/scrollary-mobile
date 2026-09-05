@@ -415,6 +415,7 @@ class OfflineReadSession {
       entryId,
       anchorIndex: position.anchorIndex,
       anchorOffset: position.offsetInAnchor.clamp(0.0, 1.0),
+      at: at,
     );
     if (reachedEnd) return markRead(at: at);
     final (state, _) = await reading.recordSourceAccess(entryId, at: at);
