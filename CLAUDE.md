@@ -4,12 +4,12 @@ A personal reading library for web-based reading content, iOS-first and
 Android-compatible: embedded browser + a library of Collections and Entries +
 optional offline copies.
 
-Read [docs/TERMINOLOGY.md](docs/TERMINOLOGY.md) before writing any code. The
-product definition is [docs/PRODUCT.md](docs/PRODUCT.md); the as-built model is
-[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md); why a decision was made is
-[docs/DECISIONS.md](docs/DECISIONS.md); store positioning is
-[docs/STORE_PACKAGE.md](docs/STORE_PACKAGE.md); the policy reasoning behind the
-safety rules is [docs/STORE_POLICY_MAP.md](docs/STORE_POLICY_MAP.md).
+Read [../docs/TERMINOLOGY.md](../docs/TERMINOLOGY.md) before writing any code. The
+product definition is [../docs/PRODUCT.md](../docs/PRODUCT.md); the as-built model is
+[../docs/ARCHITECTURE.md](../docs/ARCHITECTURE.md); why a decision was made is
+[../docs/DECISIONS.md](../docs/DECISIONS.md); store positioning is
+[../docs/STORE_PACKAGE.md](../docs/STORE_PACKAGE.md); the policy reasoning behind the
+safety rules is [../docs/STORE_POLICY_MAP.md](../docs/STORE_POLICY_MAP.md).
 
 ## What this app is, and is not
 
@@ -38,12 +38,12 @@ read, Scrollary recognises what it is, and your library stays current across you
 devices. Downloading becomes a per-device capability of an Entry. Folders are
 user organisation; a Collection has several Sources; an Entry has Locations.
 
-Specified in [docs/PRODUCT.md](docs/PRODUCT.md),
-[docs/V2_ARCHITECTURE.md](docs/V2_ARCHITECTURE.md) and
-[docs/V2_SYNC.md](docs/V2_SYNC.md); sequenced for parallel worktrees in
-[docs/V2_ROADMAP.md](docs/V2_ROADMAP.md); deferred production work in
-[docs/V2_PRODUCTIZATION.md](docs/V2_PRODUCTIZATION.md); every decision recorded
-in [docs/DECISIONS.md](docs/DECISIONS.md).
+Specified in [../docs/PRODUCT.md](../docs/PRODUCT.md),
+[../docs/V2_ARCHITECTURE.md](../docs/V2_ARCHITECTURE.md) and
+[../docs/V2_SYNC.md](../docs/V2_SYNC.md); sequenced for parallel worktrees in
+[../docs/V2_ROADMAP.md](../docs/V2_ROADMAP.md); deferred production work in
+[../docs/V2_PRODUCTIZATION.md](../docs/V2_PRODUCTIZATION.md); every decision recorded
+in [../docs/DECISIONS.md](../docs/DECISIONS.md).
 
 **What is built, merged and composed on `master`, by layer:**
 
@@ -62,7 +62,7 @@ in [docs/DECISIONS.md](docs/DECISIONS.md).
   `save_runs` is deliberately absent — see the header of
   `lib/data/schema.dart`), and offline read through `OfflineCopy`. The two
   reviewed port seams are recorded in
-  [docs/V2_PORT_CHECKLIST.md](docs/V2_PORT_CHECKLIST.md) §17.
+  [../docs/V2_PORT_CHECKLIST.md](../docs/V2_PORT_CHECKLIST.md) §17.
 - **Operations you can see** (`lib/features/operation_progress.dart`,
   `lib/library_ui/run_summary.dart`, `lib/features/check_state.dart`,
   `lib/features/library_check_flow.dart`) — a run says which entry it is on
@@ -95,7 +95,7 @@ in [docs/DECISIONS.md](docs/DECISIONS.md).
   A fast tap through writes nothing.
 - **The save flow** (`lib/features/v2_save_flow.dart`, `lib/recognition/adopt.dart`,
   `lib/save/save_scope.dart`) — a page becomes library through the matrix in
-  [docs/V2_SAVE_FLOW.md](docs/V2_SAVE_FLOW.md): what the page *is* comes from
+  [../docs/V2_SAVE_FLOW.md](../docs/V2_SAVE_FLOW.md): what the page *is* comes from
   `readPageShape`, which Collection it belongs to is the **user's answer**
   (V2-D45) and never a title match, and how much to download is the typed
   count V1 asked for, on the same `SaveLimits` bound (V2-D46). A page the
@@ -199,7 +199,7 @@ in [docs/DECISIONS.md](docs/DECISIONS.md).
   label, transport.
 - **Composition** (`lib/features/v2_composition.dart`, `lib/app.dart`) — the
   V2 screens above are the running app. The sync stack is wired up with a Pro
-  gate on the network drain (`SyncComposition.resolve`, docs/DECISIONS.md
+  gate on the network drain (`SyncComposition.resolve`, ../docs/DECISIONS.md
   V2-D37) and the scheduler's lifecycle hooks called from app launch,
   resume, pause, local mutation and capability change; placement submits
   locally when no service is reachable and over the network when one is
@@ -219,21 +219,21 @@ screens are what `lib/app.dart` routes to, and there is no V1 fallback left to
 route to instead.
 
 **Before removing anything a V1 implementation used to do, read
-[docs/V2_CAPABILITY_PARITY.md](docs/V2_CAPABILITY_PARITY.md).** It lists every
+[../docs/V2_CAPABILITY_PARITY.md](../docs/V2_CAPABILITY_PARITY.md).** It lists every
 capability that must stay reachable from app launch, and carries the rule the
 V2 cleanup lacked: an implementation may go only when a durable decision
 retires its capability, or an equivalent surface exists, is reachable, and its
 parity test passes. Deleting a regression test needs the same authorisation.
 
 Rules that still bind: the port checklist
-([docs/V2_PORT_CHECKLIST.md](docs/V2_PORT_CHECKLIST.md)) governs any further
+([../docs/V2_PORT_CHECKLIST.md](../docs/V2_PORT_CHECKLIST.md)) governs any further
 change to a ported file; the shared contract (`contracts/`) is frozen and
 changes only through `contracts/README.md`'s protocol; the guard tests in
 `test/` gate every change in either half.
 
 **A synced field is written out by hand in both halves, and the service
 *rejects* a field it does not know** — so an intent carrying one is parked on
-the device forever, not silently dropped (V2-D73, docs/V2_SYNC.md §8.1a). Two
+the device forever, not silently dropped (V2-D73, ../docs/V2_SYNC.md §8.1a). Two
 tests hold the halves together: `test/sync/support/contract_vocabulary.dart`
 reads `contracts/openapi.yaml` and the fake service applies it, so every push
 test is a parity test; `internal/sync/vocabulary_test.go` does the same for the
@@ -247,7 +247,7 @@ Three things future agents get wrong here:
   settling, the decode budget, FileStore, manifest, document, capture policy,
   detection, extraction, stop conditions, the asset fetcher, both readers.
   Change their call sites, never their internals
-  ([docs/V2_ROADMAP.md](docs/V2_ROADMAP.md) §9).
+  ([../docs/V2_ROADMAP.md](../docs/V2_ROADMAP.md) §9).
 - **There is no V1 → V2 migration.** Nothing has shipped, so V2 starts from a
   fresh schema and development databases are reset by hand (V2-D26). The
   version-1 schema rule above still applies to V1 for as long as it runs.
@@ -345,7 +345,7 @@ Three things future agents get wrong here:
   plan is short, and that nothing starts until Start. In V2 the count is
   planned against rows the library already holds — `SaveScopePlanner` opens no
   page — and finding more Entries is the update check, which is its own
-  visible, bounded, cancellable act (docs/V2_SAVE_FLOW.md §4).
+  visible, bounded, cancellable act (../docs/V2_SAVE_FLOW.md §4).
 - Nothing saves in the background. Queued work waits for an explicit Start, and
   that authorisation is never persisted.
 
@@ -365,8 +365,8 @@ V2's metadata sync for reasons that only apply to capture.
   has a reasonable execution opportunity, resumes after connectivity returns and
   is safe to interrupt at any point. It is **not** a promise of permanent
   background execution — no mobile platform offers one. See
-  [docs/DECISIONS.md](docs/DECISIONS.md) V2-D20 and
-  [docs/PRODUCT.md](docs/PRODUCT.md) §6.
+  [../docs/DECISIONS.md](../docs/DECISIONS.md) V2-D20 and
+  [../docs/PRODUCT.md](../docs/PRODUCT.md) §6.
 
 ### The app stops; it never works around
 
@@ -567,7 +567,7 @@ and refused. Do not add video URL extraction, HLS/DASH, interception or playback
   carries the internal entitlement override, so passing it also unlocks Pro.
   The rule was widened from `kDebugMode` deliberately: profile and release
   builds are where device performance, energy and accessibility work happens,
-  and that work needs these tools — see docs/FOREGROUND_MULTITASKING.md §10.4.
+  and that work needs these tools — see ../docs/FOREGROUND_MULTITASKING.md §10.4.
 
 ### Free and Pro — one boundary, and it is not the operation
 
@@ -594,7 +594,7 @@ and refused. Do not add video URL extraction, HLS/DASH, interception or playback
   vocabulary anywhere in `lib/` outside `lib/capability/` and three files that
   only name it; `test/entitlement_test.dart` fails if a reading or cleanup
   surface imports `lib/capability/` at all.
-- The boundary is specified in docs/FOREGROUND_MULTITASKING.md §10.0 and carried
+- The boundary is specified in ../docs/FOREGROUND_MULTITASKING.md §10.0 and carried
   as an invariant in ARCHITECTURE.md §9. An older proposal to sell update
   checking survives in MONETIZATION_STRATEGY.md §8.3, **marked superseded** — it
   is history, not a requirement.
@@ -655,7 +655,16 @@ flutter test integration_test/user_assist_test.dart        -d <udid>
 flutter test integration_test/text_capture_test.dart       -d <udid>
 flutter test integration_test/capture_integrity_test.dart  -d <udid>
 flutter test integration_test/reading_chrome_test.dart     -d <udid>
+flutter test integration_test/next_entries_test.dart       -d <udid>
+flutter test integration_test/stale_state_scope_test.dart  -d <udid>
 ```
+
+The last two are recent and answer questions a host cannot:
+`next_entries_test` drives *the next N from here* end to end — the picker, the
+typed count, the launch, and **not a byte captured until Start** —
+and `stale_state_scope_test` pins the three rules about state belonging to the
+page it is shown for, each of which turns on timing only a real WKWebView
+produces.
 
 Three more answer questions a widget test cannot, and are run when the thing
 they cover changes rather than routinely:
@@ -691,22 +700,39 @@ flutter test integration_test/device_matrix_test.dart -d <udid> \
   --dart-define=SOAK_ROUNDS=6
 ```
 
-Results belong in docs/FOREGROUND_MULTITASKING_PLAN.md §6.
+Results belong in ../docs/FOREGROUND_MULTITASKING_PLAN.md §6.
 
 ### Live-site verification
 
 Bounded and explicit. Two forms, and they are not interchangeable:
 
-- **The developer-owned demo site** — see [docs/DEMO_CONTENT.md](docs/DEMO_CONTENT.md).
-  It is not hosted yet, and **there is no test file for it today**: the six
+- **The developer-owned demo site** — see [../docs/DEMO_CONTENT.md](../docs/DEMO_CONTENT.md).
+  It is not hosted yet, and **there is still no test file for it**: the six
   `integration_test/live_*.dart` files that named third-party sites were deleted
-  (TERMINOLOGY.md §3) and nothing replaced them. When the demo site exists, a
-  suite for it takes its origin from `--dart-define=DEMO_BASE_URL=…`; never
-  compile one in.
-- **A real page, by hand, through the device matrix above.** `LIVE_ENTRY_A` /
-  `LIVE_ENTRY_B` exist for the cases that only a real site can produce. No
-  hostname is written into the repository — `test/repository_cleanliness_test.dart`
-  fails the build on one.
+  (TERMINOLOGY.md §3). When the demo site exists, a suite for it takes its
+  origin from `--dart-define=DEMO_BASE_URL=…`; never compile one in.
+- **A real page, by hand.** Two `live_*.dart` suites have since been written in
+  the shape the deleted six should have had — **every address supplied at run
+  time, nothing about a site compiled in, and every case skipping itself and
+  saying so when the defines are absent**, so neither can make `flutter test`
+  depend on a network:
+
+  ```bash
+  # A next-entry control on a real site, through the real WebView and bridge
+  flutter test integration_test/live_next_control_test.dart -d <udid> \
+    --dart-define=LIVE_ENTRY_A=<a real entry url, part of a sequence> \
+    --dart-define=LIVE_NEXT_LABEL=<the visible label of its next control>
+  # The rendered fallback: a host that serves its pictures to the browser only
+  flutter test integration_test/live_rendered_fallback_test.dart -d <udid> \
+    --dart-define=LIVE_REFUSING_A=<an entry whose asset host refuses> \
+    --dart-define=LIVE_REFUSING_B=<another entry on that same host> \
+    --dart-define=LIVE_REFUSING_C=<a third, to consume the learned verdict> \
+    --dart-define=LIVE_SERVING=<an entry whose assets download normally>
+  ```
+
+  `LIVE_ENTRY_A` / `LIVE_ENTRY_B` serve the same purpose in the device matrix
+  above. No hostname is written into the repository —
+  `test/repository_cleanliness_test.dart` fails the build on one.
 
 Rules: deterministic tests first, always. Never make `flutter test` or CI depend
 on a network. Never commit downloaded third-party content. Report each live run as
