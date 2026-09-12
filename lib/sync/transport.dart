@@ -64,19 +64,41 @@ abstract class SyncTransport {
   );
 }
 
-/// `dart:io` implementation. [libraryName] rides the development-only
-/// `X-Scrollary-Library` header (V2-D28); production authentication replaces
-/// the header without changing any payload.
+/// `dart:io` implementation.
+///
+/// **Two ways to name a library, and never both at once.** [accessToken]
+/// answers with a signed-in account's credential and is the production path;
+/// [libraryName] rides the development-only `X-Scrollary-Library` header
+/// (V2-D28). The service refuses a request that carries the two together, so
+/// this class sends the header only when there is no token to send.
+///
+/// The credential arrives as a *closure*, not as an account object. Nothing
+/// under `lib/sync/` may import the account layer, for the same reason nothing
+/// here may reach the seam that answers what a user has: a file that can read a
+/// session could condition a write on one, and the gate would have moved off
+/// the drain without anybody deciding to move it.
 class HttpSyncTransport implements SyncTransport {
   HttpSyncTransport({
     required this.baseUrl,
     required this.libraryName,
+    this.accessToken,
+    this.refreshSession,
     HttpClient? client,
     this.timeout = const Duration(seconds: 20),
   }) : _client = client ?? HttpClient();
 
   final Uri baseUrl;
   final String libraryName;
+
+  /// The access token for this request, or null when signed out.
+  final Future<String?> Function()? accessToken;
+
+  /// Renews the session after a 401, answering whether it worked. Expected to
+  /// be single-flight: several requests can meet the same expiry at once, and
+  /// each spending the refresh token would leave all but one holding a
+  /// credential the service has already rotated away.
+  final Future<bool> Function()? refreshSession;
+
   final HttpClient _client;
   final Duration timeout;
 
@@ -104,16 +126,42 @@ class HttpSyncTransport implements SyncTransport {
     Map<String, Object?> body,
   ) => _send('POST', '/download-requests/$requestId/resolve', body: body);
 
+  /// Sends the request, and on a 401 renews the session once and sends it
+  /// again.
+  ///
+  /// Exactly once: a second 401 after a successful renewal is the service
+  /// saying something other than "your token expired", and retrying a third
+  /// time would turn one refusal into a loop.
   Future<TransportReply> _send(
     String method,
     String pathAndQuery, {
     Map<String, Object?>? body,
   }) async {
+    final first = await _sendOnce(method, pathAndQuery, body: body);
+    if (first.status != HttpStatus.unauthorized) return first;
+
+    final renew = refreshSession;
+    if (renew == null || !await renew()) return first;
+    return _sendOnce(method, pathAndQuery, body: body);
+  }
+
+  Future<TransportReply> _sendOnce(
+    String method,
+    String pathAndQuery, {
+    Map<String, Object?>? body,
+  }) async {
+    final token = await accessToken?.call();
     try {
       final request = await _client
           .openUrl(method, baseUrl.resolve(pathAndQuery))
           .timeout(timeout);
-      request.headers.set('X-Scrollary-Library', libraryName);
+      if (token != null && token.isNotEmpty) {
+        request.headers.set(HttpHeaders.authorizationHeader, 'Bearer $token');
+      } else {
+        // Only when there is no account credential: the service refuses a
+        // request carrying both, rather than quietly deciding which one wins.
+        request.headers.set('X-Scrollary-Library', libraryName);
+      }
       if (body != null) {
         request.headers.contentType = ContentType.json;
         request.add(utf8.encode(jsonEncode(body)));

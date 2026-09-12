@@ -6,7 +6,7 @@
 /// It is not an answer to "what is my phone doing": a failed row for an Entry
 /// three folders down is, in practice, unreachable. The operation indicator
 /// names a count and promises a destination for the detail
-/// (`operation_indicator.dart`, docs/FOREGROUND_MULTITASKING.md §9), the
+/// (`operation_indicator.dart`, docs/FOREGROUND_MULTITASKING.md §7), the
 /// restricted-site sentence is specified to appear "on a task in Activity that
 /// was refused" (STORE_PACKAGE.md §6.5.1), and *Remove from Activity* is named
 /// as an invariant (CLAUDE.md, "Structural invariants"). This is that surface.

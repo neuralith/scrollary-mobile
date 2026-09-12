@@ -161,7 +161,7 @@ final indicatorTasksProvider = StreamProvider<List<SaveTask>>(
 /// Hosted above the router, so it is reachable from the Reader, the Library,
 /// Settings and every screen that is pushed over them. It is **free and never
 /// gated**: knowing what your device is doing, and being able to stop it, is
-/// not a feature to sell (docs/FOREGROUND_MULTITASKING.md §10.1).
+/// not a feature to sell (docs/FOREGROUND_MULTITASKING.md §8.1).
 ///
 /// Deliberately a **count, not an account**. It says that work is outstanding
 /// and how much; every word of detail, and every control — stop, retry,
@@ -190,7 +190,7 @@ class OperationIndicator extends ConsumerStatefulWidget {
   ///
   /// The destination for a "Needs you", and the reason this is a second
   /// callback rather than a branch inside the first: **"Needs you" is one
-  /// action** (docs/FOREGROUND_MULTITASKING.md §9). Every state that produces
+  /// action** (docs/FOREGROUND_MULTITASKING.md §7). Every state that produces
   /// one — a sign-in, a CAPTCHA, a consent dialog, an ambiguous next-Entry
   /// control, a run holding on a hidden WebView — is answered in the Browser
   /// and nowhere else: the selection overlay is drawn on that screen alone.

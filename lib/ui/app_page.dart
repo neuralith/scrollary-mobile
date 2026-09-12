@@ -12,7 +12,7 @@ import 'package:flutter/material.dart';
 /// is not painted is a WebView whose `requestAnimationFrame` stops (iOS) or is
 /// throttled to a fifth of the display rate (Android) — which is how a page's
 /// lazy content silently fails to arrive
-/// (docs/FOREGROUND_MULTITASKING.md §3.1). A non-opaque route keeps the shell
+/// (docs/FOREGROUND_MULTITASKING.md §2). A non-opaque route keeps the shell
 /// beneath it painted, so the one WebView carries on at the same rect, in the
 /// same session, with the same viewport.
 ///

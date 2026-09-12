@@ -1691,7 +1691,7 @@ class SaveEngine {
   /// Hold while the WebView surface is not being composited.
   ///
   /// Three independent checks, because no one of them is sufficient
-  /// (docs/FOREGROUND_MULTITASKING.md §3.1):
+  /// (docs/FOREGROUND_MULTITASKING.md §2):
   ///
   /// * **The app is not painting the WebView** ([BrowserController.surfaceIsPainted]).
   ///   The only portable answer. An unpainted WebView keeps a full viewport and

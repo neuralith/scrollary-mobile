@@ -172,7 +172,9 @@ class SyncComposition {
     required LibraryDatabase db,
     required SaveQueueRepository queue,
     required this.cloudSyncAvailable,
+    required this.signedIn,
     required this._capabilityChanges,
+    required Listenable accountChanges,
     required this.transport,
     SyncSchedule schedule = const SyncSchedule(),
     SyncClock clock = const SystemSyncClock(),
@@ -192,8 +194,10 @@ class SyncComposition {
       schedule: schedule,
       clock: clock,
     );
-    _wasAvailable = cloudSyncAvailable();
+    _accountChanges = accountChanges;
+    _wasAvailable = _mayDrain();
     _capabilityChanges.addListener(_onCapabilityChanged);
+    _accountChanges.addListener(_onCapabilityChanged);
   }
 
   /// **May this device use the cloud service?**
@@ -204,8 +208,22 @@ class SyncComposition {
   /// ever being able to read what is behind it.
   final bool Function() cloudSyncAvailable;
 
-  /// Notifies when the answer above may have changed.
+  /// **Is there an account to synchronise for?**
+  ///
+  /// The second half of the same gate, and a separate question on purpose: what
+  /// somebody bought and whose library this is are different facts, and neither
+  /// implies the other. A device with the capability and no account has nowhere
+  /// to send anything; a signed-in device without the capability has somewhere
+  /// and may not use it. The user-facing surface has to say which of the two is
+  /// missing rather than offering one sentence for both.
+  final bool Function() signedIn;
+
+  /// Notifies when the capability answer may have changed.
   final Listenable _capabilityChanges;
+
+  /// Notifies when the account answer may have changed — a sign-in, a
+  /// sign-out, or a session that could not be renewed.
+  late final Listenable _accountChanges;
 
   /// The one transport, built once. Null when this build carries no service
   /// address at all — see `lib/core/sync_config.dart`.
@@ -225,13 +243,21 @@ class SyncComposition {
   bool _wasAvailable = false;
   bool _disposed = false;
 
-  /// **The gate.** Configured *and* permitted, asked afresh every time so a
-  /// change on either side needs no restart and no second scheduler.
+  /// **The gate.** Configured, permitted *and* signed in — asked afresh every
+  /// time, so a change on any side needs no restart and no second scheduler.
+  ///
+  /// Still the only place any of it is asked, and still only on the network
+  /// drain. Local writes, the outbox and every read stay ungated for everyone
+  /// (V2-D7): the outbox keeps accumulating whatever this answers, so nothing
+  /// is lost while a device is signed out and nothing has to be replayed when
+  /// somebody signs in.
   SyncTransport? resolve() {
     final held = transport;
     if (held == null) return null;
-    return cloudSyncAvailable() ? held : null;
+    return _mayDrain() ? held : null;
   }
+
+  bool _mayDrain() => cloudSyncAvailable() && signedIn();
 
   /// A capability arriving is new information of exactly the kind
   /// [SyncScheduler.onConnectivityRegained] exists for: something that knows
@@ -240,7 +266,7 @@ class SyncComposition {
   /// the next opportunity is a no-op.
   void _onCapabilityChanged() {
     if (_disposed) return;
-    final available = cloudSyncAvailable();
+    final available = _mayDrain();
     if (available && !_wasAvailable) scheduler.onConnectivityRegained();
     _wasAvailable = available;
   }
@@ -280,6 +306,7 @@ class SyncComposition {
     if (_disposed) return;
     _disposed = true;
     _capabilityChanges.removeListener(_onCapabilityChanged);
+    _accountChanges.removeListener(_onCapabilityChanged);
     await _outbox?.cancel();
     scheduler.dispose();
     if (transport case final HttpSyncTransport http) http.close();
@@ -287,10 +314,22 @@ class SyncComposition {
 }
 
 /// The transport this build carries, or null when it carries none.
-HttpSyncTransport? buildSyncTransport() {
+///
+/// The two closures are how a credential reaches the wire without the sync
+/// stack ever holding an account: they are supplied by the composition root,
+/// exactly as `cloudSyncAvailable` is.
+HttpSyncTransport? buildSyncTransport({
+  Future<String?> Function()? accessToken,
+  Future<bool> Function()? refreshSession,
+}) {
   final base = syncBaseUri;
   if (base == null) return null;
-  return HttpSyncTransport(baseUrl: base, libraryName: kSyncLibraryName);
+  return HttpSyncTransport(
+    baseUrl: base,
+    libraryName: kSyncLibraryName,
+    accessToken: accessToken,
+    refreshSession: refreshSession,
+  );
 }
 
 // ─── placement ──────────────────────────────────────────────────────────────
@@ -368,12 +407,20 @@ class HttpPlacementTransport implements placement.PlacementTransport {
   HttpPlacementTransport({
     required this.baseUrl,
     required this.libraryName,
+    this.accessToken,
     HttpClient? client,
     this.timeout = const Duration(seconds: 20),
   }) : _client = client ?? HttpClient();
 
   final Uri baseUrl;
   final String libraryName;
+
+  /// The signed-in account's credential, or null. Named the same way and for
+  /// the same reason as [HttpSyncTransport.accessToken] — the two must agree
+  /// about which library they are addressing, or a placement would arbitrate
+  /// against a different library than the one the drain writes to.
+  final Future<String?> Function()? accessToken;
+
   final HttpClient _client;
   final Duration timeout;
 
@@ -383,11 +430,16 @@ class HttpPlacementTransport implements placement.PlacementTransport {
     required double ordinal,
     required String mutationId,
   }) async {
+    final token = await accessToken?.call();
     final request = await _client
         .postUrl(baseUrl.resolve('/entries/$entryId/placement'))
         .timeout(timeout);
     request.headers.contentType = ContentType.json;
-    request.headers.set('X-Scrollary-Library', libraryName);
+    if (token != null && token.isNotEmpty) {
+      request.headers.set(HttpHeaders.authorizationHeader, 'Bearer $token');
+    } else {
+      request.headers.set('X-Scrollary-Library', libraryName);
+    }
     request.add(
       utf8.encode(jsonEncode({'ordinal': ordinal, 'mutation_id': mutationId})),
     );

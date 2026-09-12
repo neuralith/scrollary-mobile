@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart' show ValueNotifier;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import 'account/account_controller.dart';
 import 'browser/browser_controller.dart';
 import 'capability/foreground_multitasking.dart';
 import 'browser/browser_navigator.dart';
@@ -28,6 +29,7 @@ class AppServices {
     required this.fileStore,
     required this.browser,
     ForegroundMultitasking? foregroundMultitasking,
+    this.account,
   }) : foregroundMultitasking =
            foregroundMultitasking ?? ForegroundMultitasking();
 
@@ -37,6 +39,10 @@ class AppServices {
   /// The one place that answers whether an operation may keep running while
   /// the user is elsewhere in the app.
   final ForegroundMultitasking foregroundMultitasking;
+
+  /// The account, where this build has one to offer. Null in a widget test and
+  /// in any build with no service address compiled in.
+  final AccountController? account;
 }
 
 final appServicesProvider = Provider<AppServices>(
@@ -50,6 +56,22 @@ final fileStoreProvider = Provider<FileStore>(
 final browserProvider = Provider<BrowserController>(
   (ref) => ref.watch(appServicesProvider).browser,
 );
+
+/// The account, or null when this build cannot offer one.
+///
+/// Only two things read it: the Settings row that signs in and out, and the
+/// composition root that hands the sync gate its closure. A screen that records,
+/// stores, organises or reads must not: the account guard in the capability
+/// test suite fails the build the moment one imports this layer.
+final accountProvider = Provider<AccountController?>((ref) {
+  try {
+    return ref.watch(appServicesProvider).account;
+  } catch (_) {
+    // Widget tests override the database and file store only. No account is
+    // the honest answer, and it is also the ordinary one.
+    return null;
+  }
+});
 
 final foregroundMultitaskingProvider = Provider<ForegroundMultitasking>((ref) {
   try {

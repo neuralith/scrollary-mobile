@@ -477,7 +477,7 @@ class PageProbe {
   /// The page says it is not being shown (`document.visibilityState`).
   ///
   /// A **hold** signal, never a liveness proof. Measured on both platforms
-  /// (docs/FOREGROUND_MULTITASKING.md §3.1): a WebView the app has stopped
+  /// (docs/FOREGROUND_MULTITASKING.md §2): a WebView the app has stopped
   /// painting reports `hidden` on iOS and `visible` on Android, so `true` here
   /// means "definitely not being shown" while `false` means nothing at all.
   /// Whether the app is painting its WebView is answered by

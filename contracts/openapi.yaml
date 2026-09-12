@@ -29,10 +29,16 @@ info:
     contract may be extended in a way that implies otherwise.
 
 
-    Everything here is scoped to one library. During the functionality
-    programme the library is named by the development-only
-    `X-Scrollary-Library` header (see the parameter description); production
-    authentication replaces that header without changing any payload.
+    Everything here is scoped to one library, and there are two ways to name
+    one. An account names its own, by bearer token — that is the production
+    path, and an account can reach no library but its own. The development-only
+    `X-Scrollary-Library` header names one by name and authenticates nothing
+    (see the parameter description). They are mutually exclusive: a request
+    carrying both is refused.
+
+
+    Adding authentication changed no payload, exactly as V2-D28 said it would
+    not: `library_id` was already a real column on every synchronised row.
   license:
     name: Proprietary
     url: https://scrollary.example/license
@@ -41,15 +47,27 @@ servers:
   - url: http://localhost:8080
     description: Local development server (scrollaryd).
 
-# Explicitly no security: production authentication is deferred to
-# V2_PRODUCTIZATION.md P1 and will be added there as a wrapper, changing no
-# payload. The X-Scrollary-Library header is a development namespace and
-# authenticates nothing, so declaring it a security scheme would be a lie.
-security: []
+# Two ways in, and the empty requirement is not an oversight.
+#
+# `bearerAuth` is the production path: a Scrollary access token, obtained from
+# /auth/signin, naming the account whose library the request runs inside.
+#
+# `{}` is the development library namespace, which is NOT a security scheme and
+# is deliberately not modelled as one — it authenticates nothing and saying
+# otherwise in the contract would be the lie this comment has always refused to
+# tell. It is listed as "no requirement" because that is exactly what it is.
+security:
+  - bearerAuth: []
+  - {}
 
 tags:
   - name: system
     description: Liveness and build identity.
+  - name: auth
+    description: >-
+      Token exchange, rotation and revocation. The only endpoints outside the
+      library scope, because they are what produces the credential a library is
+      resolved from.
   - name: identity
     description: Evidence submission and canonical identity arbitration.
   - name: sync
@@ -96,15 +114,185 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [version, devMode]
+                required: [version, devMode, auth]
                 properties:
                   version:
                     type: string
                   devMode:
                     type: boolean
+                  auth:
+                    type: boolean
+                    description: >-
+                      Whether this server can authenticate anybody at all. A
+                      client reads it to tell "sign-in is not configured here"
+                      from "your credential was refused", without having to
+                      try one and interpret the failure.
               example:
                 version: 0.0.0-dev
                 devMode: true
+                auth: true
+
+  /auth/signin:
+    post:
+      operationId: signIn
+      tags: [auth]
+      summary: Exchange a provider ID token for a Scrollary session
+      security: []
+      description: >-
+        The client signs in with Firebase on the device, then presents the
+        resulting ID token here once. What comes back is Scrollary's own pair:
+        a short-lived access token and a long-lived rotating refresh token. The
+        Firebase token is never used again and never reaches any other endpoint.
+
+
+        The account's library is created here if it does not exist. Signing in
+        on a second device therefore finds the library the first one made,
+        rather than being given a new empty one.
+
+
+        A development server accepts `dev:<name>` in place of a Firebase token
+        and nothing else. A production server holds a client that cannot parse
+        that shape at all, which is why there is no flag to leave switched on.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [id_token]
+              properties:
+                id_token:
+                  type: string
+                  description: A Firebase ID token, or `dev:<name>` in development.
+            example:
+              id_token: dev:alice
+      responses:
+        '200':
+          $ref: '#/components/responses/Session'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '501':
+          $ref: '#/components/responses/AuthUnavailable'
+
+  /auth/refresh:
+    post:
+      operationId: refreshSession
+      tags: [auth]
+      summary: Rotate the session
+      security: []
+      description: >-
+        Exchanges a refresh token for a new pair. The presented token is spent
+        by the exchange and fails if replayed, so a stolen copy buys nothing
+        once the legitimate client has renewed.
+
+
+        The refresh token travels in the body for every client type. Scrollary
+        deliberately does not use a refresh cookie: the browser extension calls
+        this API cross-site from a service worker, where a `SameSite=Strict`
+        cookie is never attached and an `HttpOnly` one cannot be read back.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [refresh_token]
+              properties:
+                refresh_token:
+                  type: string
+      responses:
+        '200':
+          $ref: '#/components/responses/Session'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '501':
+          $ref: '#/components/responses/AuthUnavailable'
+
+  /auth/signout:
+    post:
+      operationId: signOut
+      tags: [auth]
+      summary: End one session
+      security: []
+      description: >-
+        Revokes exactly the presented refresh token and no other. Signing out
+        of a phone must not sign the user out of their tablet; revoking every
+        session is account deletion's job.
+
+
+        Always answers 200 — an unknown, expired or already-revoked token is
+        not something a client mid-teardown can act on, and requiring a valid
+        access token would leave a client whose session had already expired
+        unable to finish signing out.
+
+
+        Sign-out is a server-side revocation only. On the device it clears
+        tokens and stops the drain; rows, downloads and the outbox stay
+        (DECISIONS.md V2-D11).
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                refresh_token:
+                  type: string
+      responses:
+        '200':
+          description: The session was ended, or there was none to end.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                properties:
+                  status:
+                    type: string
+                    const: signed_out
+              example:
+                status: signed_out
+        '501':
+          $ref: '#/components/responses/AuthUnavailable'
+
+  /me:
+    get:
+      operationId: getMe
+      tags: [auth]
+      summary: The account behind the presented token
+      security:
+        - bearerAuth: []
+      description: >-
+        Reports the signed-in account and the library it resolves to. It is the
+        cheapest way for a client to answer "is this stored token still good?"
+        on launch.
+
+
+        Requires a real account: the development namespace is refused here
+        rather than reported back as though it were an identity.
+      responses:
+        '200':
+          description: The authenticated account.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [user_id, library_id]
+                properties:
+                  user_id:
+                    type: string
+                    format: uuid
+                  library_id:
+                    type: string
+                    format: uuid
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '501':
+          $ref: '#/components/responses/AuthUnavailable'
 
   /identity/arbitrate:
     post:
@@ -179,6 +367,8 @@ paths:
                     reason: insufficient_evidence
         '400':
           $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
         '403':
           $ref: '#/components/responses/DevModeRequired'
 
@@ -279,6 +469,8 @@ paths:
                     revision: 119
         '400':
           $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
         '403':
           $ref: '#/components/responses/DevModeRequired'
 
@@ -373,6 +565,8 @@ paths:
                 has_more: false
         '400':
           $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
         '403':
           $ref: '#/components/responses/DevModeRequired'
 
@@ -445,6 +639,8 @@ paths:
                 library_revision: 119
         '400':
           $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
         '403':
           $ref: '#/components/responses/DevModeRequired'
         '404':
@@ -551,6 +747,8 @@ paths:
                 revision: 120
         '400':
           $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
         '403':
           $ref: '#/components/responses/DevModeRequired'
         '404':
@@ -610,6 +808,8 @@ paths:
                 revision: 121
         '400':
           $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
         '403':
           $ref: '#/components/responses/DevModeRequired'
         '404':
@@ -682,6 +882,8 @@ paths:
                 revision: 122
         '400':
           $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
         '403':
           $ref: '#/components/responses/DevModeRequired'
         '404':
@@ -698,6 +900,20 @@ paths:
                   message: This request already reached a terminal state.
 
 components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: >-
+        A Scrollary access token from /auth/signin or /auth/refresh — never a
+        Firebase ID token, which is exchanged once at sign-in and never
+        presented again.
+
+
+        The token is read from the `Authorization` header only. A cookie is
+        deliberately not accepted: no Scrollary client is a same-site web page,
+        so a cookie could only ever arrive by accident or by CSRF.
+
   parameters:
     DevLibraryHeader:
       name: X-Scrollary-Library
@@ -733,6 +949,55 @@ components:
             error:
               code: validation_failed
               message: ordinal requires ordering_basis explicitNumericIndex.
+    Session:
+      description: A Scrollary session.
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [access_token, refresh_token, expires_in, token_type, user_id]
+            properties:
+              access_token:
+                type: string
+              refresh_token:
+                type: string
+              expires_in:
+                type: integer
+                format: int64
+                description: Seconds until the access token expires.
+              token_type:
+                type: string
+                const: Bearer
+              user_id:
+                type: string
+                format: uuid
+                description: >-
+                  The account. Returned so a client can tell "the same account
+                  signed in again" from "a different account signed in", which
+                  is the question the mobile app asks before deciding what to
+                  do with the library already on the device.
+    Unauthenticated:
+      description: >-
+        No credential was presented where one is required, or the presented one
+        was not accepted.
+      content:
+        application/json:
+          schema:
+            $ref: 'errors.yaml#/components/schemas/ErrorResponse'
+          example:
+            error:
+              code: unauthenticated
+              message: The credential was not accepted.
+    AuthUnavailable:
+      description: This server was not started with authentication configured.
+      content:
+        application/json:
+          schema:
+            $ref: 'errors.yaml#/components/schemas/ErrorResponse'
+          example:
+            error:
+              code: auth_unavailable
+              message: This server was not started with authentication configured.
     DevModeRequired:
       description: The development library namespace is not available.
       content:

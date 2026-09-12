@@ -6,6 +6,10 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'app.dart';
 import 'browser/browser_controller.dart';
 import 'capability/entitlement.dart';
+import 'account/account_api.dart';
+import 'account/account_controller.dart';
+import 'account/token_store.dart';
+import 'core/sync_config.dart';
 import 'capability/foreground_multitasking.dart';
 import 'browser/browsing_history.dart';
 import 'core/device_storage.dart';
@@ -256,6 +260,18 @@ class AppStartup {
   AppServices? _services;
   V2Services? _v2;
 
+  /// The account, or the absence of one.
+  ///
+  /// Built at startup and read by exactly two things: the Settings row that
+  /// signs in and out, and the closure the sync gate is handed. Nothing that
+  /// records, stores, organises or reads ever sees it.
+  ///
+  /// Constructing it starts nothing — no Firebase, no network. It reads a
+  /// stored session only when [_open] asks it to, and Firebase itself is not
+  /// initialized until somebody actually signs in.
+  AccountController? _account;
+  AccountController get account => _account!;
+
   /// The live capture reading, and the log behind it. Built here because the
   /// engine has to be handed its callbacks at construction, and read by the
   /// panel through `operationProgressProvider`.
@@ -327,10 +343,29 @@ class AppStartup {
             await settings.get(ForegroundMultitasking.overrideSettingKey),
           );
 
+    // The account. `syncBaseUri` is null in a build with no service address
+    // compiled in, and the controller then reports `unavailable` rather than
+    // offering a sign-in that could not go anywhere.
+    final base = syncBaseUri;
+    final account = AccountController(
+      tokens: TokenStore(),
+      api: base == null ? null : AccountApi(baseUrl: base),
+    );
+    _account = account;
+    // Restoring a stored session must never hold up the library opening: a
+    // signed-out app is the complete product, so this is fire-and-forget and
+    // the sync gate simply answers `false` until it lands.
+    unawaited(
+      account.restore().catchError(
+        (Object e) => debugPrint('[account] restore failed: $e'),
+      ),
+    );
+
     _services = AppServices(
       fileStore: fileStore,
       browser: browser,
       foregroundMultitasking: multitasking,
+      account: account,
     );
 
     // The repositories over the library, the queue worker and the check
@@ -445,8 +480,16 @@ class AppStartup {
         // never gated (V2-D7); this closure is asked at the drain and nowhere
         // else.
         cloudSyncAvailable: () => multitasking.cloudSyncAvailable,
+        // The second half of the same gate. Two questions, asked separately,
+        // because an entitlement and an account are different things and the
+        // UI has to be able to say which one is missing.
+        signedIn: () => account.isSignedIn,
         capabilityChanges: multitasking,
-        transport: buildSyncTransport(),
+        accountChanges: account,
+        transport: buildSyncTransport(
+          accessToken: account.accessToken,
+          refreshSession: account.refreshSession,
+        ),
       ),
     );
 

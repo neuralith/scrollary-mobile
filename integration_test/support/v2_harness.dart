@@ -400,6 +400,11 @@ class V2App {
         db: library,
         queue: ui.queue,
         cloudSyncAvailable: () => capability.cloudSyncAvailable,
+        // These suites are about synchronisation, not accounts: the account
+        // half of the gate is held open so the entitlement half stays the
+        // thing under test. test/account/ covers the account half.
+        signedIn: () => true,
+        accountChanges: ChangeNotifier(),
         capabilityChanges: capability,
         transport: null,
       ),

@@ -73,7 +73,7 @@ bool holdNeedsTheUser(SurfaceHold hold) =>
 /// What the app is doing with its one WebView, resolved in one place.
 ///
 /// Pulled out of the widget that owns it so the rule can be read, argued with
-/// and tested without a platform view. See docs/FOREGROUND_MULTITASKING.md §6.
+/// and tested without a platform view. See docs/FOREGROUND_MULTITASKING.md §5.
 class BrowserSurfaceState {
   const BrowserSurfaceState({
     required this.isPainted,

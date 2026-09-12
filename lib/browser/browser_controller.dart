@@ -76,7 +76,7 @@ class BrowserController extends ChangeNotifier {
   /// Whether the app is currently compositing the WebView.
   ///
   /// **The app is the authority on this, not the page.** Measured on both
-  /// platforms (docs/FOREGROUND_MULTITASKING.md §3.1): a WebView the app has
+  /// platforms (docs/FOREGROUND_MULTITASKING.md §2): a WebView the app has
   /// stopped painting keeps reporting a full viewport, keeps accepting
   /// programmatic scrolling, and — on Android — keeps reporting
   /// `document.visibilityState === 'visible'`. What actually degrades is

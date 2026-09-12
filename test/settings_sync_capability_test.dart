@@ -15,6 +15,8 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:web_reader/account/account_controller.dart';
+import 'package:web_reader/account/token_store.dart';
 import 'package:web_reader/browser/browser_controller.dart';
 import 'package:web_reader/browser/favicon_service.dart';
 import 'package:web_reader/capability/entitlement.dart';
@@ -30,7 +32,7 @@ import 'package:web_reader/ui/theme.dart';
 
 import 'helpers/v2_harness.dart';
 
-/// The closing note's three states, quoted so a rewrite of any of them is a
+/// The closing note's four states, quoted so a rewrite of any of them is a
 /// deliberate act rather than a passing edit. The first two must stay exactly
 /// as they shipped.
 const String _onDeviceNote =
@@ -42,6 +44,25 @@ const String _freeNote =
     'Saves and update checks only run when you start them. Cloud sync is a '
     'Pro capability, so nothing about your library leaves this device; '
     'downloaded pages, browsing history and saved rules stay here either way.';
+
+/// The fourth state, and the one authentication added: this device may use the
+/// service and has no account to use it for.
+const String _signedOutNote =
+    'Saves and update checks only run when you start them. Nothing about your '
+    'library leaves this device until you sign in; downloaded pages, browsing '
+    'history and saved rules stay here either way.';
+
+/// A stand-in account that reports a session. Nothing here calls a service:
+/// the screen asks it one question, and this answers it.
+class _SignedInAccount extends AccountController {
+  _SignedInAccount() : super(tokens: TokenStore(), api: null);
+
+  @override
+  bool get isSignedIn => true;
+
+  @override
+  AccountStatus get status => AccountStatus.signedIn;
+}
 
 /// A stand-in scheduler. Its whole job here is to exist: attaching one is what
 /// makes the Sync section a question at all.
@@ -111,9 +132,11 @@ void main() {
   Widget host({
     required ForegroundMultitasking capability,
     bool attached = true,
+    bool signedIn = false,
   }) {
     return ProviderScope(
       overrides: [
+        accountProvider.overrideWithValue(signedIn ? _SignedInAccount() : null),
         v2ServicesProvider.overrideWithValue(v2.services),
         libui.libraryUiServicesProvider.overrideWithValue(v2.ui),
         browserProvider.overrideWithValue(browser),
@@ -259,10 +282,10 @@ void main() {
   });
 
   group('a Pro device with a scheduler attached', () {
-    settingsTest('gets the live section, exactly as it always was', (
+    settingsTest('signed in, gets the live section, exactly as it always was', (
       tester,
     ) async {
-      await tester.pumpWidget(host(capability: pro()));
+      await tester.pumpWidget(host(capability: pro(), signedIn: true));
       await tester.pump();
 
       expect(find.byKey(const ValueKey('syncStatusSection')), findsOneWidget);
@@ -274,6 +297,28 @@ void main() {
       expect(find.byKey(const ValueKey('settingsCloudSync')), findsNothing);
       expect(find.text(kSyncSettingsNote), findsOneWidget);
       expect(find.text(_freeNote), findsNothing);
+    });
+
+    // The gate has two conditions, so the note has to name the one that is
+    // missing. [kSyncSettingsNote] promises synchronisation that happens on
+    // its own, and for a device with nowhere to send anything that is a lie.
+    settingsTest('signed out, the note says so instead of promising sync', (
+      tester,
+    ) async {
+      await tester.pumpWidget(host(capability: pro()));
+      await tester.pump();
+
+      expect(
+        find.text(kSyncSettingsNote),
+        findsNothing,
+        reason: 'nothing syncs until there is an account to sync for',
+      );
+      expect(find.text(_signedOutNote), findsOneWidget);
+      expect(
+        find.text(_freeNote),
+        findsNothing,
+        reason: 'this device is entitled; the missing half is the account',
+      );
     });
   });
 

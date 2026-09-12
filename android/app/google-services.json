@@ -1,0 +1,78 @@
+{
+  "project_info": {
+    "project_number": "1066587397858",
+    "project_id": "scrollary-4de0f",
+    "storage_bucket": "scrollary-4de0f.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:1066587397858:android:d4c711fcc58c71c8b408bb",
+        "android_client_info": {
+          "package_name": "com.mcagricaliskan.scrollary"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "1066587397858-7em0e1ft1lrmh47oavvha2l1ncapimf4.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.mcagricaliskan.scrollary",
+            "certificate_hash": "b52804888836f0205e2a524b88eee38d02c5f135"
+          }
+        },
+        {
+          "client_id": "1066587397858-cgkboms3ptgs27stla7t6o7dv7anfmip.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.mcagricaliskan.scrollary",
+            "certificate_hash": "55726484d385da18c8193d6f8c4f269ec0f868e5"
+          }
+        },
+        {
+          "client_id": "1066587397858-h8m3j7etsfodlk7f4deuact0k0knfcfs.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.mcagricaliskan.scrollary",
+            "certificate_hash": "e3fa1bced5ab6be0d9ec5080d9afd0849495057b"
+          }
+        },
+        {
+          "client_id": "1066587397858-ja8bvum61m9gbfr1brj2c3qea3lhvn4u.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.mcagricaliskan.scrollary",
+            "certificate_hash": "a1fb2d362bfb9bd7471d11e52f5c3fbdcf7f1e16"
+          }
+        },
+        {
+          "client_id": "1066587397858-sr4uv9483tg5oe9i8br7uc3bjfqiviuj.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDYpymaSnE3mMgkQTeDPjkM8gSCRHC1lVU"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "1066587397858-sr4uv9483tg5oe9i8br7uc3bjfqiviuj.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "1066587397858-8o7quau53lb0g6t98pu6picj2ehkddqi.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.mcagricaliskan.scrollary"
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

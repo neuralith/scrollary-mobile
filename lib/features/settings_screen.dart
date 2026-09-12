@@ -11,6 +11,7 @@ import '../library_ui/sync_status_section.dart';
 import '../providers.dart';
 import '../ui/palette.dart';
 import '../ui/status_style.dart';
+import 'account_section.dart';
 import 'appearance_selector.dart';
 import 'browser_data_dialogs.dart';
 import 'foreground_gate_sheet.dart';
@@ -171,6 +172,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               'library.',
             ),
           ),
+          // Signing in, and the one place it is offered. Absent entirely in a
+          // build with no service address; see AccountSection.
+          const AccountSection(),
           // Absent entirely until a scheduler is attached (D7). With one
           // attached, what this says depends on whether the device may use
           // it: Pro gets the live section, Free gets one locked door and no
@@ -202,20 +206,29 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               // with one it would be a lie, and a settings screen that lies
               // about the network is the worst place for it.
               //
-              // The third state is the one that is easiest to get wrong:
+              // The last two states are the ones easiest to get wrong.
               // [kSyncSettingsNote] promises synchronisation that happens on
-              // its own, and without Pro none of it happens at all.
+              // its own, and it is only true when BOTH halves of the gate are
+              // open. Two conditions means two sentences: a device that is not
+              // signed in and a device without the capability are told which
+              // one of them is missing, because "sync is off" for a reason the
+              // person cannot see is not an explanation.
               !syncIsAttached(ref)
                   ? 'Everything is stored on this device. There is no account, '
                         'no sync and no background network activity — saves '
                         'and update checks only run when you start them.'
-                  : _capability.cloudSyncAvailable
-                  ? kSyncSettingsNote
-                  : 'Saves and update checks only run when you start them. '
+                  : !_capability.cloudSyncAvailable
+                  ? 'Saves and update checks only run when you start them. '
                         'Cloud sync is a Pro capability, so nothing about your '
                         'library leaves this device; downloaded pages, '
                         'browsing history and saved rules stay here either '
-                        'way.',
+                        'way.'
+                  : ref.watch(accountProvider)?.isSignedIn ?? false
+                  ? kSyncSettingsNote
+                  : 'Saves and update checks only run when you start them. '
+                        'Nothing about your library leaves this device until '
+                        'you sign in; downloaded pages, browsing history and '
+                        'saved rules stay here either way.',
               style: TextStyle(
                 fontSize: 13,
                 height: 1.55,

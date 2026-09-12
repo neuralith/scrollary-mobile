@@ -360,7 +360,7 @@ class _WebReaderAppState extends ConsumerState<WebReaderApp>
   /// Published to [BrowserController.surfaceIsPainted] because the page cannot
   /// answer this for itself: an unpainted WebView keeps a full viewport and
   /// keeps scrolling on both platforms, and on Android it goes on calling
-  /// itself visible (docs/FOREGROUND_MULTITASKING.md §3.1).
+  /// itself visible (docs/FOREGROUND_MULTITASKING.md §2).
   void _recomputeSurface() {
     final automating =
         _queueRunner.isRunning ||
@@ -537,7 +537,7 @@ class _ShellState extends ConsumerState<_Shell> {
   /// pressed Start, which is an in-memory authorisation that is never
   /// persisted; and the foreground-multitasking gate is asked, because
   /// *where the user waits* is the one thing Pro buys
-  /// (docs/FOREGROUND_MULTITASKING.md §10.0). The gate never decides whether
+  /// (docs/FOREGROUND_MULTITASKING.md §8.0). The gate never decides whether
   /// the work happens: dismissing it, or *Not now*, leaves every row queued
   /// exactly where it was, and the visible-Browser start is fully functional
   /// without Pro.

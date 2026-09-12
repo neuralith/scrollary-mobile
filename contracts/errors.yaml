@@ -40,6 +40,23 @@ components:
           could be resolved from the header or configuration.
 
 
+        Authentication:
+
+        * `unauthenticated` — no credential was presented where one is
+          required, or the presented one was not accepted. Deliberately one
+          code for every reason a credential can fail: telling a client which
+          of them was true tells an attacker which guess was closer.
+
+        * `ambiguous_credentials` — the request carried both an
+          `Authorization` token and the development `X-Scrollary-Library`
+          header. Refused rather than resolved: a server that quietly picks
+          one is how a client ends up unauthenticated without noticing.
+
+        * `auth_unavailable` — this server was not started with any
+          authentication configured, so it cannot sign anybody in. Distinct
+          from `unauthenticated`, which is about the credential.
+
+
         Pull feed:
 
         * `invalid_cursor` — the cursor is not a non-negative integer.
@@ -101,6 +118,9 @@ components:
         - unknown_entity
         - dev_mode_required
         - library_unresolved
+        - unauthenticated
+        - ambiguous_credentials
+        - auth_unavailable
         - invalid_cursor
         - cursor_expired
         - invalid_mutation

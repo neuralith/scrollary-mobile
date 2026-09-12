@@ -17,6 +17,8 @@
 ///   answers away.
 library;
 
+import 'package:flutter/foundation.dart';
+
 import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:web_reader/capability/entitlement.dart';
@@ -112,13 +114,24 @@ void main() {
     await db.close();
   });
 
-  /// The composition as the app builds it, with the two knobs a build actually
-  /// has: whether an address was compiled in, and what the user is entitled to.
+  /// Whether this device has an account, and something to notify with when
+  /// that changes -- the shape the real AccountController presents.
+  ///
+  /// Held OPEN by default so every pre-existing case here goes on testing what
+  /// it was written to test: the capability half of the gate. The account half
+  /// has its own group at the end of this file.
+  final account = ValueNotifier<bool>(true);
+
+  /// The composition as the app builds it, with the three knobs a build
+  /// actually has: whether an address was compiled in, what the user may use,
+  /// and whether there is an account to synchronise for.
   SyncComposition build({required bool configured}) {
     final built = SyncComposition(
       db: db,
       queue: SaveQueueRepository(db),
       cloudSyncAvailable: () => capability.cloudSyncAvailable,
+      signedIn: () => account.value,
+      accountChanges: account,
       capabilityChanges: capability,
       transport: configured ? wire : null,
       schedule: const SyncSchedule(
@@ -387,6 +400,102 @@ void main() {
             'pull, then the consumer, then the drain — and the trailing pull '
             'that collects what the push produced',
       );
+    });
+  });
+
+  /// The account half of the same gate.
+  ///
+  /// Everything asserted here is the mirror of the capability cases above,
+  /// which is the point: two conditions on one gate, in one place, neither
+  /// able to reach anything the other cannot.
+  group('the account half of the gate', () {
+    test('a device with the capability and no account reaches nothing, '
+        'and keeps recording', () async {
+      grantCloudSync();
+      account.value = false;
+      final c = build(configured: true);
+
+      expect(c.resolve(), isNull, reason: 'there is no library to send to');
+
+      await mutateLocally('Reading');
+      await live(c);
+
+      expect(wire.requests, 0, reason: 'the drain is what the gate sits on');
+      expect(
+        await OutboxRepository(db).pending(limit: 10),
+        isNotEmpty,
+        reason:
+            'local writes and the outbox are never gated (V2-D7): a signed-out '
+            'device keeps journalling, so nothing is lost and nothing has to '
+            'be replayed when somebody signs in',
+      );
+    });
+
+    test(
+      'signing in is taken at the next opportunity, with no restart',
+      () async {
+        grantCloudSync();
+        account.value = false;
+        final c = build(configured: true);
+
+        await mutateLocally('Reading');
+        await live(c);
+        expect(wire.requests, 0);
+
+        // The one thing that changes. No new scheduler, no new composition.
+        account.value = true;
+
+        await live(c);
+        expect(
+          wire.requests,
+          greaterThan(0),
+          reason: 'the resolver is asked afresh every opportunity',
+        );
+      },
+    );
+
+    test(
+      'signing out stops the drain without touching anything local',
+      () async {
+        grantCloudSync();
+        final c = build(configured: true);
+        await mutateLocally('Reading');
+        await live(c);
+        final drained = wire.requests;
+        expect(drained, greaterThan(0));
+
+        account.value = false;
+        await mutateLocally('Another');
+        await live(c);
+
+        expect(
+          wire.requests,
+          drained,
+          reason: 'nothing more leaves the device once the account is gone',
+        );
+        expect(
+          await OutboxRepository(db).pending(limit: 10),
+          isNotEmpty,
+          reason:
+              'V2-D11: sign-out clears tokens and stops the drain, and the '
+              'rows, downloads and outbox stay exactly where they were',
+        );
+      },
+    );
+
+    test('neither half alone opens the gate', () async {
+      final c = build(configured: true);
+
+      account.value = true;
+      // Capability withheld.
+      expect(c.resolve(), isNull);
+
+      grantCloudSync();
+      account.value = false;
+      expect(c.resolve(), isNull);
+
+      account.value = true;
+      expect(c.resolve(), isNotNull, reason: 'both, or nothing');
     });
   });
 }

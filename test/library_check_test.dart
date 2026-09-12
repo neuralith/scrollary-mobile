@@ -24,7 +24,7 @@ void main() {
     // one behaviour: whether an operation may continue while another screen is
     // in front. What the guard forbids everywhere else is unchanged, so a
     // counter, a purchase record or a second gate cannot appear in a screen, an
-    // engine or a repository. See docs/FOREGROUND_MULTITASKING.md §10.
+    // engine or a repository. See docs/FOREGROUND_MULTITASKING.md §8.
     // Keyed by path, each with the reason it is not gating state.
     const exempt = <String, String>{
       // The seam itself: three pure functions and one value object.

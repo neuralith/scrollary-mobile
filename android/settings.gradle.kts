@@ -21,6 +21,10 @@ plugins {
     id("dev.flutter.flutter-plugin-loader") version "1.0.0"
     id("com.android.application") version "9.0.1" apply false
     id("org.jetbrains.kotlin.android") version "2.3.20" apply false
+    // Firebase configuration processing. It reads app/google-services.json and
+    // generates the resources firebase_core reads at initialization; without it
+    // the JSON file in the tree does nothing at all.
+    id("com.google.gms.google-services") version "4.5.0" apply false
 }
 
 include(":app")

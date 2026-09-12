@@ -9,7 +9,7 @@ import 'foreground_gate.dart';
 /// **One boolean, one owner.** Everything that changes behaviour reads
 /// [enabled] and nothing asks *why* it is what it is. Today the only thing
 /// that writes it is a setting the user can see and change. That single
-/// indirection is the whole seam — see docs/FOREGROUND_MULTITASKING.md §10.
+/// indirection is the whole seam — see docs/FOREGROUND_MULTITASKING.md §8.
 /// Nothing here counts anything, remembers a purchase, or holds a state
 /// waiting to be switched on; `library_check_test.dart` fails the build if it
 /// ever does.

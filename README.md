@@ -18,20 +18,19 @@ developer.
 The app is **V2**: a recognition-driven library where reading updates your
 library automatically, Collections have several Sources, Folders organise
 everything, and library metadata can synchronise across your devices as a Pro
-capability. It needs no account and is fully usable offline. See
-[docs/PRODUCT.md](docs/PRODUCT.md) for the product,
-[docs/V2_ARCHITECTURE.md](docs/V2_ARCHITECTURE.md) for the domain and
-[docs/V2_ROADMAP.md](docs/V2_ROADMAP.md) for the plan and current status.
+capability. It needs no account and is fully usable offline.
 
 ## Documentation
 
-Start with [docs/README.md](docs/README.md), which lists every document and the
-order to trust them in. The short version: [docs/PRODUCT.md](docs/PRODUCT.md)
-for what the product is, [docs/TERMINOLOGY.md](docs/TERMINOLOGY.md) for the
-nouns, [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for what is actually built,
-and [docs/DECISIONS.md](docs/DECISIONS.md) for why. Store readiness is covered
-by [docs/STORE_POLICY_MAP.md](docs/STORE_POLICY_MAP.md) and
-[docs/STORE_PACKAGE.md](docs/STORE_PACKAGE.md). Contributor rules are in
+**The documentation set lives in the workspace above this repository**, at
+[`../docs/`](../docs/README.md), because most of it describes the app and the
+sync service together. Start with [../docs/README.md](../docs/README.md), which
+lists every document and the order to trust them in. The short version:
+[PRODUCT.md](../docs/PRODUCT.md) for what the product is,
+[TERMINOLOGY.md](../docs/TERMINOLOGY.md) for the nouns,
+[V2_ARCHITECTURE.md](../docs/V2_ARCHITECTURE.md) for the domain,
+[CURRENT_STATE.md](../docs/CURRENT_STATE.md) for what is built and what is left,
+and [DECISIONS.md](../docs/DECISIONS.md) for why. Contributor rules are in
 [CLAUDE.md](CLAUDE.md).
 
 ## Repository layout
@@ -39,14 +38,15 @@ by [docs/STORE_POLICY_MAP.md](docs/STORE_POLICY_MAP.md) and
 | Path | What it is |
 |---|---|
 | `lib/`, `test/`, `integration_test/` | The Flutter app as built today |
-| `../scrollary-backend/` | The V2 synchronisation service — Go, Fiber v3, PostgreSQL. B1–B11 complete; see [../scrollary-backend/README.md](../scrollary-backend/README.md) |
-| `docs/` | Product, architecture, V2 design and plan, store and privacy |
+| `contracts/` | The shared API contract — the canonical copy, frozen |
+| `../scrollary-backend/` | The V2 synchronisation service — Go, Fiber v3, PostgreSQL. See [its README](../scrollary-backend/README.md) |
+| `../docs/` | Product, domain, sync, store and privacy — for both halves |
 
 ## Running
 
 ```bash
 flutter pub get
-dart run build_runner build     # after changing lib/storage/database.dart
+dart run build_runner build     # after changing lib/data/schema.dart
 flutter run
 ```
 
@@ -73,7 +73,7 @@ flutter run --release --dart-define=SCROLLARY_INTERNAL_BUILD=true -d <udid>
 
 **A build for the stores passes neither flag.** The constant is compile-time, so
 without the define it folds to `false` and the tree-shaker removes the screen,
-its route and the override. See [docs/FOREGROUND_MULTITASKING.md](docs/FOREGROUND_MULTITASKING.md) §10.4.
+its route and the override. See [../docs/FOREGROUND_MULTITASKING.md](../docs/FOREGROUND_MULTITASKING.md) §10.
 
 ## What it is not
 

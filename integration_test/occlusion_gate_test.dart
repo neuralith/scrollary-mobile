@@ -4,7 +4,7 @@
 //   flutter test integration_test/occlusion_gate_test.dart -d <device-id>
 //
 // This is an experiment, not a product test. It exists to answer one binary
-// question, it is referenced by docs/FOREGROUND_MULTITASKING.md §3 as the
+// question, it is referenced by docs/FOREGROUND_MULTITASKING.md §2 as the
 // measured baseline, and its numbers are the reason the always-painted
 // architecture was chosen at all. It is re-run against V2 because the premise
 // belongs to the *compositing*, not to the engine that was on top of it — but

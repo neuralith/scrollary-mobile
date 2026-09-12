@@ -281,5 +281,37 @@ void main() {
         );
       });
     }
+
+    /// The same rule, for the account layer.
+    ///
+    /// Signing in is the second half of the one gate on the network drain, and
+    /// it must stay exactly that. A repository or a screen that could read a
+    /// session could condition a write, a read or an open on one — and the
+    /// product that is complete without an account (V2-D3) would quietly stop
+    /// being complete, one import at a time.
+    ///
+    /// The composition root wires the two together and is therefore not in
+    /// this list; it hands both halves down as plain closures, so nothing
+    /// below it can reach either.
+    for (final tree in ungatedTrees) {
+      test('nothing under $tree can see the account layer', () {
+        final offenders = <String>[];
+        for (final file in Directory(tree).listSync(recursive: true)) {
+          if (file is! File || !file.path.endsWith('.dart')) continue;
+          final source = file.readAsStringSync();
+          if (source.contains("'../account/") ||
+              source.contains("'package:web_reader/account/")) {
+            offenders.add(file.path.replaceAll(r'\', '/'));
+          }
+        }
+        expect(
+          offenders,
+          isEmpty,
+          reason:
+              'the app is complete with no account; only the network drain '
+              'may ask whether there is one',
+        );
+      });
+    }
   });
 }
